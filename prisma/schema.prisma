@@ -1,0 +1,345 @@
+// FINLOG 데이터 모델 — PROD.MD §3
+// 원칙: 금액 = 원 단위 BigInt, 비율 = Decimal, 거래일 = @db.Date, 모든 도메인 테이블은 householdId 소속
+
+// prisma-client: 소스(TS)로 생성 — Node 22가 한글 경로에서 package "imports"(#main-entry-point)를 못 찾는 문제 회피
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  OWNER
+  MEMBER
+}
+
+enum Visibility {
+  SHARED
+  SUMMARY_ONLY
+  PRIVATE
+}
+
+enum AccountType {
+  CASH
+  CHECKING
+  SAVINGS
+  INVESTMENT
+  PENSION
+  REAL_ESTATE
+  OTHER_ASSET
+  CREDIT_CARD
+  LOAN
+}
+
+enum TxType {
+  INCOME
+  EXPENSE
+  TRANSFER
+  SAVE_INVEST
+  LOAN_REPAY
+  ADJUSTMENT
+}
+
+enum BudgetBucket {
+  NEEDS
+  WANTS
+  SAVINGS
+}
+
+enum RiskProfile {
+  STABLE
+  STABLE_SEEKING
+  NEUTRAL
+  ACTIVE
+  AGGRESSIVE
+}
+
+enum SplitMethod {
+  EQUAL
+  INCOME_RATIO
+  CUSTOM
+}
+
+enum PlanSource {
+  RECOMMENDED
+  CUSTOM
+}
+
+enum GoalStatus {
+  ACTIVE
+  ACHIEVED
+  PAUSED
+}
+
+enum BusinessDayAdjust {
+  NONE
+  PREV
+  NEXT
+}
+
+model User {
+  id              String            @id @default(cuid())
+  email           String            @unique
+  name            String
+  passwordHash    String?
+  createdAt       DateTime          @default(now())
+  memberships     HouseholdMember[]
+  riskAssessments RiskAssessment[]
+}
+
+model Household {
+  id              String            @id @default(cuid())
+  name            String
+  monthStartDay   Int               @default(1)
+  emergencyMonths Int               @default(3)
+  createdAt       DateTime          @default(now())
+  members         HouseholdMember[]
+  invites         HouseholdInvite[]
+  accounts        Account[]
+  categories      Category[]
+  transactions    Transaction[]
+  recurringRules  RecurringRule[]
+  budgets         Budget[]
+  splitRules      SplitRule[]
+  settlements     Settlement[]
+  plans           PortfolioPlan[]
+  goals           AssetGoal[]
+  lifeEvents      LifeEvent[]
+  auditLogs       AuditLog[]
+}
+
+model HouseholdMember {
+  id          String    @id @default(cuid())
+  householdId String
+  userId      String
+  role        Role
+  joinedAt    DateTime  @default(now())
+  leftAt      DateTime?
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([householdId, userId])
+  @@index([userId])
+}
+
+model HouseholdInvite {
+  id              String    @id @default(cuid())
+  householdId     String
+  code            String    @unique
+  createdByUserId String
+  expiresAt       DateTime
+  usedAt          DateTime?
+  usedByUserId    String?
+  household       Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+}
+
+model Account {
+  id                String            @id @default(cuid())
+  householdId       String
+  ownerUserId       String?
+  name              String
+  type              AccountType
+  institution       String?
+  defaultVisibility Visibility        @default(SHARED)
+  assetClassTag     String?
+  isArchived        Boolean           @default(false)
+  createdAt         DateTime          @default(now())
+  household         Household         @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  snapshots         AccountSnapshot[]
+  outgoing          Transaction[]     @relation("fromAccount")
+  incoming          Transaction[]     @relation("toAccount")
+
+  @@index([householdId])
+}
+
+model AccountSnapshot {
+  id        String   @id @default(cuid())
+  accountId String
+  asOf      DateTime @db.Date
+  balance   BigInt
+  account   Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@unique([accountId, asOf])
+}
+
+model Category {
+  id           String        @id @default(cuid())
+  householdId  String
+  parentId     String?
+  name         String
+  txType       TxType
+  bucket       BudgetBucket?
+  icon         String?
+  sortOrder    Int           @default(0)
+  household    Household     @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  parent       Category?     @relation("CategoryTree", fields: [parentId], references: [id], onDelete: Cascade)
+  children     Category[]    @relation("CategoryTree")
+  transactions Transaction[]
+
+  @@index([householdId, txType])
+}
+
+model Transaction {
+  id              String         @id @default(cuid())
+  householdId     String
+  createdByUserId String
+  paidByUserId    String?
+  type            TxType
+  date            DateTime       @db.Date
+  amount          BigInt
+  fromAccountId   String?
+  toAccountId     String?
+  categoryId      String?
+  merchant        String?
+  memo            String?
+  visibility      Visibility
+  isFixed         Boolean        @default(false)
+  recurringRuleId String?
+  importHash      String?
+  settlementId    String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  deletedAt       DateTime?
+  household       Household      @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  fromAccount     Account?       @relation("fromAccount", fields: [fromAccountId], references: [id])
+  toAccount       Account?       @relation("toAccount", fields: [toAccountId], references: [id])
+  category        Category?      @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  recurringRule   RecurringRule? @relation(fields: [recurringRuleId], references: [id], onDelete: SetNull)
+
+  @@unique([householdId, importHash])
+  @@unique([recurringRuleId, date])
+  @@index([householdId, date])
+  @@index([householdId, categoryId, date])
+}
+
+model RecurringRule {
+  id                String            @id @default(cuid())
+  householdId       String
+  createdByUserId   String
+  name              String
+  template          Json
+  dayOfMonth        Int
+  businessDayAdjust BusinessDayAdjust @default(NONE)
+  startDate         DateTime          @db.Date
+  endDate           DateTime?         @db.Date
+  lastRunOn         DateTime?         @db.Date
+  isActive          Boolean           @default(true)
+  household         Household         @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  transactions      Transaction[]
+}
+
+model Budget {
+  id          String    @id @default(cuid())
+  householdId String
+  categoryId  String?
+  month       String
+  amount      BigInt
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  @@unique([householdId, categoryId, month])
+}
+
+model SplitRule {
+  id          String      @id @default(cuid())
+  householdId String
+  categoryId  String?
+  method      SplitMethod
+  ratios      Json?
+  household   Household   @relation(fields: [householdId], references: [id], onDelete: Cascade)
+}
+
+model Settlement {
+  id          String    @id @default(cuid())
+  householdId String
+  month       String
+  fromUserId  String
+  toUserId    String
+  amount      BigInt
+  settledAt   DateTime?
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+}
+
+model RiskAssessment {
+  id        String      @id @default(cuid())
+  userId    String
+  answers   Json
+  score     Int
+  profile   RiskProfile
+  takenAt   DateTime    @default(now())
+  expiresAt DateTime
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model AssetClassAssumption {
+  id             String   @id
+  label          String
+  expectedReturn Decimal  @db.Decimal(9, 6)
+  volatility     Decimal  @db.Decimal(9, 6)
+  effectiveFrom  DateTime @db.Date
+}
+
+model PortfolioPlan {
+  id             String       @id @default(cuid())
+  householdId    String
+  name           String
+  source         PlanSource
+  baseProfile    RiskProfile?
+  allocations    Json
+  expectedReturn Decimal      @db.Decimal(9, 6)
+  volatility     Decimal      @db.Decimal(9, 6)
+  createdAt      DateTime     @default(now())
+  household      Household    @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  goals          AssetGoal[]
+}
+
+model AssetGoal {
+  id               String         @id @default(cuid())
+  householdId      String
+  name             String
+  targetAmount     BigInt
+  targetIsReal     Boolean        @default(true)
+  targetDate       DateTime       @db.Date
+  priority         Int
+  expectedReturn   Decimal        @default(0.05) @db.Decimal(9, 6)
+  planId           String?
+  linkedAccountIds String[]
+  monthlyCommit    BigInt?
+  status           GoalStatus     @default(ACTIVE)
+  createdAt        DateTime       @default(now())
+  household        Household      @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  plan             PortfolioPlan? @relation(fields: [planId], references: [id], onDelete: SetNull)
+
+  @@index([householdId])
+}
+
+model LifeEvent {
+  id          String    @id @default(cuid())
+  householdId String
+  kind        String
+  startMonth  String
+  params      Json
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+}
+
+model TaxRuleSet {
+  year  Int  @id
+  rules Json
+}
+
+model AuditLog {
+  id          String    @id @default(cuid())
+  householdId String
+  userId      String
+  action      String
+  entity      String
+  entityId    String
+  diff        Json?
+  at          DateTime  @default(now())
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  @@index([householdId, at])
+}
