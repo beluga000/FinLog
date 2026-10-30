@@ -9,3 +9,5 @@ export * from "./recurring";
 export * from "./tx-rules";
 export * from "./portfolio";
 export * from "./goals";
+export * from "./spendable";
+export * from "./closing";

@@ -120,6 +120,7 @@ export async function materializeRecurring(householdId: string, today: string): 
           visibility: t.visibility,
           isFixed: true,
           recurringRuleId: rule.id,
+          needsReview: true,
         })),
         skipDuplicates: true,
       }),

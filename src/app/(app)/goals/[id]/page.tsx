@@ -3,13 +3,12 @@ import { notFound } from "next/navigation";
 import { ChevronLeft } from "lucide-react";
 import { Money } from "@/components/common/money";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { GoalProjectionChart, type GoalChartPoint } from "@/features/goals/components/goal-chart";
 import { ApplyAlternativeButton, CommitButton, GoalMenu } from "@/features/goals/components/goal-controls";
 import { GoalPace, GoalProgressBar } from "@/features/goals/components/goal-status";
-import { DEFAULT_INFLATION, getGoalsOverview } from "@/features/goals/queries";
+import { GoalWhatIf } from "@/features/goals/components/goal-what-if";
+import { getGoalsOverview } from "@/features/goals/queries";
 import { requireHousehold } from "@/lib/db/context";
 import { formatPercent } from "@/lib/finance/money";
-import { inflate, toMonthlyRate } from "@/lib/finance/projection";
 import { toDateStr, todayKST } from "@/lib/finance/period";
 
 export const metadata = { title: "목표" };
@@ -17,11 +16,6 @@ export const metadata = { title: "목표" };
 function addMonths(date: string, months: number) {
   const [y, m, d] = date.split("-").map(Number);
   return toDateStr(y, m + months, Math.min(d, 28));
-}
-
-function monthLabel(date: string) {
-  const [y, m] = date.split("-");
-  return `${y.slice(2)}.${m}`;
 }
 
 export default async function GoalDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -33,28 +27,6 @@ export default async function GoalDetailPage({ params }: { params: Promise<{ id:
   if (!goal) notFound();
 
   const e = goal.evaluation;
-  const r = toMonthlyRate(goal.expectedReturn);
-  const horizon = Math.min(480, Math.max(e.monthsLeft, e.projectedMonths ?? e.monthsLeft, 12));
-  const step = Math.max(1, Math.ceil(horizon / 60));
-  const showRequired = !e.onTrack && !e.required.alreadyAchievable;
-  const data: GoalChartPoint[] = [];
-  let projected = goal.current;
-  let required = goal.current;
-  for (let m = 0; m <= horizon; m++) {
-    if (m > 0) {
-      projected = projected * (1 + r) + goal.contribution;
-      required = required * (1 + r) + e.required.monthly;
-    }
-    if (m % step === 0 || m === horizon || m === e.monthsLeft) {
-      data.push({
-        label: monthLabel(addMonths(today, m)),
-        projected: Math.round(projected),
-        required: showRequired && m <= e.monthsLeft ? Math.round(required) : null,
-        target: Math.round(goal.targetIsReal ? inflate(goal.targetAmount, m, DEFAULT_INFLATION) : goal.targetAmount),
-      });
-    }
-  }
-
   const alt = e.alternatives;
 
   return (
@@ -160,17 +132,19 @@ export default async function GoalDetailPage({ params }: { params: Promise<{ id:
         </Card>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>예상 경로</CardTitle>
-          <CardDescription>
-            월 복리 (1+R)^(1/12)−1, 매월 말 납입 가정
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <GoalProjectionChart data={data} showRequired={showRequired} />
-        </CardContent>
-      </Card>
+      <GoalWhatIf
+        today={today}
+        goal={{
+          id: goal.id,
+          targetAmount: goal.targetAmount,
+          targetIsReal: goal.targetIsReal,
+          targetDate: goal.targetDate,
+          expectedReturn: goal.expectedReturn,
+          current: goal.current,
+          contribution: goal.contribution,
+          editable: goal.status !== "ACHIEVED",
+        }}
+      />
 
       <GoalMenu
         goal={{

@@ -1,20 +1,25 @@
-# [PRD v2] FINLOG - 부부/개인 맞춤형 가계부 & 자산 설계/예측 플랫폼
+# [PRD v3] FINLOG - 목표까지 남은 거리를 매일 보여주는 부부/개인 가계부
 
 > **프로젝트 명**: FINLOG (Finance + Log)
-> **문서 버전**: v2.0 (2026-10-06) · 이전 버전: `PROD.v1.MD`
+> **문서 버전**: v3.0 (2026-10-30) · 이전 버전: `PROD.v2.MD`(v2, 2026-10-06), `PROD.v1.MD`
 > **목적**: 월별 지출·소비 모니터링, 부부/개인 맞춤형 자산 배분 가이드, 목표 자산 달성 시뮬레이션·예측을 제공하는 반응형 웹 서비스
 > **핵심 가치**: "기록(Log)을 넘어 N년 뒤 자산 목표 달성을 가이드하는 스마트 파이낸스 파트너"
 
-### v1 → v2 주요 변경
-| 영역 | v1 | v2 |
+### v2 → v3 주요 변경
+v2 MVP는 기능(계좌·거래·공개범위·목표 역산)은 갖췄지만 화면끼리 이어지지 않았다. 가입 직후 빈 대시보드, 같은 무게의 위젯 10개, 기록과 목표의 단절이 문제였다.
+v3는 **데이터 모델(§3)과 계산 규칙(§4)을 유지**하고, 사용 흐름을 "목표" 하나로 다시 꿴다.
+
+| 영역 | v2 | v3 |
 |---|---|---|
-| 부부 모드 | 데이터 공유 + 분담율 | 항목별 공개범위(공유/비공개/합계만), 초대·탈퇴 정책, 분담 정산 |
-| 데이터 모델 | 거래 1종 | 계좌(Account) 중심 복식 구조: 수입/지출/**내부이체**/저축·투자 구분 → 이중 집계 방지 |
-| 자산 | 총자산 숫자 | 계좌별 잔액 스냅샷 → 순자산(자산−부채) 추이 |
-| 예측 | 단일 복리 공식 | 명목/실질, 납입 증가율, 세금, 시나리오(비관/기본/낙관) + 몬테카를로 달성 확률 |
-| 포트폴리오 | 위험도 → 비중 | 투자성향 설문 점수화, 비상금·부채 우선 규칙, 목표 기간 기반 조정, 리밸런싱 알림 |
-| 규제 | 없음 | 자본시장법(투자자문) 회피 설계, 개인정보보호법 대응 |
-| 실행 계획 | 1단계 프롬프트 | MVP 단계 분할 + 수용 기준(AC) + 단계별 Claude Code 프롬프트 |
+| 온보딩 | 가구 모드 선택 1단계 (나머지는 대시보드 체크리스트) | 5단계: 모드 → 첫 목표 → 현재 자산 → 수입·고정비 → 결과. 계좌·정기거래·목표를 한 번에 생성 (§1-7) |
+| 홈 | 위젯 10개 동일 비중 | 대표 목표 → 쓸 수 있는 돈 → 이번 달 저축 → 확인할 일 → 최근 기록 (§2-8) |
+| 예산 | 카테고리별 월 예산 (P1) | **쓸 수 있는 돈** = 수입 − 고정비 − 목표 저축 − 변동 지출. 목표에서 역산 (§2-7). 카테고리 예산은 보류 |
+| 기록 피드백 | 저장 토스트 | 저장 후 쓸 수 있는 돈의 변화 표시 (§2-5) |
+| 시뮬레이터 | 독립 화면 `/simulate` | 목표 상세의 "만약에" 패널, 결과를 목표에 반영 (§4-1) |
+| 통계 차트 | 홈 | 리포트 탭 + 월간 결산 (§2-9, §4-7) |
+| 탭 | 홈·가계부·자산·목표·더보기 | 홈·가계부·목표·자산·리포트 (§2) |
+
+v1 → v2 변경 내역은 `PROD.v2.MD` 참고.
 
 ---
 
@@ -41,6 +46,19 @@
 | 목표(Goal) 1개 이상 설정 가구 비율 | ≥ 50% |
 | 4주 리텐션 | ≥ 35% |
 | 대시보드 첫 로드 (P75, 4G 모바일) | ≤ 1.5s |
+
+### 0.4 제품 원칙 (v3)
+1. **모든 화면은 "목표까지 얼마나 남았나"에 답한다.** 홈의 첫 블록은 대표 목표의 진척과 페이스다. 통계는 리포트로 내려간다.
+2. **예산은 목표에서 거꾸로 나온다.** 사용자가 예산을 따로 정하지 않는다. 지출을 기록할 때마다 "쓸 수 있는 돈"이 줄어드는 것이 매일의 피드백이다.
+3. **빈 화면을 만들지 않는다.** 온보딩에서 숫자 4가지(목표, 현재 자산, 월수입, 고정비)만 받으면 홈이 의미 있게 채워진다. 계좌 세부 정보는 나중에 다듬는다.
+
+### 0.5 핵심 루프
+| 주기 | 행동 | 화면 | 다음 단계로 가는 장치 |
+|---|---|---|---|
+| 가입 1회 | 목표 세우기 | 온보딩 5단계 | 결과 화면 "홈으로" |
+| 매일 | 기록하기 (10초) | [+] 빠른 입력 | 저장 후 쓸 수 있는 돈 변화 |
+| 수시 | 페이스 확인 | 홈 | 확인할 일, 목표 카드 |
+| 월 시작일 | 결산 | 리포트 상단 | 목표 조정 → 다음 달 쓸 수 있는 돈 재계산 |
 
 ---
 
@@ -80,6 +98,24 @@
 
 #### 1-6. 인증 (P0)
 - 이메일 + 소셜(카카오, 구글). 선택적 앱 잠금(PIN/생체 — PWA WebAuthn, P2).
+
+#### 1-7. 온보딩 (P0) — v3 재설계
+가입 → 5단계 → 홈. 초대 코드 참여자는 1단계에서 바로 홈으로 간다(이미 목표가 있는 가구에 합류).
+
+| 단계 | 묻는 것 | 생성되는 데이터 |
+|---|---|---|
+| 1. 모드 | 부부로 시작 / 혼자 시작 / 초대 코드로 참여 | `Household`, `HouseholdMember(OWNER)` (참여 시 `MEMBER`) |
+| 2. 첫 목표 | 템플릿(주택 자금·비상금·결혼/출산·직접 입력) + 금액 + 목표 월 | `AssetGoal(priority=1, expectedReturn=템플릿 기본값)` |
+| 3. 현재 자산 | 입출금·예적금·투자 칸별 잔액, 대출(선택). **합계 1개 이상 필수**, 칸별은 선택 | 칸마다 `Account` 1개 + 오늘 날짜 `AccountSnapshot`. 자산 계좌는 목표의 `linkedAccountIds`에 연결 |
+| 4. 수입·고정비 | 월급(세후)·입금일, 고정 지출 N줄(이름·금액·출금일) | 줄마다 `RecurringRule`. 월급일 ≠ 1일이면 "월 시작일을 N일로 할까요?" → `Household.monthStartDay` |
+| 5. 결과 | 월 필요 저축액, 쓸 수 있는 돈 분해, 부족 시 대안 1개 | 없음 (계산만) |
+
+- 목표 템플릿 기본값 (금액·기간·수익률): 주택 자금 2억·5년·3%, 비상금 1,000만·1년·2%, 결혼·출산 5,000만·3년·3%, 직접 입력 3년·3%. 고정비는 2단계 뒤(4단계)에 받으므로 비상금을 고정비 배수로 제안하는 것은 v3 이후.
+- 3단계 각 자산 칸에 "목표에 포함" 체크(기본: 예적금·투자 켬, 입출금 끔). 입출금 통장을 입력하지 않으면 월급·고정비 규칙용 통장을 잔액 0으로 만든다.
+- 4단계 월급일이 2~28일이면 "한 달을 월급날부터 세기" 체크(기본 끔). 부부 모드는 "배우자 월급" 줄을 추가할 수 있다(규칙 작성자는 입력한 사람).
+- **저장 시점**: 5단계 "홈으로"를 누를 때 서버 액션 1회, DB 트랜잭션 1개로 전부 생성. 중간 이탈 시 DB에는 아무것도 남지 않는다. 입력 중 값은 클라이언트(`sessionStorage`)에만 보관.
+- 1단계에서 가구를 만들지 않으므로 별도의 "온보딩 완료" 플래그가 필요 없다. 멤버십이 있으면 완료 상태다.
+- 각 단계 하단에 "나중에 바꿀 수 있어요" 안내. 뒤로 가기로 값을 유지한 채 이전 단계로 이동.
 
 ---
 
@@ -126,25 +162,68 @@
 - **CSV/Excel 가져오기** (P1): 주요 카드사·은행 내보내기 포맷 프리셋 + 컬럼 매핑 UI. 중복 판별 해시 `(accountId, date, amount, merchant)`.
 - **자동 분류 규칙** (P1): "가맹점명 포함 '스타벅스' → 식비/카페". 수동 수정 시 규칙 생성 제안.
 - **마이데이터/오픈뱅킹 연동** (P3): 본인신용정보관리업 라이선스 또는 제휴 필요 → 장기 과제.
+- **모바일 수집 (P0, v3.1)** — 주 사용 환경이 모바일이므로 CSV보다 **카드 승인 문자·알림**을 1차 수집 경로로 둔다. 웹/PWA로 가능한 범위부터:
+  - 빠른 입력의 [문자 붙여넣기]: 승인 문자를 붙여넣으면 금액·날짜·가맹점·카드사를 채운다. 취소 문자는 인식만 하고 자동 입력하지 않는다. 파싱은 클라이언트 순수 함수(`card-message.ts`)로, 원문은 서버에 저장하지 않는다.
+  - Android 공유하기(Web Share Target, `POST`): 문자 앱에서 [공유 → FINLOG] → 빠른 입력이 채워진 채 열린다. 원문은 URL에 싣지 않고 5분짜리 httpOnly 쿠키로 한 번만 넘긴다(로그인을 거쳐도 남도록).
+  - iOS 단축어: "카드 승인 문자 수신 → 텍스트 복사 → FINLOG `/dashboard?add=paste` 열기" 안내. 앱은 빠른 입력을 붙여넣기 단계로 연다(iOS는 클립보드 자동 읽기 불가 → 버튼 1회).
+  - 중복 경고: 붙여넣기·공유로 채운 지출을 저장할 때, 같은 금액·±1일의 기존 지출이 있으면 "이미 기록한 것 같아요"로 확인 후 저장.
+  - 네이티브 껍데기(Capacitor)로 Android 알림 자동 수집 → `needsReview` 거래로 생성 후 확인할 일에서 확정하는 방식은 P2.
+
+- **저장 후 피드백** (P0, v3): 빠른 입력 저장 결과 화면에 "오늘 쓸 수 있는 돈 16.6만 → 11.2만", 해당 카테고리의 이번 달 누계·전월 대비를 표시. 서버 액션이 변경 전후 값을 함께 돌려준다.
 
 #### 2-6. 월 경계 설정 (P0)
 - 가구 설정 "월 시작일": 1일(기본) 또는 급여일(예: 25일). 모든 월별 통계는 이 경계로 집계.
 - 시간대: `Asia/Seoul` 고정. DB에는 날짜(`DATE`)로 저장하여 TZ 이슈 제거.
 
-#### 2-7. 예산 (P1)
-- 카테고리별 월 예산, 전체 생활비 예산. 80%/100% 도달 시 알림.
-- 일할 페이스 표시: "오늘까지 권장 사용액 대비 +12%".
+#### 2-7. 쓸 수 있는 돈 (P0) — v3 신규, 카테고리 예산 대체
+```
+쓸 수 있는 돈 = 수입 − 고정비 − 목표 저축 − 변동 지출
+하루 권장액  = max(쓸 수 있는 돈, 0) / 이번 달 남은 일수(오늘 포함)
+```
+| 항목 | 정의 |
+|---|---|
+| 수입 | max(활성 정기 `INCOME` 규칙 합, 이번 달 실제 `INCOME` 합) |
+| 고정비 | 활성 정기 `EXPENSE` 규칙 합. 월초부터 전액 차감 (실현 여부 무관) |
+| 목표 저축 | `ACTIVE` 목표별 `monthlyCommit ?? max(필요 납입액, 0)` 합 |
+| 변동 지출 | 이번 달 `EXPENSE` 합. 단, 고정비로 잡힌 정기 규칙이 생성한 거래는 제외 |
 
-#### 2-8. 통계 대시보드 (P0)
+- 활성 정기 규칙이 생성한 지출(`recurringRuleId`가 그 규칙)은 고정비로 이미 빠졌으므로 **변동 지출에 다시 넣지 않는다** (이중 차감 금지). 사용자가 직접 "고정" 체크한 거래는 규칙이 없으므로 변동 지출로 센다.
+- 고정비·수입 규칙은 이번 달 범위에 걸치는 것만 센다 (`startDate < 월 끝`, `endDate` 없음 또는 `≥ 월 시작`).
+- 이번 달 저축 진행 = 이번 달 (`SAVE_INVEST` + `LOAN_REPAY`) / 목표 저축.
+- 값이 음수면 "N원 초과" 상태(경고색)로 표시하고 하루 권장액은 0.
+- 범위: `우리` 뷰는 가구 공개 데이터 전체 + 목표 저축 차감. `나`/`배우자` 뷰는 해당 사람의 수입·정기거래·지출만 쓰고 목표 저축은 차감하지 않는다(목표는 가구 공동). `PRIVATE`는 다른 뷰처럼 상대 화면에서 제외.
+- 카테고리별 예산(v2 P1)은 보류. 필요해지면 쓸 수 있는 돈의 하위 항목으로 추가한다.
+
+#### 2-8. 홈 (P0) — v3 재설계
+위에서 아래 순서 고정. 데스크톱은 2단(왼쪽: 목표·최근 기록 / 오른쪽: 쓸 수 있는 돈·확인할 일).
+
+| 순서 | 블록 | 내용 |
+|---|---|---|
+| 1 | 대표 목표 | `ACTIVE` 목표 중 priority 1위. 현재액/목표액, 진척 바, "N개월 앞섬/뒤처짐" 칩, 예상 달성 월. 다른 목표는 한 줄 요약 |
+| 2 | 쓸 수 있는 돈 | §2-7 값, 남은 일수, 하루 권장액, 생활비 사용 바 |
+| 3 | 이번 달 저축 | 실제 저축 / 목표 저축 진행 바 |
+| 4 | 확인할 일 | §2-10. 0건이면 블록 숨김 |
+| 5 | 최근 기록 | 최근 5건 (공개범위 적용), "가계부에서 보기" |
+
+- `SUMMARY_ONLY` 합산 안내, 뷰 토글 [우리/나/배우자]는 v2와 같다.
+- 목표가 없는 가구(v2 기존 사용자 등)는 1번 자리에 "첫 목표 정하기" 카드를 보여준다.
+
+#### 2-9. 리포트 (P0) — v2 대시보드 차트 이동
 | 위젯 | 내용 |
 |---|---|
-| 요약 카드 | 순자산, 이번 달 수입, 지출, 저축·투자액, **저축률** = (SAVE_INVEST + LOAN_REPAY) / INCOME |
-| 50/30/20 비교 | 실제 NEEDS/WANTS/SAVINGS 비율 vs 기준선 (스택 바) |
+| 월간 결산 | §4-7. 리포트 탭 최상단 |
+| 요약 카드 | 순자산, 수입, 지출, 저축·투자액, 저축률 = (SAVE_INVEST + LOAN_REPAY) / INCOME |
+| 50/30/20 비교 | 실제 NEEDS/WANTS/SAVINGS 비율 vs 기준선 |
 | 카테고리 Top 5 | 금액 + 전월 대비 증감 |
-| 월별 추이 | 최근 12개월 수입/지출/저축 (막대 + 저축률 선) |
-| 순자산 추이 | 월말 스냅샷 기준 라인 차트 (자산/부채 분리) |
-| 이상 지출 감지 (P2) | 카테고리 지출이 직전 3개월 평균 + 2σ 초과 시 하이라이트 |
-| 부부 기여도 (P1) | 수입·공동지출·저축 기여 비율 (공개 범위 내에서만) |
+| 월별 추이 | 최근 12개월 수입/지출/저축 |
+| 순자산 추이 | 월말 스냅샷 기준 (자산/부채 분리) |
+| 이상 지출 감지 (P2) | 직전 3개월 평균 + 2σ 초과 하이라이트 |
+| 부부 기여도 (P1) | 공개 범위 내 수입·공동지출·저축 기여 비율 |
+
+#### 2-10. 확인할 일 (P0) — v3 신규
+- **정기거래 확인**: 정기 규칙으로 자동 생성된 거래는 `needsReview = true`로 만든다. 홈에서 "보험 70만 빠져나갔나요?" → [맞아요]는 플래그 해제, [금액 수정]은 거래 편집. 확인 전에도 통계에는 포함된다.
+- **잔액 업데이트**: 자산 계좌 중 마지막 스냅샷이 30일 넘은 계좌. → 잔액 입력 다이얼로그.
+- 최대 3건, 오래된 순.
 
 ---
 
@@ -201,6 +280,8 @@
 ### ④ 자산 예측 & 시뮬레이션
 
 #### 4-1. 기본 시뮬레이션 (P0)
+> v3: 독립 화면 대신 **목표 상세의 "만약에" 패널**로 제공한다. 입력 기본값은 해당 목표의 현재액·납입액·수익률·목표일. "이 계획으로 바꾸기"로 `monthlyCommit`, `expectedReturn`, `targetDate`를 저장. `/simulate`는 대표 목표 상세로 리다이렉트(목표가 없으면 목표 만들기).
+
 입력: 현재 자산(PV), 월 납입액(PMT), 연 기대수익률(R), 기간(N년), 기대 물가상승률(π, 기본 2.5%), **납입액 연 증가율(g, 기본 0%)**.
 
 **계산 규칙**
@@ -240,15 +321,22 @@
 - **진척도**: 연결 계좌 현재 잔액 / 목표액 + "계획 대비 앞섬/뒤처짐 N개월" 표시.
 - 여러 목표의 필요 납입액 합 > 저축 가능액이면 우선순위 순으로 배정 시뮬레이션.
 
-#### 4-7. 월간 리포트 (P1)
-- 매월 시작일에 지난달 요약 자동 생성: 저축률, 예산 준수, 목표 진척, 다음 달 액션 1~3개.
-- 부부 모드: 두 사람에게 동일 리포트 (공개 범위 준수).
+- **대표 목표** (v3): `ACTIVE` 중 priority가 가장 작은 목표. 목표 목록에서 순서를 바꾸면 홈 대표 목표가 바뀐다.
+
+#### 4-7. 월간 결산 (P0, v3 축소판)
+- 월 시작일 이후 리포트 탭 최상단에 **지난달** 결산을 표시. 조회 시점 계산, 저장하지 않는다.
+- 내용: 저축률, 목표 저축 달성(실제/계획), 쓸 수 있는 돈 결과(N원 남김 / N원 초과), 대표 목표 앞섬·뒤처짐의 전월 대비 변화.
+- 다음 달 조정 제안 최대 3개 (규칙 기반):
+  - 초과 시: 전월 대비 가장 많이 늘어난 카테고리 → "외식 +12만"
+  - 목표 저축 미달 2개월 연속: 목표 조정 대안(기간 연장/금액 하향) → 목표 상세 "만약에"로 이동
+  - 잔액 스냅샷 30일 초과 계좌 → 잔액 업데이트
+- 부부 모드: 두 사람에게 동일 결산(공개 범위 준수). PDF·푸시 알림은 P2.
 
 ---
 
 ### ⑤ 멀티 디바이스 / Cross-Platform
-- **Mobile-first 반응형** (P0): 하단 탭바(홈 / 가계부 / 자산 / 목표 / 더보기), 플로팅 [+] 빠른 입력 버튼.
-- **PWA** (P1): 홈 화면 설치, 오프라인 입력 큐(온라인 복귀 시 동기화, 충돌 시 last-write-wins + 충돌 로그).
+- **Mobile-first 반응형** (P0): 하단 탭바(홈 / 가계부 / 목표 / 자산 / 리포트), 플로팅 [+] 빠른 입력 버튼. 설정은 상단 프로필 메뉴.
+- **PWA**: 홈 화면 설치·공유받기 (P0, v3.1 G단계), 오프라인 입력 큐 (P1)(온라인 복귀 시 동기화, 충돌 시 last-write-wins + 충돌 로그).
 - **푸시 알림** (P2): 예산 초과, 정기 거래 확인, 월간 리포트, 배우자 공동 지출 등록.
 - 데스크톱: 좌측 사이드바 + 다단 대시보드, 가계부 표 뷰(정렬·필터·일괄 편집).
 - 다크 모드, 금액 표기 `₩1,234,567` / 축약 `123.4만`, 큰 글씨 대응(WCAG AA).
@@ -259,21 +347,20 @@
 
 ```
 / (랜딩)
-/login, /signup, /onboarding           ← 온보딩: 모드 선택 → 계좌 등록 → 월급·고정비 → 첫 목표
-/app
- ├─ /dashboard                         ← [우리|나|배우자] 뷰 토글, 요약/차트/목표 진척
- ├─ /ledger                            ← 월 캘린더 + 리스트, 필터(계좌/카테고리/작성자/공개범위)
- │   ├─ /ledger/new                    ← 빠른 입력 (모달 라우트)
- │   ├─ /ledger/import                 ← CSV 가져오기 (P1)
- │   └─ /ledger/recurring              ← 정기 거래 규칙
- ├─ /budget                            ← 예산 (P1)
- ├─ /assets                            ← 계좌 목록, 순자산 추이, 잔액 업데이트
- ├─ /portfolio                         ← 성향 진단 → 사전점검 → 모델 배분 → 커스텀/비교 (P1)
- ├─ /simulate                          ← 자유 시뮬레이터 (입력 슬라이더 ↔ 실시간 차트)
- ├─ /goals, /goals/[id]                ← 목표 목록, 상세(진척/역산/대안/연결 플랜)
- ├─ /reports/[yyyy-mm]                 ← 월간 리포트 (P1)
- ├─ /settlement                        ← 부부 정산 (P1)
- └─ /settings                          ← 가구·구성원·초대, 카테고리, 월 시작일, 분담 규칙, 데이터 내보내기/탈퇴
+/login, /signup
+/onboarding                            ← 5단계 (§1-7). 멤버십 없으면 (app) 접근 시 여기로
+/(app)
+ ├─ /dashboard        [탭: 홈]          ← 대표 목표 · 쓸 수 있는 돈 · 저축 · 확인할 일 · 최근 기록 (§2-8)
+ ├─ /ledger           [탭: 가계부]      ← 월 캘린더 + 리스트, 필터
+ │   ├─ /ledger/recurring              ← 가계부 내 "고정" 탭 (정기 거래 규칙)
+ │   └─ /ledger/import                 ← CSV 가져오기 (P1)
+ ├─ /goals            [탭: 목표]        ← 목표 목록(우선순위 순서 변경)
+ │   └─ /goals/[id]                    ← 진척·역산·대안 + "만약에" 시뮬레이터 패널
+ ├─ /assets           [탭: 자산]        ← 계좌 목록, 순자산, 잔액 업데이트
+ ├─ /reports          [탭: 리포트]      ← 월간 결산 + 통계 차트 (§2-9), ?month=yyyy-mm
+ ├─ /settings                          ← 상단 프로필 메뉴에서 진입. 가구·구성원·초대, 카테고리, 월 시작일
+ ├─ /portfolio, /settlement            ← P1 (보류)
+ └─ (제거) /simulate → /goals/[대표 목표], /more → /dashboard 리다이렉트
 ```
 
 ---
@@ -520,6 +607,15 @@ model AuditLog {
 
 **집계 성능**: `MonthlySummary(householdId, month, viewerScope, payload Json)` 캐시 테이블 — 거래 변경 시 해당 월만 무효화·재계산. (MVP는 실시간 집계로 시작, 거래 1만 건 초과 가구 생기면 도입)
 
+### v3 스키마 변경
+v3는 스키마를 거의 바꾸지 않는다. 목표 우선순위(`AssetGoal.priority`)와 확정 납입액(`AssetGoal.monthlyCommit`)은 이미 있다.
+
+| 변경 | 내용 | 용도 |
+|---|---|---|
+| `Transaction.needsReview Boolean @default(false)` | 정기 규칙으로 생성 시 `true` | §2-10 확인할 일 |
+
+`Budget` 모델은 유지하되 v3에서는 사용하지 않는다.
+
 ---
 
 ## 4. 도메인 로직 모듈 (순수 함수, `src/lib/finance`)
@@ -542,6 +638,9 @@ model AuditLog {
 | `projection.ts` | `calculateRequiredInvestment({target, pv, years, annualReturn, targetIsReal, inflation})` | 역산, ≤0 처리 |
 | `projection.ts` | `calculateMonthsToGoal({target, pv, pmt, annualReturn})` | 달성 시점 역산, 불가 시 `null` |
 | `projection.ts` | `suggestAlternatives(goal, capacity)` | 기간 연장/금액 하향/성향 상향 대안 |
+| `spendable.ts` | `calculateSpendable({income, fixed, goalSaving, variableExpense, daysLeft})` | v3 §2-7. 남은 돈·하루 권장액·초과 여부 |
+| `spendable.ts` | `summarizeSpendableInputs(rules, txs, goals)` | 정기 규칙·거래·목표 → 위 입력값 (이중 차감 방지) |
+| `review.ts` | `buildMonthlyReview(prev, prevPrev, goals, snapshots)` | v3 §4-7 결산 + 조정 제안 |
 | `montecarlo.ts` | `simulate({…, runs, seed})` → `{p10[], p50[], p90[], successRate}` | Web Worker 실행 (P2) |
 | `events.ts` | `applyLifeEvents(baseCashflow, events)` | 월별 현금흐름 배열 변환 (P2) |
 
@@ -550,6 +649,8 @@ model AuditLog {
 - PV=10,000,000, PMT=0, R=5%, N=10 → FV ≈ 16,288,946
 - Target=1,000,000,000, PV=100,000,000, R=6%, N=15 → 필요 PMT = 2,650,097원 (원 단위 올림 — 목표 미달 방지, 월 환산 r = 1.06^(1/12)−1, 기말 납입 / 엑셀 `PMT()`로 교차 검증)
 - Target ≤ PV·(1+r)^n → 필요 PMT ≤ 0 → "이미 달성 가능"
+- 쓸 수 있는 돈: 수입 8,200,000, 고정비 2,150,000, 목표 저축 1,980,000, 변동 지출 2,410,000, 남은 10일 → 1,660,000원, 하루 166,000원
+- 같은 조건에 변동 지출 54,000 추가 → 1,606,000원 / 오늘 권장 166,000 → 112,000
 
 ---
 
@@ -573,6 +674,11 @@ model AuditLog {
 - E2E (Playwright): 온보딩 → 거래 입력 → 대시보드 반영 / 부부 초대 → 공개범위 검증 / 목표 역산.
 - 접근성: WCAG 2.1 AA, 차트는 표 대체 뷰 제공.
 - 관측성: 에러 트래킹(Sentry), 핵심 이벤트 분석(거래 입력, 목표 생성, 초대 수락).
+
+### 5.4 디자인 (v3)
+- shadcn/ui 무채색 기반을 유지하고 **액센트 색 1개**(저축·목표 진척을 뜻하는 짙은 초록)와 **숫자 전용 서체**(고정폭, `tabular-nums`)만 추가한다. 라이트/다크 모두 정의.
+- 상태 색은 액센트와 분리: 앞섬·달성 = 액센트, 주의(쓸 수 있는 돈 80% 이상 사용) = 주황, 초과·뒤처짐 = 빨강.
+- 빈 상태는 차트 대신 다음 행동 1개를 안내한다 (예: "첫 지출을 기록해 보세요").
 
 ---
 
@@ -624,10 +730,10 @@ prisma/
 
 ## 7. 릴리즈 로드맵 & 수용 기준
 
-### Phase 1 — MVP (P0)
+### Phase 1 — MVP (P0) · v2에서 구현 완료
 범위: 인증, 가구(개인/부부 초대), 공개범위, 계좌, 거래 CRUD(6유형), 카테고리, 정기거래, 월 경계, 대시보드, 기본 시뮬레이터, 목표 + 역산.
 
-**수용 기준 (AC)**
+**수용 기준 (유지, 회귀 테스트 대상)**
 - AC-1: 카드로 5만원 지출 후 결제일에 통장→카드 TRANSFER 등록 시, 월 지출 통계는 5만원(1회)만 집계된다.
 - AC-2: 통장→증권 SAVE_INVEST 100만원은 지출에 포함되지 않고 저축률에 반영된다.
 - AC-3: A가 `PRIVATE`로 등록한 거래는 B의 어떤 API 응답(목록·합계·검색)에도 나타나지 않는다.
@@ -638,8 +744,42 @@ prisma/
 - AC-8: 375px 폭에서 모든 P0 화면이 가로 스크롤 없이 동작한다.
 - AC-9: 다른 가구의 거래 ID로 직접 요청 시 404를 반환한다.
 
+### Phase 1.5 — v3 흐름 재설계 (P0)
+범위: 온보딩 5단계(§1-7), 쓸 수 있는 돈(§2-7), 홈(§2-8), 리포트 탭(§2-9), 확인할 일(§2-10), 목표+시뮬레이터 통합(§4-1), 월간 결산(§4-7), 탭 구조(§2), 디자인 토큰(§5.4).
+
+| 단계 | 내용 | AC |
+|---|---|---|
+| A | 로컬 DB 준비, 시드를 v3 온보딩 결과 모양으로 갱신, `needsReview` 마이그레이션 | AC-1~9 회귀 통과 |
+| B | `spendable.ts` 순수 함수 + 테스트 | AC-12, AC-14 |
+| C | 온보딩 5단계 | AC-10, AC-11, AC-18 |
+| D | 홈 + 기록 피드백 + 확인할 일 | AC-13, AC-19 |
+| E | 탭 구조, 리포트 탭, 목표+시뮬레이터 통합 | AC-15, AC-17 |
+| F | 월간 결산 | AC-16 |
+
+**수용 기준 (v3 추가)**
+- AC-10: 신규 가입자가 온보딩 5단계를 마치면 홈 첫 화면에 대표 목표와 쓸 수 있는 돈이 실제 값으로 표시되고, 빈 차트가 없다.
+- AC-11: 온보딩 완료 시 입력한 자산 칸마다 계좌 1개와 오늘 날짜 잔액 스냅샷, 수입·고정비 줄마다 정기 규칙 1개, priority 1 목표 1개가 생성된다. 5단계 전에 이탈하면 DB에 아무것도 생성되지 않는다.
+- AC-12: §4 쓸 수 있는 돈 기준값 테스트를 통과한다 (1,660,000원 / 하루 166,000원).
+- AC-13: 변동 지출 저장 응답에 변경 전후 쓸 수 있는 돈이 포함되고, 저장 결과 화면에 표시된다.
+- AC-14: 정기 규칙으로 생성된 고정 지출이 실현돼도 쓸 수 있는 돈은 다시 줄지 않는다.
+- AC-15: 목표 상세 "만약에"에서 월 저축을 바꾸면 서버 왕복 없이 달성 시점이 갱신되고, "이 계획으로 바꾸기" 시 `monthlyCommit`이 저장되어 홈 목표 저축에 반영된다.
+- AC-16: 월 시작일이 지난 뒤 리포트 탭 최상단에 지난달 결산과 조정 제안(최대 3개)이 표시된다.
+- AC-17: 모바일 하단 탭이 홈·가계부·목표·자산·리포트이고, `/simulate`와 `/more`는 리다이렉트된다.
+- AC-18: 초대 코드로 참여한 사용자는 온보딩 2~5단계 없이 홈으로 이동한다.
+- AC-19: 정기 규칙으로 생성된 거래가 홈 확인할 일에 나타나고, [맞아요]를 누르면 사라진다.
+
+### Phase 1.6 — 모바일 수집 (P0, v3.1)
+| 단계 | 내용 | AC |
+|---|---|---|
+| G | PWA 설치(manifest·아이콘), 승인 문자 파서 + [문자 붙여넣기], Android 공유받기, iOS 단축어 진입, 중복 경고 | AC-20~23 |
+
+- AC-20: 홈 화면에 설치할 수 있는 manifest(이름·아이콘·standalone·시작 URL `/dashboard`)가 제공된다.
+- AC-21: 주요 카드사 승인 문자 예시를 붙여넣으면 금액·날짜·가맹점이 채워지고, 취소 문자는 "취소 문자예요"로 안내하고 채우지 않는다.
+- AC-22: Android에서 문자를 FINLOG로 공유하면 빠른 입력이 채워진 채 열리고, 원문이 URL·DB에 남지 않는다.
+- AC-23: 붙여넣기·공유로 채운 지출을 저장할 때 같은 금액·±1일 지출이 있으면 확인을 거친다.
+
 ### Phase 2 — P1
-성향 진단, 사전 점검, 모델 포트폴리오·커스텀·비교, 시나리오, 예산, CSV 가져오기, 자동 분류, 정산, 탈퇴 정책, 월간 리포트, PWA 설치.
+성향 진단, 사전 점검, 모델 포트폴리오·커스텀·비교, 시나리오, 카테고리 예산(필요 시), CSV 가져오기(데스크톱 보조), 자동 분류, 정산, 탈퇴 정책, 월간 결산 PDF, PWA 오프라인 입력 큐.
 
 ### Phase 3 — P2
 몬테카를로, 라이프 이벤트, 세금 반영, 리밸런싱, 이상 지출 감지, 푸시, 세전→세후 계산, 앱 잠금.
@@ -662,60 +802,71 @@ prisma/
 
 ---
 
-## 9. 오픈 이슈 (결정 필요)
-1. 인증: Auth.js vs Supabase Auth — Supabase 채택 시 RLS까지 일원화 가능.
-2. 부부 모드에서 한 사람이 2개 이상 가구 소속(예: 부모님 가계 관리) 허용 여부 — MVP는 1개로 제한.
-3. 수익률 가정치의 출처 및 갱신 주체.
-4. 수익 모델: 무료 + 프리미엄(몬테카를로·라이프이벤트·리포트 PDF)? 광고 미도입 원칙?
-5. 오프라인 동기화 충돌 정책을 last-write-wins로 충분한지.
+## 9. 오픈 이슈
+
+### v3에서 결정됨 (2026-10-30)
+| 질문 | 결정 |
+|---|---|
+| 목표가 여러 개일 때 홈 대표 목표 | priority 1위 하나. 나머지는 한 줄 요약 |
+| 카테고리 예산 | 쓸 수 있는 돈 총액으로 대체. 카테고리 예산은 보류 |
+| 부부 모드에서 쓸 수 있는 돈 기준 | 기본 "우리", 상단 토글로 나·배우자 전환 (§2-7 범위 규칙) |
+| 온보딩 현재 자산 입력 | 합계 1개 이상 필수, 칸별 세부는 선택 |
+| 디자인 톤 | 액센트 색 1개 + 숫자 서체만 이번에 정한다 (§5.4) |
+| 인증 | Auth.js 유지 (v2 구현) |
+
+### 남은 이슈
+1. 부부 모드에서 한 사람이 2개 이상 가구 소속(예: 부모님 가계 관리) 허용 여부 — MVP는 1개로 제한.
+2. 수익률 가정치의 출처 및 갱신 주체 (목표 템플릿 기본값 2~3% 포함).
+3. 수익 모델: 무료 + 프리미엄(몬테카를로·라이프이벤트·리포트 PDF)? 광고 미도입 원칙?
+4. 오프라인 동기화 충돌 정책을 last-write-wins로 충분한지.
+5. 기존 v2 사용자(목표 없는 가구)에게 온보딩 2~5단계를 다시 보여줄지 — 현재안은 홈의 "첫 목표 정하기" 카드로 유도.
 
 ---
 
-## 10. Claude Code 실행 프롬프트 (단계별)
+## 10. Claude Code 실행 프롬프트 (v3 단계별)
 
-> 한 번에 전부 요청하지 말고 **Phase 단위로 나눠** 입력한다. 각 단계 완료 후 테스트 통과를 확인하고 다음으로.
+> Phase 1(v2) 단계별 프롬프트는 `PROD.v2.MD` §10 참고. v3는 §7 Phase 1.5의 A~F 단계로 나눠 진행하고, 단계마다 `npm test`·`typecheck`·`lint`를 통과시킨 뒤 다음으로 간다.
 
-### Step 1 — 프로젝트 셋업 & 스키마
+### A — 환경 · 스키마
 ```text
-Read PROD.MD (FINLOG PRD v2) fully before starting. Implement Step 1 only.
-
-1. Initialize Next.js 15 (App Router, TypeScript strict, src/ dir), Tailwind, shadcn/ui, Prisma (PostgreSQL), Zod, TanStack Query, Zustand, Recharts, decimal.js, Vitest.
-2. Create the feature-based folder structure in PRD §6.
-3. Write prisma/schema.prisma from PRD §3 (money = BigInt in KRW, rates = Decimal, transaction date = @db.Date).
-4. Write prisma/seed.ts: default 2-level categories with 50/30/20 buckets (PRD §2-4), AssetClassAssumption rows (PRD §3-3 table), and one demo couple household with 3 months of realistic transactions covering all 6 TxTypes.
-5. Add a household-scoped repository helper in src/lib/db that requires householdId + viewer userId on every query and applies Visibility rules (PRD §1-3) server-side.
-Do not build UI yet. Report the files created and any PRD ambiguities you hit.
+Read PROD.MD (v3). Add Transaction.needsReview (default false) with a migration; set it true in materializeRecurring.
+Update prisma/seed.ts so the demo couple looks like a finished v3 onboarding: priority-1 goal, asset accounts linked to it with snapshots, salary + fixed-cost recurring rules.
+Run migrate + seed locally and confirm AC-1~9 tests still pass.
 ```
 
-### Step 2 — 금융 계산 순수 함수
+### B — 쓸 수 있는 돈
 ```text
-Implement src/lib/finance per PRD §4 (Phase 1 functions only: money, period, stats, projection incl. suggestAlternatives).
-- Pure functions, no I/O. BigInt for money, decimal.js for rates.
-- Monthly rate = (1+R)^(1/12)-1, end-of-month contributions, handle r=0.
-- stats must exclude TRANSFER from income/expense and count SAVE_INVEST + LOAN_REPAY toward savings rate (PRD §2-2).
-- Write Vitest tests including every reference value in PRD §4 and edge cases (0 amount, 0%, negative return, 1 month, already-achieved goal).
-Run the tests and show results.
+Add src/lib/finance/spendable.ts per PROD.MD §2-7 and §4 (calculateSpendable, summarizeSpendableInputs).
+Fixed expenses come from active recurring EXPENSE rules; transactions generated by those rules must not be subtracted again (manual isFixed transactions still count).
+Write Vitest tests with the §4 reference values and edge cases (overspent, 0 days left, no goals, me/partner scope without goal saving).
 ```
 
-### Step 3 — 인증 · 가구 · 가계부
+### C — 온보딩
 ```text
-Implement Phase 1 household + ledger features (PRD §1-1~1-3, §1-6, §2-1~2-6):
-- Auth (Kakao, Google, Email), onboarding flow (mode → accounts → salary/fixed costs → first goal).
-- Household invite by 6-digit code (72h, single-use), roles.
-- Accounts CRUD, transactions CRUD for all TxTypes with quick-input modal, recurring rules (with Vercel Cron route), month-start-day setting.
-- Ledger page: monthly calendar + list, filters.
-Verify AC-1 through AC-5 and AC-9 from PRD §7 with tests (Vitest for server actions, Playwright for one E2E flow).
+Rebuild /onboarding as the 5 steps in PROD.MD §1-7. Keep draft state client-side; create household, accounts, snapshots, recurring rules and goal in one server action inside one DB transaction on the final step.
+Invite-code joiners go straight to /dashboard. Verify AC-10, AC-11, AC-18.
 ```
 
-### Step 4 — 대시보드 · 시뮬레이터 · 목표
+### D — 홈
 ```text
-Implement PRD §2-8 dashboard (P0 widgets), §4-1 simulator, §4-6 goals.
-- Mobile-first AppShell: bottom tab bar on mobile, sidebar on desktop, [우리|나|배우자] view-scope toggle (Zustand) that re-queries server data.
-- Dashboard: summary cards, 50/30/20 stacked bar, Top 5 categories with MoM delta, 12-month trend, net worth line.
-- /simulate: sliders update the chart client-side using lib/finance (no server round-trip); nominal/real toggle (default real); stacked area of principal vs gain.
-- /goals: multiple goals with priority, required monthly contribution, months-to-goal, ahead/behind indicator, 3 alternatives when unaffordable.
-Verify AC-6, AC-7, AC-8. Run a final lint + typecheck + test pass.
+Rebuild /dashboard per PROD.MD §2-8: primary goal, spendable, this month's saving, review items (§2-10), recent 5 transactions.
+Quick-add returns before/after spendable and shows it after save. Empty states suggest one next action. Verify AC-13, AC-19, AC-8.
 ```
 
-### Step 5 이후
-Phase 2(P1) 기능은 Step 1~4 완료 후 PRD §7 Phase 2 목록을 기준으로 기능 단위 프롬프트를 새로 작성한다.
+### E — 탭 · 리포트 · 목표 통합
+```text
+Mobile tabs: 홈·가계부·목표·자산·리포트; settings via header profile menu. Move v2 dashboard charts to /reports.
+Embed the simulator as a "만약에" panel in /goals/[id] with "이 계획으로 바꾸기" saving monthlyCommit/expectedReturn/targetDate.
+Redirect /simulate and /more. Apply the §5.4 accent and numeric font tokens. Verify AC-15, AC-17.
+```
+
+### F — 월간 결산
+```text
+Add src/lib/finance/review.ts (buildMonthlyReview) with tests, and render last month's review at the top of /reports per PROD.MD §4-7. Verify AC-16.
+```
+
+### G — 모바일 수집 (웹/PWA)
+```text
+Add app/manifest.ts with icons and a POST share_target. Add src/lib/finance/card-message.ts (parseCardMessage) with tests for major issuers' approval/cancel formats.
+Quick-add gets a [문자 붙여넣기] step; shared text arrives via a 5-minute httpOnly cookie, never the URL. Warn on likely duplicates before saving. Verify AC-20~23.
+```

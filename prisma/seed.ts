@@ -1,5 +1,6 @@
 /**
  * 데모 데이터: 부부 가구(민수·지영) + 계좌 + 최근 4개월 거래(6가지 유형 모두) + 정기거래 + 목표.
+ * v3 온보딩을 마친 가구 모양: 월급·고정비는 모두 정기 규칙이 만든 거래, 대표 목표(priority 1) = 내 집 마련.
  * 로그인: minsu@demo.finlog / jiyoung@demo.finlog, 비밀번호 demo1234
  * 실행: npm run db:seed (기존 데모 사용자는 지우고 다시 만든다)
  */
@@ -90,6 +91,56 @@ async function main() {
     },
   });
 
+  // 월급·고정비 = 정기 규칙 (PROD.MD §1-7 4단계). 지난 회차 거래도 이 규칙이 만든 것으로 연결한다.
+  const FIXED: {
+    key: string;
+    by: string;
+    name: string;
+    type: TxType;
+    day: number;
+    amount: number;
+    from?: string;
+    to?: string;
+    category: string;
+    merchant?: string;
+  }[] = [
+    { key: "minsuPay", by: minsu.id, name: "민수 월급", type: "INCOME", day: 25, amount: 3_850_000, to: minsuBank.id, category: "정기급여", merchant: "(주)민수회사" },
+    { key: "jiyoungPay", by: jiyoung.id, name: "지영 월급", type: "INCOME", day: 25, amount: 3_420_000, to: jiyoungBank.id, category: "정기급여", merchant: "지영회사" },
+    { key: "mgmt", by: minsu.id, name: "관리비", type: "EXPENSE", day: 5, amount: 245_000, from: joint.id, category: "관리비", merchant: "아파트관리사무소" },
+    { key: "interest", by: minsu.id, name: "전세대출 이자", type: "EXPENSE", day: 5, amount: 230_000, from: joint.id, category: "대출이자", merchant: "국민은행" },
+    { key: "phone", by: minsu.id, name: "휴대폰", type: "EXPENSE", day: 15, amount: 125_000, from: joint.id, category: "휴대폰" },
+    { key: "subs", by: minsu.id, name: "구독", type: "EXPENSE", day: 15, amount: 32_000, from: card.id, category: "구독서비스", merchant: "넷플릭스·유튜브" },
+    { key: "insurance", by: minsu.id, name: "보험", type: "EXPENSE", day: 15, amount: 180_000, from: joint.id, category: "보험" },
+    { key: "internet", by: minsu.id, name: "인터넷·TV", type: "EXPENSE", day: 15, amount: 38_000, from: card.id, category: "인터넷·TV" },
+    { key: "car", by: minsu.id, name: "자동차 할부", type: "EXPENSE", day: 10, amount: 420_000, from: joint.id, category: "차량유지", merchant: "현대캐피탈" },
+    { key: "parents", by: jiyoung.id, name: "부모님 용돈", type: "EXPENSE", day: 1, amount: 400_000, from: jiyoungBank.id, category: "용돈" },
+  ];
+  const ruleIds = new Map<string, string>();
+  for (const f of FIXED) {
+    const rule = await prisma.recurringRule.create({
+      data: {
+        householdId: hid,
+        createdByUserId: f.by,
+        name: f.name,
+        template: {
+          type: f.type,
+          amount: String(f.amount),
+          fromAccountId: f.from ?? null,
+          toAccountId: f.to ?? null,
+          categoryId: cat(f.category),
+          merchant: f.merchant ?? null,
+          memo: null,
+          visibility: "SHARED",
+        },
+        dayOfMonth: f.day,
+        businessDayAdjust: "NONE",
+        startDate: d(start),
+        lastRunOn: d(today),
+      },
+    });
+    ruleIds.set(f.key, rule.id);
+  }
+
   type Row = {
     by: string;
     type: TxType;
@@ -101,6 +152,7 @@ async function main() {
     merchant?: string;
     visibility?: Visibility;
     fixed?: boolean;
+    rule?: string;
   };
   const rows: Row[] = [];
   let seed = 7;
@@ -116,36 +168,36 @@ async function main() {
     const lastDay = i === 0 ? Number(today.slice(8)) : 28;
     const inMonth = (n: number) => n <= lastDay;
 
+    for (const f of FIXED) {
+      if (!inMonth(f.day)) continue;
+      rows.push({ by: f.by, type: f.type, date: day(f.day), amount: f.amount, from: f.from, to: f.to, category: f.category, merchant: f.merchant, fixed: f.type === "EXPENSE", rule: f.key });
+    }
     if (inMonth(25)) {
-      rows.push({ by: minsu.id, type: "INCOME", date: day(25), amount: 3_850_000, to: minsuBank.id, category: "정기급여", merchant: "(주)민수회사", fixed: true });
-      rows.push({ by: jiyoung.id, type: "INCOME", date: day(25), amount: 3_420_000, to: jiyoungBank.id, category: "정기급여", merchant: "지영회사", fixed: true });
       rows.push({ by: minsu.id, type: "TRANSFER", date: day(25), amount: 2_000_000, from: minsuBank.id, to: joint.id });
       rows.push({ by: jiyoung.id, type: "TRANSFER", date: day(25), amount: 1_800_000, from: jiyoungBank.id, to: joint.id });
       rows.push({ by: minsu.id, type: "SAVE_INVEST", date: day(26), amount: 1_000_000, from: minsuBank.id, to: isa.id, merchant: "ISA 적립" });
       rows.push({ by: jiyoung.id, type: "SAVE_INVEST", date: day(26), amount: 300_000, from: jiyoungBank.id, to: secret.id, visibility: "PRIVATE" });
     }
     if (inMonth(5)) {
-      rows.push({ by: minsu.id, type: "EXPENSE", date: day(5), amount: 245_000, from: joint.id, category: "관리비", merchant: "아파트관리사무소", fixed: true });
-      rows.push({ by: minsu.id, type: "EXPENSE", date: day(5), amount: 230_000, from: joint.id, category: "대출이자", merchant: "국민은행", fixed: true });
       rows.push({ by: minsu.id, type: "LOAN_REPAY", date: day(5), amount: 300_000, from: joint.id, to: loan.id, merchant: "전세대출 원금" });
       rows.push({ by: minsu.id, type: "SAVE_INVEST", date: day(5), amount: 250_000, from: joint.id, to: savings.id, merchant: "청약 납입" });
-    }
-    if (inMonth(15)) {
-      rows.push({ by: minsu.id, type: "EXPENSE", date: day(15), amount: 125_000, from: joint.id, category: "휴대폰", fixed: true });
-      rows.push({ by: minsu.id, type: "EXPENSE", date: day(15), amount: 32_000, from: card.id, category: "구독서비스", merchant: "넷플릭스·유튜브", fixed: true });
-      rows.push({ by: minsu.id, type: "EXPENSE", date: day(15), amount: 180_000, from: joint.id, category: "보험", fixed: true });
     }
     // 카드값 결제(이체) — 지난달 카드 사용분
     if (inMonth(14) && i < 4) {
       rows.push({ by: minsu.id, type: "TRANSFER", date: day(14), amount: 0, from: joint.id, to: card.id, merchant: "카드대금" });
     }
+    // 변동 지출: 부부 2인 기준 월 330만 안팎 — 쓸 수 있는 돈이 월말에 빠듯하게 남는 규모
     for (let n = 1; n <= lastDay; n += 2) {
-      rows.push({ by: n % 4 === 1 ? minsu.id : jiyoung.id, type: "EXPENSE", date: day(n), amount: rand(18_000, 95_000), from: card.id, category: "장보기", merchant: "이마트" });
+      rows.push({ by: n % 4 === 1 ? minsu.id : jiyoung.id, type: "EXPENSE", date: day(n), amount: rand(40_000, 140_000), from: card.id, category: "장보기", merchant: "이마트" });
       if (n % 3 === 0) rows.push({ by: minsu.id, type: "EXPENSE", date: day(n), amount: rand(4_500, 12_000), from: card.id, category: "카페·간식", merchant: "스타벅스" });
-      if (n % 5 === 0) rows.push({ by: jiyoung.id, type: "EXPENSE", date: day(n), amount: rand(25_000, 110_000), from: card.id, category: "외식", merchant: "동네 식당" });
-      if (n % 7 === 0) rows.push({ by: jiyoung.id, type: "EXPENSE", date: day(n), amount: rand(30_000, 150_000), from: jiyoungCard.id, category: "쇼핑·의류", merchant: "온라인몰", visibility: "SUMMARY_ONLY" });
-      if (n % 9 === 0) rows.push({ by: minsu.id, type: "EXPENSE", date: day(n), amount: rand(20_000, 70_000), from: card.id, category: "주유" });
+      if (n % 3 === 0) rows.push({ by: jiyoung.id, type: "EXPENSE", date: day(n), amount: rand(30_000, 130_000), from: card.id, category: "외식", merchant: "동네 식당" });
+      if (n % 4 === 1) rows.push({ by: minsu.id, type: "EXPENSE", date: day(n), amount: rand(18_000, 40_000), from: card.id, category: "배달", merchant: "배달앱" });
+      if (n % 5 === 0) rows.push({ by: jiyoung.id, type: "EXPENSE", date: day(n), amount: rand(40_000, 200_000), from: jiyoungCard.id, category: "쇼핑·의류", merchant: "온라인몰", visibility: "SUMMARY_ONLY" });
+      if (n % 7 === 0) rows.push({ by: minsu.id, type: "EXPENSE", date: day(n), amount: rand(40_000, 80_000), from: card.id, category: "주유" });
     }
+    if (inMonth(10)) rows.push({ by: jiyoung.id, type: "EXPENSE", date: day(10), amount: rand(50_000, 150_000), from: card.id, category: "생활용품", merchant: "다이소·쿠팡" });
+    if (inMonth(18)) rows.push({ by: minsu.id, type: "EXPENSE", date: day(18), amount: rand(20_000, 90_000), from: card.id, category: "병원·약국" });
+    if (inMonth(22)) rows.push({ by: minsu.id, type: "EXPENSE", date: day(22), amount: 100_000, from: joint.id, category: "경조사", merchant: "축의금" });
     if (inMonth(20)) {
       rows.push({ by: jiyoung.id, type: "EXPENSE", date: day(20), amount: 200_000, from: jiyoungCard.id, category: "용돈", merchant: "깜짝 선물", visibility: "PRIVATE" });
       rows.push({ by: minsu.id, type: "EXPENSE", date: day(20), amount: rand(40_000, 120_000), from: card.id, category: "공연·영화" });
@@ -166,6 +218,7 @@ async function main() {
       .reduce((s, x) => s + x.amount, 0);
   }
 
+  const reviewFrom = addDays(today, -10);
   await prisma.transaction.createMany({
     data: rows
       .filter((r) => r.amount > 0 && r.date >= start && r.date <= today)
@@ -182,40 +235,18 @@ async function main() {
         merchant: r.merchant ?? null,
         visibility: r.visibility ?? "SHARED",
         isFixed: r.fixed ?? false,
+        recurringRuleId: r.rule ? ruleIds.get(r.rule) : null,
+        // 최근 10일 안에 규칙이 만든 거래는 홈 "확인할 일"에 뜬다 (PROD.MD §2-10)
+        needsReview: Boolean(r.rule) && r.date >= reviewFrom,
       })),
-  });
-
-  // 정기 거래 규칙 (지난 회차는 이미 위에서 생성했으므로 lastRunOn = 오늘)
-  await prisma.recurringRule.create({
-    data: {
-      householdId: hid,
-      createdByUserId: minsu.id,
-      name: "민수 월급",
-      template: { type: "INCOME", amount: "3850000", fromAccountId: null, toAccountId: minsuBank.id, categoryId: cat("정기급여"), merchant: "(주)민수회사", memo: null, visibility: "SHARED" },
-      dayOfMonth: 25,
-      businessDayAdjust: "PREV",
-      startDate: d(today),
-      lastRunOn: d(today),
-    },
-  });
-  await prisma.recurringRule.create({
-    data: {
-      householdId: hid,
-      createdByUserId: minsu.id,
-      name: "관리비",
-      template: { type: "EXPENSE", amount: "245000", fromAccountId: joint.id, toAccountId: null, categoryId: cat("관리비"), merchant: "아파트관리사무소", memo: null, visibility: "SHARED" },
-      dayOfMonth: 5,
-      businessDayAdjust: "NONE",
-      startDate: d(today),
-      lastRunOn: d(today),
-    },
   });
 
   await prisma.assetGoal.createMany({
     data: [
-      { householdId: hid, name: "비상금", targetAmount: 15_000_000n, targetIsReal: false, targetDate: d(toDateStr(ty + 1, tm, 1)), priority: 1, expectedReturn: 0.03, linkedAccountIds: [savings.id] },
-      { householdId: hid, name: "내 집 마련", targetAmount: 300_000_000n, targetIsReal: true, targetDate: d(toDateStr(ty + 7, tm, 1)), priority: 2, expectedReturn: 0.05, linkedAccountIds: [isa.id, savings.id] },
-      { householdId: hid, name: "은퇴자금", targetAmount: 1_000_000_000n, targetIsReal: true, targetDate: d(toDateStr(ty + 25, tm, 1)), priority: 3, expectedReturn: 0.06, linkedAccountIds: [] },
+      // 대표 목표: 매달 ISA 100만 + 청약 25만 자동이체를 확정 납입액으로 → 필요액보다 적어 "뒤처짐"과 대안이 보인다
+      { householdId: hid, name: "내 집 마련", targetAmount: 300_000_000n, targetIsReal: true, targetDate: d(toDateStr(ty + 7, tm, 1)), priority: 1, expectedReturn: 0.05, linkedAccountIds: [isa.id, savings.id], monthlyCommit: 1_250_000n },
+      { householdId: hid, name: "비상금", targetAmount: 15_000_000n, targetIsReal: false, targetDate: d(toDateStr(ty + 1, tm, 1)), priority: 2, expectedReturn: 0.02, linkedAccountIds: [savings.id] },
+      { householdId: hid, name: "은퇴자금", targetAmount: 1_000_000_000n, targetIsReal: true, targetDate: d(toDateStr(ty + 25, tm, 1)), priority: 3, expectedReturn: 0.06, linkedAccountIds: [], monthlyCommit: 0n },
     ],
   });
 

@@ -9,8 +9,10 @@ import type { ActionResult } from "@/features/ledger/schema";
 import { signIn, signOut } from "@/lib/auth";
 import { getViewer, requireHousehold, writeAudit } from "@/lib/db/context";
 import { prisma } from "@/lib/db/prisma";
-import { createHouseholdWithDefaults } from "./setup";
+import { lastDayOfMonth, parseMonthKey, toDateStr, todayKST } from "@/lib/finance/period";
+import { createOnboardedHousehold } from "./setup";
 import { moveHouseholdData, type JoinDataMode } from "./merge";
+import { onboardingSchema } from "./onboarding-schema";
 
 const MAX_MEMBERS = 2;
 const INVITE_TTL_MS = 72 * 60 * 60 * 1000;
@@ -68,16 +70,34 @@ export async function logout() {
   await signOut({ redirectTo: "/login" });
 }
 
-// ───────────────────────── 가구 생성 ─────────────────────────
+// ───────────────────────── 온보딩 ─────────────────────────
 
-export async function createHousehold(raw: unknown): Promise<ActionResult> {
+/**
+ * 온보딩 완료 (PROD.MD §1-7): 가구·계좌·잔액 스냅샷·정기 규칙·첫 목표를 DB 트랜잭션 하나로 만든다.
+ * 5단계 "홈으로" 전에는 아무것도 저장하지 않는다 (AC-11).
+ */
+export async function completeOnboarding(raw: unknown): Promise<ActionResult> {
   const { user, membership } = await getViewer();
   if (membership) return { ok: false, error: "이미 가구에 소속되어 있습니다." };
-  const parsed = z.object({ name: z.string().trim().min(1).max(30) }).safeParse(raw);
-  if (!parsed.success) return { ok: false, error: "가구 이름을 입력하세요." };
-  await prisma.$transaction((db) => createHouseholdWithDefaults(db, { name: parsed.data.name, ownerUserId: user.id }), {
-    timeout: 20_000,
-  });
+  const parsed = onboardingSchema.safeParse(raw);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "입력값을 확인하세요." };
+  const d = parsed.data;
+
+  const today = todayKST();
+  const { y, m } = parseMonthKey(d.goal.targetMonth);
+  const targetDate = toDateStr(y, m, lastDayOfMonth(y, m));
+  if (targetDate <= today) return { ok: false, error: "목표 시점은 이번 달 이후여야 합니다." };
+
+  await prisma.$transaction(
+    async (db) => {
+      const householdId = await createOnboardedHousehold(db, { userId: user.id, input: d, today, targetDate });
+      await db.auditLog.create({
+        data: { householdId, userId: user.id, action: "ONBOARDING_COMPLETE", entity: "Household", entityId: householdId, diff: { template: d.goal.template } },
+      });
+    },
+    { timeout: 30_000 },
+  );
+  revalidatePath("/", "layout");
   redirect("/dashboard");
 }
 

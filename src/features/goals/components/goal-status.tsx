@@ -30,7 +30,7 @@ export function GoalProgressBar({ goal }: { goal: GoalView }) {
       aria-valuemax={100}
       aria-label={`${goal.name} 진척률`}
     >
-      <div className="h-2 rounded-full" style={{ width: `${pct}%`, background: "var(--chart-1)" }} />
+      <div className="h-2 rounded-full" style={{ width: `${pct}%`, background: "var(--brand)" }} />
     </div>
   );
 }
