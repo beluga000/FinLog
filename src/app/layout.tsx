@@ -7,6 +7,8 @@ export const metadata: Metadata = {
   title: { default: "FINLOG", template: "%s · FINLOG" },
   description: "부부·개인 가계부와 목표 자산 시뮬레이션",
   applicationName: "FINLOG",
+  appleWebApp: { capable: true, title: "FINLOG", statusBarStyle: "default" },
+  icons: { icon: "/icons/192", apple: "/icons/180" },
 };
 
 export const viewport: Viewport = {

@@ -113,6 +113,31 @@ export async function applyGoalAlternative(
   return { ok: true };
 }
 
+/** "만약에" 패널 "이 계획으로 바꾸기" — 월 저축 확정액·기대수익률·목표일을 한 번에 저장 (§4-1, AC-15) */
+export async function applyGoalPlan(
+  id: string,
+  plan: { monthlyCommit: string; expectedReturn: number; targetDate: string },
+): Promise<ActionResult> {
+  const ctx = await requireHousehold();
+  if (!(await findGoal(ctx.householdId, id))) return { ok: false, error: "목표를 찾을 수 없습니다." };
+  const parsed = z
+    .object({
+      monthlyCommit: z.string().regex(/^\d+$/, "금액은 숫자만 입력하세요."),
+      expectedReturn: goalSchema.shape.expectedReturn,
+      targetDate: goalSchema.shape.targetDate,
+    })
+    .safeParse(plan);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "입력값을 확인하세요." };
+  const d = parsed.data;
+  if (d.targetDate <= todayKST()) return { ok: false, error: "목표일은 오늘 이후여야 합니다." };
+  await prisma.assetGoal.update({
+    where: { id },
+    data: { monthlyCommit: BigInt(d.monthlyCommit), expectedReturn: d.expectedReturn, targetDate: toDbDate(d.targetDate) },
+  });
+  revalidatePath("/", "layout");
+  return { ok: true };
+}
+
 export async function setGoalStatus(id: string, status: "ACTIVE" | "ACHIEVED" | "PAUSED"): Promise<ActionResult> {
   const ctx = await requireHousehold();
   if (!(await findGoal(ctx.householdId, id))) return { ok: false, error: "목표를 찾을 수 없습니다." };

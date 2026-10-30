@@ -1,16 +1,27 @@
+import { cookies } from "next/headers";
 import Link from "next/link";
 import { Suspense } from "react";
-import { LogOut } from "lucide-react";
 import { BottomTabBar, SidebarNav } from "@/components/layout/app-nav";
+import { ProfileMenu } from "@/components/layout/profile-menu";
 import { ScopeToggle } from "@/components/layout/scope-toggle";
-import { logout } from "@/features/household/actions";
 import { QuickAdd } from "@/features/ledger/components/quick-add";
 import { getAccounts, getCategories } from "@/features/ledger/queries";
+import { SHARED_TEXT_COOKIE } from "@/features/ledger/shared-text";
 import { requireHousehold } from "@/lib/db/context";
+
+function safeDecode(v: string) {
+  try {
+    return decodeURIComponent(v);
+  } catch {
+    return undefined;
+  }
+}
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const ctx = await requireHousehold();
-  const [accounts, categories] = await Promise.all([getAccounts(ctx, "us"), getCategories(ctx)]);
+  const [accounts, categories, cookieStore] = await Promise.all([getAccounts(ctx, "us"), getCategories(ctx), cookies()]);
+  const shared = cookieStore.get(SHARED_TEXT_COOKIE)?.value;
+  const sharedText = shared ? safeDecode(shared) : undefined;
 
   return (
     <div className="min-h-dvh md:grid md:grid-cols-[220px_1fr]">
@@ -19,15 +30,8 @@ export default async function AppLayout({ children }: { children: React.ReactNod
           FINLOG
         </Link>
         <SidebarNav />
-        <div className="mt-auto grid gap-2 px-3 text-xs text-muted-foreground">
-          <div className="truncate">
-            {ctx.household.name} · {ctx.user.name}
-          </div>
-          <form action={logout}>
-            <button type="submit" className="inline-flex items-center gap-1.5 hover:text-foreground">
-              <LogOut className="size-3.5" /> 로그아웃
-            </button>
-          </form>
+        <div className="mt-auto truncate px-3 text-xs text-muted-foreground">
+          {ctx.household.name} · {ctx.user.name}
         </div>
       </aside>
 
@@ -44,8 +48,15 @@ export default async function AppLayout({ children }: { children: React.ReactNod
             ) : (
               <span className="hidden text-sm text-muted-foreground md:inline">개인 모드</span>
             )}
-            <div className="ml-auto">
-              <QuickAdd accounts={accounts} categories={categories} viewerId={ctx.userId} isCouple={ctx.isCouple} />
+            <div className="ml-auto flex items-center gap-2">
+              <QuickAdd
+                accounts={accounts}
+                categories={categories}
+                viewerId={ctx.userId}
+                isCouple={ctx.isCouple}
+                sharedText={sharedText}
+              />
+              <ProfileMenu name={ctx.user.name ?? ""} householdName={ctx.household.name} />
             </div>
           </div>
         </header>

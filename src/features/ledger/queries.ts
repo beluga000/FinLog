@@ -134,6 +134,22 @@ export async function getTransaction(ctx: Ctx, id: string): Promise<TxRow | null
   return toRow(t);
 }
 
+/** 정기거래 확인용 — 내가 편집할 수 있는(full) 미확인 거래, 오래된 순 */
+export async function getReviewTransactions(ctx: Ctx, limit: number): Promise<TxRow[]> {
+  const rows = await prisma.transaction.findMany({
+    where: {
+      householdId: ctx.householdId,
+      deletedAt: null,
+      needsReview: true,
+      OR: [{ createdByUserId: ctx.userId }, { visibility: "SHARED" }],
+    },
+    orderBy: [{ date: "asc" }, { createdAt: "asc" }],
+    take: limit,
+    include: txInclude,
+  });
+  return rows.filter((t) => txAccess(t, ctx.userId, "us") === "full").map(toRow);
+}
+
 /** 잔액 계산용 흐름 — 보이는 계좌에 닿는 모든 거래 (계좌 잔액은 계좌의 사실이므로 거래 공개범위와 무관) */
 export async function getAccountFlows(ctx: Ctx, accountIds: string[], until: DateStr) {
   if (!accountIds.length) return { snapshots: [], flows: [] };

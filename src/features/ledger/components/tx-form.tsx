@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { cn } from "cn";
 import { AmountInput } from "@/components/common/amount-input";
@@ -10,12 +10,23 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
 import { LIABILITY_TYPES, SAVING_DESTINATION_TYPES } from "@/lib/finance/balance";
+import type { ParsedCardMessage } from "@/lib/finance/card-message";
 import { todayKST } from "@/lib/finance/period";
 import { TX_TYPE_META, TX_TYPES_ORDER, validateTxShape } from "@/lib/finance/tx-rules";
 import type { AccountType, TxType, Visibility } from "@/lib/finance/types";
 import { ACCOUNT_TYPE_LABEL, VISIBILITY_HINT, VISIBILITY_LABEL } from "@/lib/labels";
-import { createRecurringRule, createTransaction, deleteTransaction, updateTransaction } from "../actions";
+import { Money } from "@/components/common/money";
+import {
+  createRecurringRule,
+  createTransaction,
+  deleteTransaction,
+  inspectPastedExpense,
+  updateTransaction,
+  type PastedExpenseInfo,
+  type SpendableChange,
+} from "../actions";
 import type { CategoryRow, TxRow } from "../queries";
+import { PasteMessage } from "./paste-message";
 
 export interface AccountOption {
   id: string;
@@ -36,6 +47,8 @@ interface Props {
   /** 편집 대상 (tx 모드) */
   initial?: TxRow | null;
   defaultType?: TxType;
+  /** 문자로 채우기 진입 — 공유받기 원문 또는 iOS 단축어(입력칸 펼침) */
+  paste?: { text?: string; expanded?: boolean };
 }
 
 const CASH_LIKE: AccountType[] = ["CASH", "CHECKING", "SAVINGS"];
@@ -77,20 +90,91 @@ function rememberAccount(key: string, id: string | null) {
 
 export function TxFormDialog(props: Props) {
   const { open, onOpenChange, initial, mode = "tx" } = props;
+  const [saved, setSaved] = useState<SpendableChange | null>(null);
+  // 문자 채우기는 첫 기록에만 — "하나 더 기록"에서 같은 문자를 다시 채우지 않는다
+  const [pasteUsed, setPasteUsed] = useState(false);
+  // 닫을 때 결과 화면도 초기화 — 다음에 열면 빈 폼부터
+  const change = (o: boolean) => {
+    if (!o) {
+      setSaved(null);
+      setPasteUsed(false);
+    }
+    onOpenChange(o);
+  };
+  const onSaved = (c: SpendableChange) => {
+    setSaved(c);
+    setPasteUsed(true);
+  };
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={change}>
       <DialogContent className="max-h-[92dvh] overflow-y-auto sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>{mode === "recurring" ? "정기 거래 추가" : initial ? "거래 수정" : "거래 기록"}</DialogTitle>
+          <DialogTitle>
+            {saved ? "기록했어요" : mode === "recurring" ? "정기 거래 추가" : initial ? "거래 수정" : "거래 기록"}
+          </DialogTitle>
           <DialogDescription className="sr-only">거래 유형, 금액, 계좌를 입력합니다.</DialogDescription>
         </DialogHeader>
-        {open ? <TxForm {...props} key={initial?.id ?? "new"} /> : null}
+        {!open ? null : saved ? (
+          <SavedResult change={saved} onAgain={() => setSaved(null)} onClose={() => change(false)} />
+        ) : (
+          <TxForm
+            {...props}
+            paste={pasteUsed ? undefined : props.paste}
+            onOpenChange={change}
+            onSaved={onSaved}
+            key={initial?.id ?? "new"}
+          />
+        )}
       </DialogContent>
     </Dialog>
   );
 }
 
-function TxForm({ onOpenChange, accounts, categories, viewerId, isCouple, mode = "tx", initial, defaultType }: Props) {
+/** 저장 결과 — 쓸 수 있는 돈이 얼마에서 얼마로 바뀌었는지 (AC-13) */
+function SavedResult({ change, onAgain, onClose }: { change: SpendableChange; onAgain: () => void; onClose: () => void }) {
+  const over = change.after < 0n;
+  return (
+    <div className="grid gap-4">
+      <div className="grid gap-1 rounded-lg bg-muted px-4 py-3">
+        <div className="text-xs text-muted-foreground">이번 달 쓸 수 있는 돈</div>
+        <div className="flex flex-wrap items-baseline gap-x-2 tabular">
+          <Money value={change.before} className="text-sm text-muted-foreground line-through" />
+          <span className="text-muted-foreground" aria-hidden>→</span>
+          <span className="sr-only">에서</span>
+          <Money
+            value={over ? -change.after : change.after}
+            className={cn("text-2xl font-bold", over && "text-critical")}
+          />
+          {over ? <span className="text-sm font-medium text-critical">초과</span> : null}
+        </div>
+        <div className="text-xs text-muted-foreground">
+          {over ? "이번 달 남은 기간은 지출을 줄여야 해요." : <>오늘부터 하루 <Money value={change.daily} />씩 쓸 수 있어요.</>}
+        </div>
+      </div>
+      <DialogFooter className="gap-2">
+        <Button type="button" variant="outline" onClick={onAgain}>
+          하나 더 기록
+        </Button>
+        <Button type="button" size="lg" onClick={onClose} className="min-w-24">
+          확인
+        </Button>
+      </DialogFooter>
+    </div>
+  );
+}
+
+function TxForm({
+  onOpenChange,
+  onSaved,
+  accounts,
+  categories,
+  viewerId,
+  isCouple,
+  mode = "tx",
+  initial,
+  defaultType,
+  paste,
+}: Props & { onSaved: (change: SpendableChange) => void }) {
   const [pending, startTransition] = useTransition();
   const [type, setType] = useState<TxType>(initial?.type ?? defaultType ?? "EXPENSE");
   const [amount, setAmount] = useState(initial ? initial.amount.toString() : "");
@@ -104,6 +188,10 @@ function TxForm({ onOpenChange, accounts, categories, viewerId, isCouple, mode =
   const [visibility, setVisibility] = useState<Visibility | null>(initial?.visibility ?? null);
   const [isFixed, setIsFixed] = useState(initial?.isFixed ?? false);
   const [error, setError] = useState<string | null>(null);
+  // 문자로 채운 지출 — 저장 전에 중복 확인 (AC-23)
+  const [fromMessage, setFromMessage] = useState(false);
+  const [duplicate, setDuplicate] = useState<PastedExpenseInfo["duplicate"]>(null);
+  const [pendingAccount, setPendingAccount] = useState<string | null>(null);
   // 정기 거래 전용
   const [name, setName] = useState("");
   const [dayOfMonth, setDayOfMonth] = useState(25);
@@ -115,9 +203,12 @@ function TxForm({ onOpenChange, accounts, categories, viewerId, isCouple, mode =
   const isMine = !initial || initial.createdByUserId === viewerId;
   const byId = useMemo(() => new Map(accounts.map((a) => [a.id, a])), [accounts]);
 
-  // 새 거래: 유형별로 마지막에 쓴 계좌를 기본 선택
+  // 새 거래: 유형별로 마지막에 쓴 계좌를 기본 선택.
+  // 유형이 실제로 바뀔 때만 — 서버 액션 뒤 레이아웃이 다시 그려져 accounts 가 새 배열이 돼도 입력값을 지우지 않게
+  const appliedType = useRef<TxType | null>(null);
   useEffect(() => {
-    if (initial) return;
+    if (initial || appliedType.current === type) return;
+    appliedType.current = type;
     const last = readLastAccounts();
     const pick = (side: "from" | "to") => {
       const ok = accountFilter(type, side);
@@ -129,6 +220,34 @@ function TxForm({ onOpenChange, accounts, categories, viewerId, isCouple, mode =
     setTo(meta.to ? pick("to") : "");
     setCategory("");
   }, [type, initial, accounts, byId, meta.from, meta.to]);
+
+  // 문자 카드사에 맞는 결제 수단 — 위 기본값 효과 뒤에 적용되도록 이 순서를 유지한다
+  useEffect(() => {
+    if (!pendingAccount) return;
+    setFrom(pendingAccount);
+    setPendingAccount(null);
+  }, [pendingAccount, type]);
+
+  function applyParsed(p: ParsedCardMessage) {
+    setType("EXPENSE");
+    setAmount(p.amount!.toString());
+    if (p.date) setDate(p.date);
+    if (p.merchant) setMerchant(p.merchant);
+    setFromMessage(true);
+    setDuplicate(null);
+    // 계좌 이름에 카드사명(신한·현대 …)이 들어간 카드 → 없으면 같은 이름의 다른 결제 수단
+    const short = p.issuer?.replace(/카드|뱅크/g, "");
+    if (short) {
+      const named = accounts.filter((a) => a.type !== "LOAN" && a.name.includes(short));
+      const card = named.find((a) => a.type === "CREDIT_CARD") ?? named[0];
+      if (card) setPendingAccount(card.id);
+    }
+    const amountStr = p.amount!.toString();
+    const dateStr = p.date ?? date;
+    void inspectPastedExpense({ amount: amountStr, date: dateStr, merchant: p.merchant }).then((info) => {
+      if (info.categoryId) setCategory(info.categoryId);
+    });
+  }
 
   const typeCategories = categories.filter((c) => c.txType === type);
   const parents = typeCategories.filter((c) => !c.parentId);
@@ -169,6 +288,10 @@ function TxForm({ onOpenChange, accounts, categories, viewerId, isCouple, mode =
     };
 
     startTransition(async () => {
+      if (fromMessage && !duplicate && mode === "tx" && !initial && type === "EXPENSE") {
+        const info = await inspectPastedExpense({ amount, date, merchant: merchant || null });
+        if (info.duplicate) return setDuplicate(info.duplicate);
+      }
       let result;
       if (mode === "recurring") {
         const { date: _omit, ...template } = tx;
@@ -189,6 +312,8 @@ function TxForm({ onOpenChange, accounts, categories, viewerId, isCouple, mode =
       if (!result.ok) return setError(result.error);
       rememberAccount(`${type}:from`, tx.fromAccountId);
       rememberAccount(`${type}:to`, tx.toAccountId);
+      const change = result.data && "spendable" in result.data ? result.data.spendable : null;
+      if (change) return onSaved(change);
       toast.success(mode === "recurring" ? "정기 거래를 등록했어요" : initial ? "수정했어요" : "기록했어요");
       onOpenChange(false);
     });
@@ -256,6 +381,10 @@ function TxForm({ onOpenChange, accounts, categories, viewerId, isCouple, mode =
         ))}
       </div>
       <p className="-mt-2 text-xs text-muted-foreground">{meta.hint}</p>
+
+      {mode === "tx" && !initial ? (
+        <PasteMessage initialText={paste?.text} expanded={paste?.expanded} onParsed={applyParsed} />
+      ) : null}
 
       <Field label="금액" htmlFor="amount">
         <AmountInput id="amount" value={amount} onChange={setAmount} quickAdd={[10_000, 50_000, 100_000]} autoFocus={!initial} />
@@ -373,6 +502,16 @@ function TxForm({ onOpenChange, accounts, categories, viewerId, isCouple, mode =
             </Field>
           </div>
           <p className="text-xs text-muted-foreground">시작일부터 오늘까지 지난 회차도 바로 생성됩니다.</p>
+        </div>
+      ) : null}
+
+      {duplicate ? (
+        <div role="alert" className="grid gap-1 rounded-lg border border-warning/50 px-3 py-2 text-sm">
+          <span className="font-medium text-warning">이미 기록한 것 같아요</span>
+          <span className="text-muted-foreground">
+            {duplicate.date} · {duplicate.merchant ?? "사용처 없음"} · <Money value={duplicate.amount} />
+          </span>
+          <span className="text-xs text-muted-foreground">다른 거래가 맞으면 저장을 한 번 더 누르세요.</span>
         </div>
       ) : null}
 

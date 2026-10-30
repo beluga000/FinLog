@@ -4,6 +4,20 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* 숫자 전용 서체 — 설치된 고정폭 서체에서 숫자·, . % + − 만 가져온다 (₩ 가 W 로 보이는 문제 방지) */
+@font-face {
+  font-family: "FinNum";
+  font-weight: 400;
+  src: local("SF Mono"), local("SFMono-Regular"), local("Cascadia Mono"), local("CascadiaMono-Regular"), local("Menlo-Regular"), local("Consolas");
+  unicode-range: U+0025, U+002B-002E, U+0030-0039, U+2212;
+}
+@font-face {
+  font-family: "FinNum";
+  font-weight: 600 900;
+  src: local("SF Mono Bold"), local("SFMono-Bold"), local("Cascadia Mono Bold"), local("CascadiaMono-Bold"), local("Menlo-Bold"), local("Consolas Bold");
+  unicode-range: U+0025, U+002B-002E, U+0030-0039, U+2212;
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -25,6 +39,9 @@
   --color-chart-1: var(--chart-1);
   --color-good: var(--good);
   --color-critical: var(--critical);
+  --color-warning: var(--warning);
+  --color-brand: var(--brand);
+  --font-num: var(--font-num);
   --color-ring: var(--ring);
   --color-input: var(--input);
   --color-border: var(--border);
@@ -77,9 +94,14 @@
   --radius: 0.625rem;
   --chart-grid: #e1e0d9;
   --chart-axis: #898781;
-  --good: #006300;
+  /* §5.4 액센트 1색: 저축·목표 진척. 앞섬·달성(good)도 같은 색 */
+  --brand: #17693d;
+  --good: var(--brand);
   --critical: #d03b3b;
+  --warning: #b45309;
   --font-sans: system-ui, -apple-system, "Segoe UI", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  /* §5.4 숫자 전용 서체: 숫자·구분자만 고정폭(FinNum), ₩·한글은 본문 서체 */
+  --font-num: "FinNum", system-ui, -apple-system, "Segoe UI", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.145 0 0);
   --sidebar-primary: oklch(0.205 0 0);
@@ -108,8 +130,10 @@
   --destructive: oklch(0.704 0.191 22.216);
   --chart-grid: #2c2c2a;
   --chart-axis: #898781;
-  --good: #0ca30c;
+  --brand: #3fb37a;
+  --good: var(--brand);
   --critical: #e66767;
+  --warning: #f59e0b;
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
   --ring: oklch(0.556 0 0);
@@ -139,6 +163,8 @@
     @apply font-sans;
   }
   .tabular {
+    font-family: var(--font-num);
     font-variant-numeric: tabular-nums;
+    letter-spacing: -0.02em;
   }
 }

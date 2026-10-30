@@ -204,6 +204,7 @@ model Transaction {
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
   deletedAt       DateTime?
+  needsReview     Boolean        @default(false) // v3 §2-10: 정기 규칙으로 생성된 거래 → 홈 "확인할 일"
   household       Household      @relation(fields: [householdId], references: [id], onDelete: Cascade)
   fromAccount     Account?       @relation("fromAccount", fields: [fromAccountId], references: [id])
   toAccount       Account?       @relation("toAccount", fields: [toAccountId], references: [id])

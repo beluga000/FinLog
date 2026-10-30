@@ -126,7 +126,7 @@ export function NewAccountButton({ isCouple }: { isCouple: boolean }) {
   );
 }
 
-function BalanceForm({ id, type, current, onDone }: { id: string; type: AccountType; current: bigint; onDone: () => void }) {
+export function BalanceForm({ id, type, current, onDone }: { id: string; type: AccountType; current: bigint; onDone: () => void }) {
   const [pending, start] = useTransition();
   const liability = isLiability(type);
   const [value, setValue] = useState((liability ? -current : current).toString());
