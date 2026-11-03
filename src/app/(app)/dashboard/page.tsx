@@ -71,7 +71,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
           <SpendableCard spendable={spendable} hasIncome={spendable.income > 0n} />
         </div>
         <div className="min-w-0 empty:hidden lg:col-start-2 lg:row-start-2">
-          <SavingCard actual={saving} target={spendable.goalSaving} />
+          <SavingCard actual={saving} target={spendable.plannedSaving} />
         </div>
         <div className="min-w-0 empty:hidden lg:col-start-2 lg:row-start-3">
           <ReviewList

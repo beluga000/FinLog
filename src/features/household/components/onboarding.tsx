@@ -28,6 +28,7 @@ import {
 type Mode = "couple" | "solo" | "join";
 type FixedRow = { name: string; category: (typeof FIXED_CATEGORIES)[number]; amount: string; day: number };
 type IncomeRow = { name: string; amount: string; day: number };
+type SavingRow = { name: string; amount: string; day: number };
 
 interface Draft {
   step: number;
@@ -42,6 +43,7 @@ interface Draft {
   loan: string;
   incomes: IncomeRow[];
   fixed: FixedRow[];
+  savings: SavingRow[];
   startOnPayday: boolean;
 }
 
@@ -71,6 +73,7 @@ function initialDraft(userName: string, thisMonth: string): Draft {
       { name: "통신·구독", category: "휴대폰", amount: "", day: 10 },
       { name: "보험", category: "보험", amount: "", day: 15 },
     ],
+    savings: [{ name: "적금", amount: "", day: 25 }],
     startOnPayday: false,
   };
 }
@@ -116,6 +119,7 @@ export function Onboarding({ userName, today }: { userName: string; today: strin
       loan: draft.loan,
       incomes: draft.incomes.filter((i) => i.amount !== ""),
       fixed: draft.fixed.filter((f) => f.amount !== ""),
+      savings: draft.savings.filter((v) => v.amount !== ""),
       monthStartDay: draft.startOnPayday && paydayStart ? paydayStart : 1,
     }),
     [draft, paydayStart],
@@ -359,6 +363,7 @@ function DayInput({ id, value, onChange }: { id: string; value: number; onChange
 function StepCashflow({ draft, set, paydayStart }: StepProps & { paydayStart: number | null }) {
   const setIncome = (i: number, patch: Partial<IncomeRow>) => set({ incomes: draft.incomes.map((r, j) => (j === i ? { ...r, ...patch } : r)) });
   const setFixed = (i: number, patch: Partial<FixedRow>) => set({ fixed: draft.fixed.map((r, j) => (j === i ? { ...r, ...patch } : r)) });
+  const setSaving = (i: number, patch: Partial<SavingRow>) => set({ savings: draft.savings.map((r, j) => (j === i ? { ...r, ...patch } : r)) });
   return (
     <>
       <Title desc="매달 자동으로 기록돼요. 금액을 비워 둔 줄은 저장하지 않아요.">매달 들어오고 나가는 돈</Title>
@@ -432,6 +437,34 @@ function StepCashflow({ draft, set, paydayStart }: StepProps & { paydayStart: nu
           </button>
         ) : null}
       </section>
+
+      <section className="grid gap-3">
+        <div>
+          <h2 className="text-sm font-semibold">고정 저축</h2>
+          <p className="text-xs text-muted-foreground">매달 입출금 통장에서 예적금으로 자동이체하는 돈. 목표 저축에 먼저 채워져요.</p>
+        </div>
+        {draft.savings.map((r, i) => (
+          <div key={i} className="grid gap-1.5 border-b pb-3 last:border-b-0">
+            <div className="flex items-center gap-2">
+              <Input aria-label="저축 이름" value={r.name} maxLength={20} onChange={(e) => setSaving(i, { name: e.target.value })} className="h-9" />
+              <button type="button" aria-label="이 줄 삭제" onClick={() => set({ savings: draft.savings.filter((_, j) => j !== i) })} className="p-1 text-muted-foreground hover:text-foreground">
+                <X className="size-4" />
+              </button>
+            </div>
+            <div className="flex gap-2">
+              <div className="min-w-0 flex-1">
+                <AmountInput value={r.amount} onChange={(v) => setSaving(i, { amount: v })} />
+              </div>
+              <DayInput id={`saving-day-${i}`} value={r.day} onChange={(day) => setSaving(i, { day })} />
+            </div>
+          </div>
+        ))}
+        {draft.savings.length < 5 ? (
+          <button type="button" onClick={() => set({ savings: [...draft.savings, { name: "", amount: "", day: 25 }] })} className="inline-flex w-fit items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
+            <Plus className="size-4" /> 항목 추가
+          </button>
+        ) : null}
+      </section>
     </>
   );
 }
@@ -455,7 +488,11 @@ function StepResult({ draft, payload, today }: { draft: Draft; payload: Onboardi
   const required = calculateRequiredInvestment({ ...common, months });
   const income = payload.incomes.reduce((s, r) => s + Number(r.amount), 0);
   const fixed = payload.fixed.reduce((s, r) => s + Number(r.amount), 0);
-  const living = income - fixed - required.monthly;
+  const fixedSaving = payload.savings.reduce((s, r) => s + Number(r.amount), 0);
+  // 고정 저축이 목표에 연결된 예적금으로 들어가면 목표 저축을 그만큼 채운다 (홈 계산과 같은 규칙)
+  const savingsLinked = payload.assets.find((a) => a.kind === "savings")?.linked ?? true;
+  const goalExtra = savingsLinked ? Math.max(0, required.monthly - fixedSaving) : required.monthly;
+  const living = income - fixed - fixedSaving - goalExtra;
   const later = calculateRequiredInvestment({ ...common, months: months + 6 });
   const allIn = living < 0 ? calculateMonthsToGoal({ ...common, pmt: Math.max(0, income - fixed) }) : null;
   const monthAfter = (n: number) => formatMonthLabel(shiftMonth(today.slice(0, 7), n));
@@ -474,7 +511,8 @@ function StepResult({ draft, payload, today }: { draft: Draft; payload: Onboardi
       <div className="grid gap-2 rounded-xl border px-4 py-3">
         <Row label="월수입" value={formatCompactKRW(income)} />
         <Row label="고정 지출" value={`−${formatCompactKRW(fixed)}`} />
-        <Row label="목표 저축" value={`−${formatCompactKRW(required.monthly)}`} />
+        {fixedSaving > 0 ? <Row label="고정 저축" value={`−${formatCompactKRW(fixedSaving)}`} /> : null}
+        <Row label={fixedSaving > 0 ? "목표 저축 (추가로)" : "목표 저축"} value={`−${formatCompactKRW(goalExtra)}`} />
         <Row label="생활비로 쓸 수 있는 돈" value={formatCompactKRW(living)} strong />
       </div>
 

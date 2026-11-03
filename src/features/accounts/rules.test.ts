@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeBilling, ownerChoiceOf, resolveOwner, visibilityError } from "./rules";
+import { normalizeBilling, normalizeSavings, ownerChoiceOf, resolveOwner, visibilityError } from "./rules";
 
 const ctx = { userId: "A", partnerId: "B" };
 
@@ -32,5 +32,26 @@ describe("카드 결제 정보", () => {
   it("카드가 아니면 결제일·출금계좌를 비운다", () => {
     expect(normalizeBilling("CHECKING", { billingDay: 15, paymentAccountId: "x" })).toEqual({ billingDay: null, paymentAccountId: null });
     expect(normalizeBilling("CREDIT_CARD", { billingDay: 15, paymentAccountId: "" })).toEqual({ billingDay: 15, paymentAccountId: null });
+  });
+});
+
+describe("예적금 상품 정보", () => {
+  it("저축 통장만 저장하고 금리는 % → 비율", () => {
+    expect(normalizeSavings("SAVINGS", { openedOn: "2026-01-10", maturityDate: "2027-01-10", interestRatePct: 3.55 })).toEqual({
+      ok: true,
+      openedOn: "2026-01-10",
+      maturityDate: "2027-01-10",
+      interestRate: 0.0355,
+    });
+    expect(normalizeSavings("CHECKING", { openedOn: "2026-01-10", maturityDate: "2027-01-10", interestRatePct: 3 })).toEqual({
+      ok: true,
+      openedOn: null,
+      maturityDate: null,
+      interestRate: null,
+    });
+  });
+
+  it("만기일이 가입일보다 앞서면 거절", () => {
+    expect(normalizeSavings("SAVINGS", { openedOn: "2027-01-10", maturityDate: "2026-01-10", interestRatePct: null }).ok).toBe(false);
   });
 });

@@ -34,6 +34,7 @@ const input: OnboardingInput = {
     { name: "통신·구독", category: "휴대폰", amount: "250000", day: 10 },
     { name: "보험", category: "보험", amount: "700000", day: 15 },
   ],
+  savings: [],
   monthStartDay: 25,
 };
 
@@ -132,7 +133,37 @@ describe("온보딩 직후 홈 숫자 (AC-10 데이터 측면)", () => {
       range,
       includeGoals: true,
     });
-    expect(s).toEqual({ income: 8_200_000n, fixed: 2_150_000n, goalSaving: 1_980_000n, variableExpense: 0n });
+    expect(s).toEqual({ income: 8_200_000n, fixed: 2_150_000n, fixedSaving: 0n, goalSaving: 1_980_000n, variableExpense: 0n });
     expect(calculateSpendable({ ...s, daysLeft: 4 }).remaining).toBe(4_070_000n);
+  });
+});
+
+describe("온보딩 고정 저축", () => {
+  it("입출금 통장 → 예적금 정기 저축 규칙. 예적금 칸이 비어 있으면 잔액 0 계좌를 만들어 목표에 연결", async () => {
+    const hid = await onboard({
+      ...input,
+      assets: input.assets.filter((a) => a.kind !== "savings"),
+      savings: [{ name: "청년적금", amount: "500000", day: 25 }],
+    });
+    const accounts = await prisma.account.findMany({ where: { householdId: hid } });
+    const checking = accounts.find((a) => a.type === "CHECKING")!;
+    const savings = accounts.find((a) => a.type === "SAVINGS")!;
+    expect(savings.name).toBe("예적금");
+    const goal = await prisma.assetGoal.findFirstOrThrow({ where: { householdId: hid } });
+    expect(goal.linkedAccountIds).toContain(savings.id);
+
+    const rule = await prisma.recurringRule.findFirstOrThrow({ where: { householdId: hid, name: "청년적금" } });
+    expect(rule.template).toMatchObject({ type: "SAVE_INVEST", amount: "500000", fromAccountId: checking.id, toAccountId: savings.id });
+
+    // 목표 월 저축 198만 중 50만은 고정 저축으로 채워진다
+    const t = rule.template as { type: "SAVE_INVEST"; amount: string; toAccountId: string };
+    const s = summarizeSpendableInputs({
+      rules: [{ id: rule.id, type: t.type, amount: BigInt(t.amount), isActive: true, startDate: fromDbDate(rule.startDate), endDate: null, toAccountId: t.toAccountId }],
+      txs: [],
+      goals: [{ status: "ACTIVE", monthly: 1_980_000n, linkedAccountIds: goal.linkedAccountIds }],
+      range: getMonthRange("2026-12", 25),
+      includeGoals: true,
+    });
+    expect(s).toMatchObject({ fixedSaving: 500_000n, goalSaving: 1_480_000n });
   });
 });

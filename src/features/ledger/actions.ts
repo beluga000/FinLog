@@ -4,9 +4,10 @@ import { revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
 import { computeSpendable, getSpendableSource } from "@/features/dashboard/home";
 import { getGoalsOverview } from "@/features/goals/queries";
-import { requireHousehold, type HouseholdContext } from "@/lib/db/context";
+import { requireHousehold, writeAudit, type HouseholdContext } from "@/lib/db/context";
 import { fromDbDate, prisma, toDbDate } from "@/lib/db/prisma";
 import { addDays, getMonthKey, getMonthRange, inRange, todayKST } from "@/lib/finance/period";
+import { lastRunAfterScheduleChange } from "@/lib/finance/recurring";
 import { txAccess } from "@/lib/finance/visibility";
 import { recurringInputSchema, type ActionResult } from "./schema";
 import { materializeRecurring, resolveTxInput } from "./service";
@@ -95,10 +96,13 @@ export async function deleteTransaction(id: string): Promise<ActionResult> {
   return { ok: true };
 }
 
-export async function createRecurringRule(raw: unknown): Promise<ActionResult<{ created: number }>> {
-  const ctx = await requireHousehold();
+/** 입력 검증 + 계좌·분류 확인 → 규칙 템플릿 (추가·수정 공용) */
+async function parseRecurring(ctx: HouseholdContext, raw: unknown) {
   const parsed = recurringInputSchema.safeParse(raw);
-  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "입력값을 확인하세요." };
+  if (!parsed.success) return { ok: false as const, error: parsed.error.issues[0]?.message ?? "입력값을 확인하세요." };
+  if (parsed.data.endDate && parsed.data.endDate < parsed.data.startDate) {
+    return { ok: false as const, error: "종료일은 시작일 이후여야 합니다." };
+  }
   const resolved = await resolveTxInput(ctx, parsed.data.tx, { omitDate: true });
   if (!resolved.ok) return resolved;
   const r = resolved.data;
@@ -112,17 +116,62 @@ export async function createRecurringRule(raw: unknown): Promise<ActionResult<{ 
     memo: r.memo,
     visibility: r.visibility,
   };
+  return { ok: true as const, input: parsed.data, template };
+}
+
+export async function createRecurringRule(raw: unknown): Promise<ActionResult<{ created: number }>> {
+  const ctx = await requireHousehold();
+  const p = await parseRecurring(ctx, raw);
+  if (!p.ok) return p;
+  const { input, template } = p;
   await prisma.recurringRule.create({
     data: {
       householdId: ctx.householdId,
       createdByUserId: ctx.userId,
-      name: parsed.data.name,
+      name: input.name,
       template: template as object,
-      dayOfMonth: parsed.data.dayOfMonth,
-      businessDayAdjust: parsed.data.businessDayAdjust,
-      startDate: toDbDate(parsed.data.startDate),
-      endDate: parsed.data.endDate ? toDbDate(parsed.data.endDate) : null,
+      dayOfMonth: input.dayOfMonth,
+      businessDayAdjust: input.businessDayAdjust,
+      startDate: toDbDate(input.startDate),
+      endDate: input.endDate ? toDbDate(input.endDate) : null,
     },
+  });
+  const created = await materializeRecurring(ctx.householdId, todayKST());
+  done();
+  return { ok: true, data: { created } };
+}
+
+/**
+ * 규칙 수정 — 이미 생성된 거래는 그대로 두고 다음 회차부터 반영한다.
+ * 날짜(매월 N일·주말 보정)가 바뀌면 이미 나간 달에 새 날짜로 한 번 더 생성되지 않게 마지막 실행일을 보정한다.
+ */
+export async function updateRecurringRule(id: string, raw: unknown): Promise<ActionResult<{ created: number }>> {
+  const ctx = await requireHousehold();
+  const rule = await findOwnRule(ctx, id);
+  if (!rule) return { ok: false, error: "본인이 만든 규칙만 수정할 수 있습니다." };
+  const p = await parseRecurring(ctx, raw);
+  if (!p.ok) return p;
+  const { input, template } = p;
+  const scheduleChanged = rule.dayOfMonth !== input.dayOfMonth || rule.businessDayAdjust !== input.businessDayAdjust;
+  const lastRunOn =
+    rule.lastRunOn && scheduleChanged
+      ? toDbDate(lastRunAfterScheduleChange(rule, input, fromDbDate(rule.lastRunOn)))
+      : rule.lastRunOn;
+  await prisma.recurringRule.update({
+    where: { id },
+    data: {
+      name: input.name,
+      template: template as object,
+      dayOfMonth: input.dayOfMonth,
+      businessDayAdjust: input.businessDayAdjust,
+      startDate: toDbDate(input.startDate),
+      endDate: input.endDate ? toDbDate(input.endDate) : null,
+      lastRunOn,
+    },
+  });
+  await writeAudit(ctx, "RECURRING_UPDATE", "RecurringRule", id, {
+    before: { name: rule.name, template: rule.template, dayOfMonth: rule.dayOfMonth, businessDayAdjust: rule.businessDayAdjust },
+    after: { name: input.name, template, dayOfMonth: input.dayOfMonth, businessDayAdjust: input.businessDayAdjust },
   });
   const created = await materializeRecurring(ctx.householdId, todayKST());
   done();

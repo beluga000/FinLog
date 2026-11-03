@@ -36,6 +36,10 @@ export interface AccountRow {
   billingDay: number | null;
   /** 카드 대금 출금 계좌 (CREDIT_CARD) */
   paymentAccountId: string | null;
+  /** 예적금 가입일·만기일·연 금리 (SAVINGS) */
+  openedOn: DateStr | null;
+  maturityDate: DateStr | null;
+  interestRate: number | null;
 }
 
 const accountSelect = {
@@ -48,6 +52,9 @@ const accountSelect = {
   isArchived: true,
   billingDay: true,
   paymentAccountId: true,
+  openedOn: true,
+  maturityDate: true,
+  interestRate: true,
 } satisfies Prisma.AccountSelect;
 
 /** 뷰 스코프에서 보이는 계좌 */
@@ -57,7 +64,17 @@ export async function getAccounts(ctx: Ctx, scope: ViewScope = "us", opts: { inc
     orderBy: [{ type: "asc" }, { createdAt: "asc" }],
     select: accountSelect,
   });
-  return accounts.filter((a) => canSeeAccount(a, ctx.userId, scope));
+  // Date·Decimal 은 클라이언트 컴포넌트로 넘길 수 있게 문자열·숫자로 바꾼다
+  return accounts
+    .filter((a) => canSeeAccount(a, ctx.userId, scope))
+    .map(
+      (a): AccountRow => ({
+        ...a,
+        openedOn: a.openedOn ? fromDbDate(a.openedOn) : null,
+        maturityDate: a.maturityDate ? fromDbDate(a.maturityDate) : null,
+        interestRate: a.interestRate === null ? null : Number(a.interestRate),
+      }),
+    );
 }
 
 export interface TxRow {

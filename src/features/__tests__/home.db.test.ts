@@ -34,6 +34,7 @@ const input: OnboardingInput = {
     { name: "통신·구독", category: "휴대폰", amount: "250000", day: 10 },
     { name: "보험", category: "보험", amount: "700000", day: 15 },
   ],
+  savings: [],
   monthStartDay: 1,
 };
 

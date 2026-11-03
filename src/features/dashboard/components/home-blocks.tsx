@@ -159,11 +159,12 @@ export function SpendableCard({ spendable: s, hasIncome }: { spendable: Spendabl
             </span>
           </div>
         </div>
-        <dl className="grid grid-cols-2 gap-x-4 gap-y-1 border-t pt-3 text-xs sm:grid-cols-4">
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-1 border-t pt-3 text-xs sm:grid-cols-5">
           {(
             [
               ["수입", s.income],
               ["고정비", s.fixed],
+              ["고정 저축", s.fixedSaving],
               ["목표 저축", s.goalSaving],
               ["변동 지출", s.variableExpense],
             ] as const
@@ -181,7 +182,7 @@ export function SpendableCard({ spendable: s, hasIncome }: { spendable: Spendabl
   );
 }
 
-/** ③ 이번 달 저축 — 실제 (SAVE_INVEST + LOAN_REPAY) / 목표 저축 */
+/** ③ 이번 달 저축 — 실제 (SAVE_INVEST + LOAN_REPAY) / 계획 저축 (고정 저축 + 목표 저축) */
 export function SavingCard({ actual, target }: { actual: bigint; target: bigint }) {
   if (target === 0n && actual === 0n) return null;
   const ratio = target > 0n ? Number(actual) / Number(target) : 1;

@@ -48,7 +48,7 @@ export async function getMonthlyClosing(
 
   const last = computeSpendable(lastSource);
   const prev = computeSpendable(prevSource);
-  const planned = last.goalSaving;
+  const planned = last.plannedSaving;
   const prevHasData = prevStats.income > 0n || prevStats.expense > 0n || prevStats.saving > 0n;
 
   // 대표 목표 앞섬·뒤처짐: 결산 달 말일 vs 그 전달 말일 기준 잔액으로 다시 평가
@@ -85,7 +85,7 @@ export async function getMonthlyClosing(
     overspent: last.overspent,
     categoryDiffs: stats.expenseByTopCategory.map((c) => ({ name: c.name, diff: c.amount - (prevByCat.get(c.categoryId) ?? 0n) })),
     compared: prevHasData,
-    savingShort: [prevHasData && planned > 0n && prevStats.saving < prev.goalSaving, planned > 0n && stats.saving < planned],
+    savingShort: [prevHasData && planned > 0n && prevStats.saving < prev.plannedSaving, planned > 0n && stats.saving < planned],
     primaryGoal: primary ? { id: primary.id, name: primary.name } : null,
     staleAccounts: stale,
     ledgerHref: `/ledger?month=${month}`,

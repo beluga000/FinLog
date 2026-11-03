@@ -32,6 +32,7 @@ export function toSpendableGoals(goals: GoalView[]): SpendableGoal[] {
   return goals.map((g) => ({
     status: g.status,
     monthly: BigInt(Math.round(g.monthlyCommit ?? g.evaluation.required.monthly)),
+    linkedAccountIds: g.linkedAccountIds,
   }));
 }
 
@@ -79,6 +80,7 @@ export async function getSpendableSource(
         isActive: r.isActive,
         startDate: fromDbDate(r.startDate),
         endDate: r.endDate ? fromDbDate(r.endDate) : null,
+        toAccountId: t.toAccountId,
       })),
     txs: txs.filter(visible).map(({ id, type, amount, recurringRuleId }) => ({ id, type, amount, recurringRuleId })),
     goals: toSpendableGoals(opts.goals),

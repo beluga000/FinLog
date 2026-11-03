@@ -62,15 +62,22 @@ export async function createOnboardedHousehold(
 
   const linkedAccountIds: string[] = [];
   let checkingId: string | null = null;
+  let savingsId: string | null = null;
   for (const kind of ASSET_KINDS) {
     const entry = input.assets.find((a) => a.kind === kind.key);
     if (!entry) continue;
     const account = await createAccount(kind.accountName, kind.type, BigInt(entry.balance));
     if (entry.linked) linkedAccountIds.push(account.id);
     if (kind.key === "checking") checkingId = account.id;
+    if (kind.key === "savings") savingsId = account.id;
   }
   // 월급이 들어오고 고정비가 나갈 통장이 없으면 잔액 0으로 만든다
   checkingId ??= (await createAccount("입출금 통장", "CHECKING", 0n)).id;
+  // 고정 저축이 들어갈 예적금이 없으면 잔액 0으로 만들고 목표에 연결한다 (예적금 기본값 = 목표 연결)
+  if (input.savings.length && !savingsId) {
+    savingsId = (await createAccount("예적금", "SAVINGS", 0n)).id;
+    linkedAccountIds.push(savingsId);
+  }
   if (input.loan && BigInt(input.loan) > 0n) await createAccount("대출", "LOAN", -BigInt(input.loan));
 
   const rule = (name: string, dayOfMonth: number, template: RecurringTemplate) => ({
@@ -89,6 +96,9 @@ export async function createOnboardedHousehold(
       ),
       ...input.fixed.map((f) =>
         rule(f.name, f.day, { ...base, type: "EXPENSE", amount: f.amount, fromAccountId: checkingId, toAccountId: null, categoryId: categoryId(f.category) }),
+      ),
+      ...input.savings.map((v) =>
+        rule(v.name, v.day, { ...base, type: "SAVE_INVEST", amount: v.amount, fromAccountId: checkingId, toAccountId: savingsId, categoryId: null }),
       ),
     ],
   });

@@ -27,6 +27,10 @@ interface AccountValue {
   defaultVisibility: Visibility;
   billingDay: number | null;
   paymentAccountId: string | null;
+  openedOn: string | null;
+  maturityDate: string | null;
+  /** 연 금리 비율 (0.035 = 3.5%) */
+  interestRate: number | null;
 }
 
 /** 폼이 고를 수 있는 것들 — 화면(서버)에서 한 번 만들어 넘긴다 */
@@ -40,16 +44,32 @@ export interface AccountFormEnv {
 
 const BILLING_DAYS = Array.from({ length: 31 }, (_, i) => i + 1);
 
-function AccountForm({ initial, env, onDone }: { initial?: AccountValue; env: AccountFormEnv; onDone: () => void }) {
+/** 0.035 → "3.5" */
+const pctText = (rate: number | null) => (rate === null ? "" : String(Math.round(rate * 1_000_000) / 10_000));
+
+function AccountForm({
+  initial,
+  env,
+  defaultType,
+  onDone,
+}: {
+  initial?: AccountValue;
+  env: AccountFormEnv;
+  defaultType?: AccountType;
+  onDone: () => void;
+}) {
   const { isCouple } = env;
   const [pending, start] = useTransition();
   const [name, setName] = useState(initial?.name ?? "");
-  const [type, setType] = useState<AccountType>(initial?.type ?? "CHECKING");
+  const [type, setType] = useState<AccountType>(initial?.type ?? defaultType ?? "CHECKING");
   const [institution, setInstitution] = useState(initial?.institution ?? "");
   const [owner, setOwner] = useState<OwnerChoice>(initial?.owner ?? "me");
   const [visibility, setVisibility] = useState<Visibility>(initial?.defaultVisibility ?? "SHARED");
   const [billingDay, setBillingDay] = useState<number | null>(initial?.billingDay ?? null);
   const [paymentAccountId, setPaymentAccountId] = useState(initial?.paymentAccountId ?? "");
+  const [openedOn, setOpenedOn] = useState(initial?.openedOn ?? "");
+  const [maturityDate, setMaturityDate] = useState(initial?.maturityDate ?? "");
+  const [ratePct, setRatePct] = useState(pctText(initial?.interestRate ?? null));
   // 비공개는 원래 내 명의였던 계좌(또는 새 계좌)를 내 명의로 둘 때만
   const canBePrivate = owner === "me" && (!initial?.id || initial.owner === "me");
   const [opening, setOpening] = useState("");
@@ -58,6 +78,9 @@ function AccountForm({ initial, env, onDone }: { initial?: AccountValue; env: Ac
   function submit() {
     setError(null);
     const card = type === "CREDIT_CARD";
+    const savings = type === "SAVINGS";
+    const rate = ratePct.trim() === "" ? null : Number(ratePct);
+    if (savings && rate !== null && !Number.isFinite(rate)) return setError("금리는 숫자로 입력하세요.");
     const payload = {
       name,
       type,
@@ -66,6 +89,9 @@ function AccountForm({ initial, env, onDone }: { initial?: AccountValue; env: Ac
       defaultVisibility: visibility,
       billingDay: card ? billingDay : null,
       paymentAccountId: card ? paymentAccountId || null : null,
+      openedOn: savings ? openedOn || null : null,
+      maturityDate: savings ? maturityDate || null : null,
+      interestRatePct: savings ? rate : null,
     };
     start(async () => {
       const r = initial?.id ? await updateAccount(initial.id, payload) : await createAccount({ ...payload, openingBalance: opening || "0" });
@@ -134,6 +160,30 @@ function AccountForm({ initial, env, onDone }: { initial?: AccountValue; env: Ac
           <p className="col-span-2 -mt-2 text-xs text-muted-foreground">결제일이 다가오면 홈의 확인할 일에서 대금과 통장 잔액을 알려 드려요.</p>
         </div>
       ) : null}
+      {type === "SAVINGS" ? (
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="가입일 (선택)" htmlFor="acc-opened">
+            <Input id="acc-opened" type="date" value={openedOn} onChange={(e) => setOpenedOn(e.target.value)} className="h-9" />
+          </Field>
+          <Field label="만기일 (선택)" htmlFor="acc-maturity">
+            <Input id="acc-maturity" type="date" value={maturityDate} onChange={(e) => setMaturityDate(e.target.value)} className="h-9" />
+          </Field>
+          <Field label="연 금리 % (선택)" htmlFor="acc-rate">
+            <Input
+              id="acc-rate"
+              inputMode="decimal"
+              value={ratePct}
+              maxLength={6}
+              onChange={(e) => setRatePct(e.target.value.replace(/[^\d.]/g, ""))}
+              placeholder="예: 3.5"
+              className="h-9"
+            />
+          </Field>
+          <p className="col-span-2 -mt-1 text-xs text-muted-foreground">
+            적금·예금이면 만기일과 금리를 넣어 두세요. 고정 저축 화면에서 만기까지 남은 기간과 예상 수령액을 보여 드려요.
+          </p>
+        </div>
+      ) : null}
       {isCouple ? (
         <>
           <Field label="명의" hint={owner === "partner" ? "배우자 대신 등록해요. 둘 다 수정할 수 있어요." : undefined}>
@@ -169,12 +219,22 @@ function AccountForm({ initial, env, onDone }: { initial?: AccountValue; env: Ac
   );
 }
 
-export function NewAccountButton({ env }: { env: AccountFormEnv }) {
+export function NewAccountButton({
+  env,
+  defaultType,
+  label = "계좌 추가",
+  variant,
+}: {
+  env: AccountFormEnv;
+  defaultType?: AccountType;
+  label?: string;
+  variant?: "default" | "outline";
+}) {
   const [open, setOpen] = useState(false);
   return (
     <>
-      <Button onClick={() => setOpen(true)}>
-        <Plus /> 계좌 추가
+      <Button onClick={() => setOpen(true)} variant={variant}>
+        <Plus /> {label}
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-h-[92dvh] overflow-y-auto sm:max-w-md">
@@ -182,7 +242,7 @@ export function NewAccountButton({ env }: { env: AccountFormEnv }) {
             <DialogTitle>계좌 추가</DialogTitle>
             <DialogDescription>통장, 카드, 증권, 대출 등 돈이 머무는 곳을 등록해요.</DialogDescription>
           </DialogHeader>
-          {open ? <AccountForm env={env} onDone={() => setOpen(false)} /> : null}
+          {open ? <AccountForm env={env} defaultType={defaultType} onDone={() => setOpen(false)} /> : null}
         </DialogContent>
       </Dialog>
     </>

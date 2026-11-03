@@ -1,67 +1,129 @@
 import Link from "next/link";
 import { ChevronLeft } from "lucide-react";
-import { cn } from "cn";
 import { Money } from "@/components/common/money";
 import { PageHeader } from "@/components/common/page-header";
-import { NewRecurringButton, RecurringRuleControls } from "@/features/ledger/components/recurring-controls";
+import { Card, CardContent } from "@/components/ui/card";
+import { NewRecurringButton, RecurringList, type RecurringRowView } from "@/features/ledger/components/recurring-controls";
 import { getAccounts, getCategories, getRecurringRules } from "@/features/ledger/queries";
+import { groupOf, RECURRING_GROUPS, scheduleOf, summarizeRecurring } from "@/features/ledger/recurring-view";
 import { requireHousehold } from "@/lib/db/context";
-import { TX_TYPE_META } from "@/lib/finance/tx-rules";
+import { todayKST } from "@/lib/finance/period";
 
 export const metadata = { title: "정기 거래" };
 
-const ADJUST_LABEL = { NONE: "", PREV: " · 주말이면 앞당김", NEXT: " · 주말이면 미룸" } as const;
+/** 요약 막대 색 — 대시보드와 같은 의미 색 (지출 chart-2, 저축 chart-3) */
+const BAR = { expense: "var(--chart-2)", saving: "var(--chart-3)", remaining: "var(--chart-1)" } as const;
 
 export default async function RecurringPage() {
   const ctx = await requireHousehold();
+  const today = todayKST();
   const [rules, accounts, categories] = await Promise.all([getRecurringRules(ctx), getAccounts(ctx, "us"), getCategories(ctx)]);
   const accountName = new Map(accounts.map((a) => [a.id, a.name]));
   const categoryName = new Map(categories.map((c) => [c.id, c.name]));
+  const memberName = new Map(ctx.members.map((m) => [m.id, m.name]));
+
+  const rows: RecurringRowView[] = rules.map((r) => {
+    const t = r.template;
+    const from = accountName.get(t.fromAccountId ?? "");
+    const to = accountName.get(t.toAccountId ?? "");
+    const accountText = t.type === "EXPENSE" ? from : t.type === "INCOME" ? to : `${from ?? "?"} → ${to ?? "?"}`;
+    return {
+      rule: {
+        id: r.id,
+        name: r.name,
+        template: t,
+        dayOfMonth: r.dayOfMonth,
+        businessDayAdjust: r.businessDayAdjust,
+        startDate: r.startDate,
+        endDate: r.endDate,
+      },
+      group: groupOf(t.type),
+      detail: [categoryName.get(t.categoryId ?? ""), accountText].filter(Boolean).join(" · "),
+      schedule: scheduleOf(r, today),
+      lastRunOn: r.lastRunOn,
+      isActive: r.isActive,
+      isMine: r.createdByUserId === ctx.userId,
+      ownerName: r.createdByUserId === ctx.userId ? "나" : memberName.get(r.createdByUserId) ?? "배우자",
+    };
+  });
+
+  const summary = summarizeRecurring(rules, today);
+  const activeCount = rows.filter((r) => r.schedule.status === "active").length;
+  // 막대 비율: 수입 대비 지출·저축·남는 돈 (지출이 수입보다 크면 지출·저축 합 기준)
+  const base = summary.income > summary.expense + summary.saving ? summary.income : summary.expense + summary.saving;
+  const pct = (v: bigint) => (base > 0n ? Number((v * 1000n) / base) / 10 : 0);
+
+  const formEnv = { accounts, categories, viewerId: ctx.userId, isCouple: ctx.isCouple };
 
   return (
     <div className="grid gap-5">
-      <Link href="/ledger" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
+      <Link href="/ledger" className="inline-flex w-fit items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
         <ChevronLeft className="size-4" /> 가계부
       </Link>
       <PageHeader
         title="정기 거래"
-        description="월급·월세·통신비·적금처럼 매달 반복되는 거래를 자동으로 기록해요. 생성된 거래는 고정비로 분류돼요."
-        actions={<NewRecurringButton accounts={accounts} categories={categories} viewerId={ctx.userId} isCouple={ctx.isCouple} />}
+        description="월급·월세·통신비·적금처럼 매달 반복되는 거래를 정해진 날 자동으로 기록해요."
+        actions={<NewRecurringButton {...formEnv} />}
       />
-      {rules.length === 0 ? (
-        <p className="rounded-xl border py-12 text-center text-sm text-muted-foreground">등록된 정기 거래가 없어요.</p>
-      ) : (
-        <ul className="divide-y rounded-xl border">
-          {rules.map((r) => {
-            const t = r.template;
-            const accountText =
-              t.type === "EXPENSE"
-                ? accountName.get(t.fromAccountId ?? "")
-                : t.type === "INCOME"
-                  ? accountName.get(t.toAccountId ?? "")
-                  : `${accountName.get(t.fromAccountId ?? "") ?? "?"} → ${accountName.get(t.toAccountId ?? "") ?? "?"}`;
-            return (
-              <li key={r.id} className={cn("flex items-center gap-3 px-3 py-3", !r.isActive && "opacity-60")}>
-                <div className="w-12 shrink-0 text-center text-sm font-semibold tabular">{r.dayOfMonth === 0 ? "말일" : `${r.dayOfMonth}일`}</div>
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-medium">
-                    {r.name}
-                    <span className="ml-1.5 text-xs font-normal text-muted-foreground">{TX_TYPE_META[t.type].label}</span>
-                  </div>
-                  <div className="truncate text-xs text-muted-foreground">
-                    {[categoryName.get(t.categoryId ?? ""), accountText].filter(Boolean).join(" · ")}
-                    {ADJUST_LABEL[r.businessDayAdjust]}
-                    {r.lastRunOn ? ` · 최근 ${r.lastRunOn.slice(5).replace("-", "/")}` : ""}
-                    {!r.isActive ? " · 중지됨" : ""}
-                  </div>
+
+      {rows.length > 0 ? (
+        <Card>
+          <CardContent className="grid gap-4">
+            <div className="flex flex-wrap items-end justify-between gap-2">
+              <div>
+                <div className="text-xs text-muted-foreground">정기 거래 기준 매달 남는 돈</div>
+                <div className={summary.remaining < 0n ? "text-3xl font-black text-critical" : "text-3xl font-black"}>
+                  <Money value={summary.remaining} />
                 </div>
-                <Money value={BigInt(t.amount)} className="text-sm font-semibold" />
-                {r.createdByUserId === ctx.userId ? <RecurringRuleControls id={r.id} isActive={r.isActive} /> : null}
-              </li>
-            );
-          })}
-        </ul>
+              </div>
+              <div className="text-xs text-muted-foreground">진행 중 {activeCount}건</div>
+            </div>
+
+            {base > 0n ? (
+              <div className="flex h-2.5 overflow-hidden rounded-full bg-muted" aria-hidden>
+                <div style={{ width: `${pct(summary.expense)}%`, background: BAR.expense }} />
+                <div style={{ width: `${pct(summary.saving)}%`, background: BAR.saving }} />
+                {summary.remaining > 0n ? <div style={{ width: `${pct(summary.remaining)}%`, background: BAR.remaining, opacity: 0.35 }} /> : null}
+              </div>
+            ) : null}
+
+            <dl className="grid grid-cols-3 gap-3 text-sm">
+              <SummaryItem label="수입" value={summary.income} />
+              <SummaryItem label="지출" value={summary.expense} color={BAR.expense} />
+              <SummaryItem label="저축·상환" value={summary.saving} color={BAR.saving} />
+            </dl>
+            {summary.remaining < 0n ? (
+              <p className="text-xs text-critical">정기 지출·저축이 정기 수입보다 많아요. 금액이나 정기 수입 등록을 확인해 보세요.</p>
+            ) : null}
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {rows.length === 0 ? (
+        <div className="grid justify-items-center gap-3 rounded-xl border border-dashed px-6 py-12 text-center">
+          <p className="font-medium">아직 등록된 정기 거래가 없어요</p>
+          <p className="max-w-xs text-sm text-muted-foreground">
+            월급, 월세, 통신비, 보험료, 적금처럼 매달 같은 날 오가는 돈을 등록하면 그날 자동으로 가계부에 기록돼요.
+          </p>
+          <NewRecurringButton {...formEnv} />
+        </div>
+      ) : (
+        <RecurringList rows={rows} groups={RECURRING_GROUPS} isCouple={ctx.isCouple} partnerName={ctx.partner?.name ?? null} formEnv={formEnv} />
       )}
+    </div>
+  );
+}
+
+function SummaryItem({ label, value, color }: { label: string; value: bigint; color?: string }) {
+  return (
+    <div className="min-w-0">
+      <dt className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        {color ? <span className="size-2 rounded-full" style={{ background: color }} aria-hidden /> : null}
+        {label}
+      </dt>
+      <dd className="truncate font-semibold">
+        <Money value={value} />
+      </dd>
     </div>
   );
 }

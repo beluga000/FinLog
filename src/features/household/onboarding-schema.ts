@@ -52,6 +52,11 @@ export const onboardingSchema = z.object({
       }),
     )
     .max(15),
+  /** 고정 저축: 매달 입출금 통장 → 예적금으로 자동이체 */
+  savings: z
+    .array(z.object({ name: z.string().trim().min(1, "고정 저축 이름을 입력하세요.").max(20), amount: amountStr, day }))
+    .max(5)
+    .default([]),
   monthStartDay: z.number().int().min(1).max(28),
 });
 export type OnboardingInput = z.infer<typeof onboardingSchema>;

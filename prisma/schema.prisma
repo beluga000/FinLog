@@ -158,6 +158,12 @@ model Account {
   billingDay        Int?
   /// 카드 대금이 빠져나가는 계좌. CREDIT_CARD 만 사용
   paymentAccountId  String?
+  /// 예적금 가입일. SAVINGS 만 사용
+  openedOn          DateTime?         @db.Date
+  /// 예적금 만기일. SAVINGS 만 사용
+  maturityDate      DateTime?         @db.Date
+  /// 예적금 연 금리 (0.035 = 3.5%). SAVINGS 만 사용
+  interestRate      Decimal?          @db.Decimal(9, 6)
   createdAt         DateTime          @default(now())
   household         Household         @relation(fields: [householdId], references: [id], onDelete: Cascade)
   paymentAccount    Account?          @relation("cardPayment", fields: [paymentAccountId], references: [id], onDelete: SetNull)

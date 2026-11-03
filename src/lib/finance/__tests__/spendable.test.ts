@@ -8,7 +8,7 @@ import {
   type SpendableTx,
 } from "../spendable";
 
-const base = { income: 8_200_000n, fixed: 2_150_000n, goalSaving: 1_980_000n, variableExpense: 2_410_000n, daysLeft: 10 };
+const base = { income: 8_200_000n, fixed: 2_150_000n, fixedSaving: 0n, goalSaving: 1_980_000n, variableExpense: 2_410_000n, daysLeft: 10 };
 
 describe("쓸 수 있는 돈 — PROD.MD §4 기준값", () => {
   it("AC-12: 820만 − 215만 − 198만 − 241만 = 166만, 남은 10일 → 하루 16.6만", () => {
@@ -36,6 +36,13 @@ describe("쓸 수 있는 돈 — PROD.MD §4 기준값", () => {
   it("남은 일수 0 이하는 1일로 취급, 원 단위 내림", () => {
     expect(calculateSpendable({ ...base, daysLeft: 0 }).daily).toBe(1_660_000n);
     expect(calculateSpendable({ ...base, variableExpense: 2_410_001n, daysLeft: 3 }).daily).toBe(553_333n);
+  });
+
+  it("고정 저축도 생활비에서 뺀다 — 계획 저축 = 고정 저축 + 목표 저축", () => {
+    const s = calculateSpendable({ ...base, fixedSaving: 500_000n });
+    expect(s.livingBudget).toBe(3_570_000n);
+    expect(s.plannedSaving).toBe(2_480_000n);
+    expect(s.remaining).toBe(1_160_000n);
   });
 
   it("생활비가 0 이하면 사용 비율은 null", () => {
@@ -75,8 +82,9 @@ describe("쓸 수 있는 돈 입력 집계", () => {
       { type: "TRANSFER", amount: 900_000n, recurringRuleId: null },
     ];
     const s = summarizeSpendableInputs({ rules, txs, goals, range, includeGoals: true });
-    expect(s).toEqual({ income: 8_200_000n, fixed: 2_150_000n, goalSaving: 1_980_000n, variableExpense: 2_410_000n });
-    expect(calculateSpendable({ ...s, daysLeft: 10 }).remaining).toBe(1_660_000n);
+    // 정기 저축(isa 50만)은 고정 저축으로 월초부터 빼고, 실현된 저축 거래는 다시 빼지 않는다
+    expect(s).toEqual({ income: 8_200_000n, fixed: 2_150_000n, fixedSaving: 500_000n, goalSaving: 1_980_000n, variableExpense: 2_410_000n });
+    expect(calculateSpendable({ ...s, daysLeft: 10 }).remaining).toBe(1_160_000n);
   });
 
   it("수동으로 고정 체크한 지출(규칙 없음)과 비활성 규칙이 만든 지출은 변동 지출로 센다", () => {
@@ -106,6 +114,44 @@ describe("쓸 수 있는 돈 입력 집계", () => {
       rule({ id: "endsMid", type: "EXPENSE", amount: 4n, endDate: "2026-11-15" }),
     ];
     expect(summarizeSpendableInputs({ rules: dated, txs: [], goals: [], range, includeGoals: true }).fixed).toBe(4n);
+  });
+
+  it("고정 저축: 저축·투자와 대출 상환 규칙, 중지·기간 밖 규칙은 제외", () => {
+    const more = [
+      ...rules,
+      rule({ id: "loan", type: "LOAN_REPAY", amount: 300_000n }),
+      rule({ id: "paused", type: "SAVE_INVEST", amount: 1n, isActive: false }),
+      rule({ id: "done", type: "SAVE_INVEST", amount: 2n, endDate: "2026-10-31" }),
+      rule({ id: "move", type: "TRANSFER", amount: 4n }),
+    ];
+    expect(summarizeSpendableInputs({ rules: more, txs: [], goals: [], range, includeGoals: true }).fixedSaving).toBe(800_000n);
+  });
+
+  it("목표 연결 계좌로 들어가는 고정 저축은 목표 저축에서 빼서 한 번만 센다", () => {
+    const saving = [
+      rule({ id: "jeokgeum", type: "SAVE_INVEST", amount: 500_000n, toAccountId: "acc-savings" }),
+      rule({ id: "other", type: "SAVE_INVEST", amount: 200_000n, toAccountId: "acc-stock" }),
+    ];
+    const linked = [
+      { status: "ACTIVE" as const, monthly: 1_980_000n, linkedAccountIds: ["acc-savings"] },
+      // 같은 계좌에 연결된 두 번째 목표 — 규칙은 앞선 목표에서 이미 썼으므로 다시 빼지 않는다
+      { status: "ACTIVE" as const, monthly: 300_000n, linkedAccountIds: ["acc-savings"] },
+    ];
+    const s = summarizeSpendableInputs({ rules: saving, txs: [], goals: linked, range, includeGoals: true });
+    expect(s.fixedSaving).toBe(700_000n);
+    expect(s.goalSaving).toBe(1_480_000n + 300_000n);
+  });
+
+  it("고정 저축이 목표 월 저축보다 크면 목표 저축은 0 (음수로 내려가지 않음)", () => {
+    const big = [rule({ id: "big", type: "SAVE_INVEST", amount: 3_000_000n, toAccountId: "a" })];
+    const s = summarizeSpendableInputs({
+      rules: big,
+      txs: [],
+      goals: [{ status: "ACTIVE", monthly: 1_000_000n, linkedAccountIds: ["a"] }],
+      range,
+      includeGoals: true,
+    });
+    expect(s).toMatchObject({ fixedSaving: 3_000_000n, goalSaving: 0n });
   });
 
   it("나/배우자 뷰는 목표 저축을 차감하지 않고, 목표가 없으면 0", () => {

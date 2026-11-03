@@ -43,3 +43,23 @@ export function normalizeBilling(
   if (type !== "CREDIT_CARD") return { billingDay: null, paymentAccountId: null };
   return { billingDay: input.billingDay, paymentAccountId: input.paymentAccountId || null };
 }
+
+export interface SavingsProductInput {
+  openedOn: string | null;
+  maturityDate: string | null;
+  /** 연 금리 % (3.5 = 3.5%) */
+  interestRatePct: number | null;
+}
+
+/** 예적금 상품 정보 정리: 저축 통장이 아니면 비운다. 금리는 % → 비율 */
+export function normalizeSavings(
+  type: AccountType,
+  input: SavingsProductInput,
+): { ok: true; openedOn: string | null; maturityDate: string | null; interestRate: number | null } | { ok: false; error: string } {
+  if (type !== "SAVINGS") return { ok: true, openedOn: null, maturityDate: null, interestRate: null };
+  const openedOn = input.openedOn || null;
+  const maturityDate = input.maturityDate || null;
+  if (openedOn && maturityDate && maturityDate <= openedOn) return { ok: false, error: "만기일은 가입일보다 뒤여야 해요." };
+  const interestRate = input.interestRatePct === null ? null : Math.round(input.interestRatePct * 10_000) / 1_000_000;
+  return { ok: true, openedOn, maturityDate, interestRate };
+}

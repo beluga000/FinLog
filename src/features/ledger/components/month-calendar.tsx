@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { cn } from "cn";
+import { holidayName, shortHolidayName } from "@/lib/finance/holidays";
 import { formatCompactKRW } from "@/lib/finance/money";
 import { addDays } from "@/lib/finance/period";
 import type { DateStr } from "@/lib/finance/types";
@@ -11,7 +12,7 @@ function weekday(date: DateStr) {
   return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
 }
 
-/** 가구 월 경계(start~end)에 맞춘 달력. 날짜를 누르면 그날 거래만 보기 */
+/** 가구 월 경계(start~end)에 맞춘 달력. 날짜를 누르면 그날 거래만 보기. 일요일·공휴일은 빨간 날짜 + 공휴일 이름 */
 export function MonthCalendar({
   range,
   daily,
@@ -41,21 +42,35 @@ export function MonthCalendar({
           if (!d) return <div key={`e${i}`} />;
           const v = daily.get(d);
           const isSel = selected === d;
+          const holiday = holidayName(d);
+          const red = holiday !== null || weekday(d) === 0;
           return (
             <Link
               key={d}
               href={hrefFor(isSel ? null : d)}
               scroll={false}
-              aria-label={`${d}${v?.expense ? ` 지출 ${v.expense}원` : ""}`}
+              aria-label={`${d}${holiday ? ` ${holiday}` : ""}${v?.expense ? ` 지출 ${v.expense}원` : ""}`}
+              title={holiday ?? undefined}
               aria-current={isSel ? "date" : undefined}
               className={cn(
                 "flex min-h-12 flex-col items-center rounded-md px-0.5 py-1 text-xs hover:bg-muted",
                 isSel && "bg-foreground text-background hover:bg-foreground",
               )}
             >
-              <span className={cn("tabular", d === today && !isSel && "rounded-full bg-primary px-1.5 text-primary-foreground")}>
+              <span
+                className={cn(
+                  "tabular",
+                  red && !isSel && "text-critical",
+                  d === today && !isSel && "rounded-full bg-primary px-1.5 text-primary-foreground",
+                )}
+              >
                 {Number(d.slice(8))}
               </span>
+              {holiday ? (
+                <span className={cn("w-full truncate text-center text-[9px] leading-tight", isSel ? "text-background" : "text-critical")}>
+                  {shortHolidayName(holiday)}
+                </span>
+              ) : null}
               {v?.expense ? (
                 <span className={cn("mt-0.5 text-[10px] leading-none tabular", isSel ? "text-background" : "text-foreground")}>
                   -{formatCompactKRW(v.expense).replace("원", "")}

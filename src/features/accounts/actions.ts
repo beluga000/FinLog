@@ -8,11 +8,13 @@ import { prisma, toDbDate } from "@/lib/db/prisma";
 import { isLiability } from "@/lib/finance/balance";
 import { addDays, todayKST } from "@/lib/finance/period";
 import { canSeeAccount } from "@/lib/finance/visibility";
-import { normalizeBilling, OWNER_CHOICES, PAYMENT_SOURCE_TYPES, resolveOwner, visibilityError } from "./rules";
+import { normalizeBilling, normalizeSavings, OWNER_CHOICES, PAYMENT_SOURCE_TYPES, resolveOwner, visibilityError } from "./rules";
 
 const ACCOUNT_TYPES = [
   "CASH", "CHECKING", "SAVINGS", "INVESTMENT", "PENSION", "REAL_ESTATE", "OTHER_ASSET", "CREDIT_CARD", "LOAN",
 ] as const;
+
+const dateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "날짜를 확인하세요.");
 
 const accountSchema = z.object({
   name: z.string().trim().min(1, "계좌 이름을 입력하세요.").max(40),
@@ -24,6 +26,10 @@ const accountSchema = z.object({
   billingDay: z.number().int().min(1, "결제일은 1~31일이에요.").max(31, "결제일은 1~31일이에요.").nullable().default(null),
   /** 카드 대금 출금 계좌 (CREDIT_CARD 만) */
   paymentAccountId: z.string().nullable().default(null),
+  /** 예적금 가입일·만기일·연 금리(%) (SAVINGS 만) */
+  openedOn: dateStr.nullable().default(null),
+  maturityDate: dateStr.nullable().default(null),
+  interestRatePct: z.number().min(0, "금리를 확인하세요.").max(30, "금리는 30% 이하로 입력하세요.").nullable().default(null),
 });
 
 const balanceSchema = z.object({
@@ -59,7 +65,16 @@ async function resolveInput(ctx: Ctx, d: z.infer<typeof accountSchema>, type: (t
   const billing = normalizeBilling(type, d);
   const payErr = await checkPaymentAccount(ctx, billing.paymentAccountId, cardId);
   if (payErr) return { ok: false as const, error: payErr };
-  return { ok: true as const, ownerUserId: owner.ownerUserId, ...billing };
+  const savings = normalizeSavings(type, d);
+  if (!savings.ok) return savings;
+  return {
+    ok: true as const,
+    ownerUserId: owner.ownerUserId,
+    ...billing,
+    openedOn: savings.openedOn ? toDbDate(savings.openedOn) : null,
+    maturityDate: savings.maturityDate ? toDbDate(savings.maturityDate) : null,
+    interestRate: savings.interestRate,
+  };
 }
 
 export async function createAccount(raw: unknown): Promise<ActionResult<{ id: string }>> {
@@ -79,6 +94,9 @@ export async function createAccount(raw: unknown): Promise<ActionResult<{ id: st
       defaultVisibility: d.defaultVisibility,
       billingDay: r.billingDay,
       paymentAccountId: r.paymentAccountId,
+      openedOn: r.openedOn,
+      maturityDate: r.maturityDate,
+      interestRate: r.interestRate,
       // 시작 잔액 = 어제 마감 잔액 → 오늘 입력하는 거래부터 반영된다
       snapshots: { create: { asOf: toDbDate(addDays(todayKST(), -1)), balance: toStoredBalance(d.type, d.openingBalance) } },
     },
@@ -122,6 +140,9 @@ export async function updateAccount(id: string, raw: unknown): Promise<ActionRes
       defaultVisibility: d.defaultVisibility,
       billingDay: r.billingDay,
       paymentAccountId: r.paymentAccountId,
+      openedOn: r.openedOn,
+      maturityDate: r.maturityDate,
+      interestRate: r.interestRate,
     },
   });
   if (account.ownerUserId !== ctx.userId || r.ownerUserId !== account.ownerUserId) {
@@ -158,4 +179,54 @@ export async function setAccountArchived(id: string, isArchived: boolean): Promi
   await writeAudit(ctx, isArchived ? "ACCOUNT_ARCHIVE" : "ACCOUNT_RESTORE", "Account", id);
   revalidatePath("/", "layout");
   return { ok: true };
+}
+
+const visibilityChangeSchema = z.object({
+  visibility: z.enum(["SHARED", "SUMMARY_ONLY", "PRIVATE"]),
+  /** 이 계좌로 내가 기록한 지난 거래·정기 거래 중 이전 기본값 그대로인 것도 바꾼다 */
+  applyToExisting: z.boolean().default(false),
+});
+
+/**
+ * 거래 공개범위의 기본값 계좌 = 출금 계좌, 없으면 입금 계좌 (defaultVisibilityFor 와 같은 기준).
+ * 그 기준으로 이 계좌를 따르는 "내" 기록만 바꾼다 — 배우자가 기록한 거래는 그 사람만 바꿀 수 있다.
+ * 이전 기본값과 다르게 따로 정한 기록(예: 공유 계좌의 비공개 거래)은 그대로 둔다 — 숨겨 둔 거래가 일괄 변경으로 드러나지 않게.
+ */
+function followsAccount(id: string) {
+  return { OR: [{ fromAccountId: id }, { fromAccountId: null, toAccountId: id }] };
+}
+
+/** 부부 설정: 계좌 기본 공개범위 변경 (+ 지난 기록 일괄 변경) */
+export async function setAccountVisibility(id: string, raw: unknown): Promise<ActionResult<{ updated: number }>> {
+  const ctx = await requireHousehold();
+  const account = await findManageable(ctx, id);
+  if (!account) return { ok: false, error: NOT_FOUND };
+  const parsed = visibilityChangeSchema.safeParse(raw);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "입력값을 확인하세요." };
+  const { visibility, applyToExisting } = parsed.data;
+  const visErr = visibilityError(account.ownerUserId, ctx.userId, visibility);
+  if (visErr) return { ok: false, error: visErr };
+
+  const previous = account.defaultVisibility;
+  let updated = 0;
+  await prisma.$transaction(async (db) => {
+    await db.account.update({ where: { id }, data: { defaultVisibility: visibility } });
+    if (!applyToExisting) return;
+    const txs = await db.transaction.updateMany({
+      where: { householdId: ctx.householdId, createdByUserId: ctx.userId, deletedAt: null, visibility: previous, ...followsAccount(id) },
+      data: { visibility },
+    });
+    updated = txs.count;
+    // 정기 거래 템플릿도 같이 — 다음 회차부터 바뀐 공개범위로 생성된다
+    const rules = await db.recurringRule.findMany({ where: { householdId: ctx.householdId, createdByUserId: ctx.userId } });
+    for (const r of rules) {
+      const t = r.template as { fromAccountId: string | null; toAccountId: string | null; visibility: string };
+      const follows = t.fromAccountId === id || (t.fromAccountId === null && t.toAccountId === id);
+      if (!follows || t.visibility !== previous) continue;
+      await db.recurringRule.update({ where: { id: r.id }, data: { template: { ...t, visibility } } });
+    }
+  });
+  await writeAudit(ctx, "ACCOUNT_VISIBILITY", "Account", id, { visibility, applyToExisting, updated });
+  revalidatePath("/", "layout");
+  return { ok: true, data: { updated } };
 }

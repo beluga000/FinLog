@@ -11,3 +11,5 @@ export * from "./portfolio";
 export * from "./goals";
 export * from "./spendable";
 export * from "./closing";
+export * from "./savings";
+export * from "./holidays";

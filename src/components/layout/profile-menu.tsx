@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { CalendarClock, LogOut, MonitorSmartphone, Settings, ShieldCheck, UserRound } from "lucide-react";
+import { CalendarClock, LogOut, MonitorSmartphone, Settings, ShieldCheck, UserRound, PiggyBank, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -38,6 +38,12 @@ export function ProfileMenu({
         <DropdownMenuSeparator />
         <DropdownMenuItem render={<Link href="/ledger/recurring" />}>
           <CalendarClock /> 정기 거래
+        </DropdownMenuItem>
+        <DropdownMenuItem render={<Link href="/assets/savings" />}>
+          <PiggyBank /> 고정 저축
+        </DropdownMenuItem>
+        <DropdownMenuItem render={<Link href="/settings/couple" />}>
+          <Users /> 부부 설정
         </DropdownMenuItem>
         <DropdownMenuItem render={<Link href="/settings" />}>
           <Settings /> 설정

@@ -18,6 +18,7 @@ import { ACCOUNT_TYPE_LABEL, VISIBILITY_HINT, VISIBILITY_LABEL } from "@/lib/lab
 import { Money } from "@/components/common/money";
 import {
   createRecurringRule,
+  updateRecurringRule,
   createTransaction,
   deleteTransaction,
   inspectPastedExpense,
@@ -25,7 +26,7 @@ import {
   type PastedExpenseInfo,
   type SpendableChange,
 } from "../actions";
-import type { CategoryRow, TxRow } from "../queries";
+import type { CategoryRow, RecurringTemplate, TxRow } from "../queries";
 import { PasteMessage } from "./paste-message";
 
 export interface AccountOption {
@@ -46,11 +47,23 @@ interface Props {
   mode?: "tx" | "recurring";
   /** 편집 대상 (tx 모드) */
   initial?: TxRow | null;
+  /** 편집 대상 정기 규칙 (recurring 모드) */
+  rule?: RecurringRuleEdit | null;
   defaultType?: TxType;
   /** 새 거래를 미리 채운 상태로 연다 (예: 카드 대금 결제 이체) */
   draft?: TxDraft | null;
   /** 문자로 채우기 진입 — 공유받기 원문 또는 iOS 단축어(입력칸 펼침) */
   paste?: { text?: string; expanded?: boolean };
+}
+
+export interface RecurringRuleEdit {
+  id: string;
+  name: string;
+  template: RecurringTemplate;
+  dayOfMonth: number;
+  businessDayAdjust: "NONE" | "PREV" | "NEXT";
+  startDate: string;
+  endDate: string | null;
 }
 
 export interface TxDraft {
@@ -121,7 +134,7 @@ export function TxFormDialog(props: Props) {
       <DialogContent className="max-h-[92dvh] overflow-y-auto sm:max-w-md">
         <DialogHeader>
           <DialogTitle>
-            {saved ? "기록했어요" : mode === "recurring" ? "정기 거래 추가" : initial ? "거래 수정" : "거래 기록"}
+            {saved ? "기록했어요" : mode === "recurring" ? (props.rule ? "정기 거래 수정" : "정기 거래 추가") : initial ? "거래 수정" : "거래 기록"}
           </DialogTitle>
           <DialogDescription className="sr-only">거래 유형, 금액, 계좌를 입력합니다.</DialogDescription>
         </DialogHeader>
@@ -133,7 +146,7 @@ export function TxFormDialog(props: Props) {
             paste={pasteUsed ? undefined : props.paste}
             onOpenChange={change}
             onSaved={onSaved}
-            key={initial?.id ?? (props.draft ? `draft:${props.draft.toAccountId}:${props.draft.fromAccountId}` : "new")}
+            key={initial?.id ?? props.rule?.id ?? (props.draft ? `draft:${props.draft.toAccountId}:${props.draft.fromAccountId}` : "new")}
           />
         )}
       </DialogContent>
@@ -183,22 +196,26 @@ function TxForm({
   isCouple,
   mode = "tx",
   initial,
+  rule,
   defaultType,
   draft,
   paste,
 }: Props & { onSaved: (change: SpendableChange) => void }) {
   const [pending, startTransition] = useTransition();
-  const seed = initial ?? draft;
+  // 수정 대상: 거래(initial) 또는 정기 규칙의 템플릿
+  const edit = initial ?? (rule ? { ...rule.template, amount: BigInt(rule.template.amount), date: undefined } : null);
+  const seed = edit ?? draft;
   const [type, setType] = useState<TxType>(seed?.type ?? defaultType ?? "EXPENSE");
-  const [amount, setAmount] = useState(seed ? seed.amount.toString() : "");
+  // 금액 없이 계좌만 미리 채운 경우(0원)는 빈칸으로 둔다
+  const [amount, setAmount] = useState(seed && seed.amount > 0n ? seed.amount.toString() : "");
   const [date, setDate] = useState(seed?.date ?? todayKST());
   const [fromAccountId, setFrom] = useState<string>(seed?.fromAccountId ?? "");
   const [toAccountId, setTo] = useState<string>(seed?.toAccountId ?? "");
   const [adjustDir, setAdjustDir] = useState<"up" | "down">(initial?.fromAccountId ? "down" : "up");
-  const [categoryId, setCategory] = useState<string>(initial?.categoryId ?? "");
-  const [merchant, setMerchant] = useState(initial?.merchant ?? "");
+  const [categoryId, setCategory] = useState<string>(edit?.categoryId ?? "");
+  const [merchant, setMerchant] = useState(edit?.merchant ?? "");
   const [memo, setMemo] = useState(seed?.memo ?? "");
-  const [visibility, setVisibility] = useState<Visibility | null>(initial?.visibility ?? null);
+  const [visibility, setVisibility] = useState<Visibility | null>(edit?.visibility ?? null);
   const [isFixed, setIsFixed] = useState(initial?.isFixed ?? false);
   const [error, setError] = useState<string | null>(null);
   // 문자로 채운 지출 — 저장 전에 중복 확인 (AC-23)
@@ -206,11 +223,11 @@ function TxForm({
   const [duplicate, setDuplicate] = useState<PastedExpenseInfo["duplicate"]>(null);
   const [pendingAccount, setPendingAccount] = useState<string | null>(null);
   // 정기 거래 전용
-  const [name, setName] = useState("");
-  const [dayOfMonth, setDayOfMonth] = useState(25);
-  const [adjust, setAdjust] = useState<"NONE" | "PREV" | "NEXT">("NONE");
-  const [startDate, setStartDate] = useState(todayKST());
-  const [endDate, setEndDate] = useState("");
+  const [name, setName] = useState(rule?.name ?? "");
+  const [dayOfMonth, setDayOfMonth] = useState(rule?.dayOfMonth ?? 25);
+  const [adjust, setAdjust] = useState<"NONE" | "PREV" | "NEXT">(rule?.businessDayAdjust ?? "NONE");
+  const [startDate, setStartDate] = useState(rule?.startDate ?? todayKST());
+  const [endDate, setEndDate] = useState(rule?.endDate ?? "");
 
   const meta = TX_TYPE_META[type];
   const isMine = !initial || initial.createdByUserId === viewerId;
@@ -219,7 +236,7 @@ function TxForm({
   // 새 거래: 유형별로 마지막에 쓴 계좌를 기본 선택.
   // 유형이 실제로 바뀔 때만 — 서버 액션 뒤 레이아웃이 다시 그려져 accounts 가 새 배열이 돼도 입력값을 지우지 않게
   // 미리 채운 거래(draft)는 그 계좌를 그대로 쓴다
-  const appliedType = useRef<TxType | null>(draft?.type ?? null);
+  const appliedType = useRef<TxType | null>(draft?.type ?? rule?.template.type ?? null);
   useEffect(() => {
     if (initial || appliedType.current === type) return;
     appliedType.current = type;
@@ -310,14 +327,15 @@ function TxForm({
       if (mode === "recurring") {
         const { date: _omit, ...template } = tx;
         void _omit;
-        result = await createRecurringRule({
+        const input = {
           name: name || merchant || TX_TYPE_META[type].label,
           tx: template,
           dayOfMonth,
           businessDayAdjust: adjust,
           startDate,
           endDate: endDate || null,
-        });
+        };
+        result = rule ? await updateRecurringRule(rule.id, input) : await createRecurringRule(input);
       } else if (initial) {
         result = await updateTransaction(initial.id, tx);
       } else {
@@ -328,7 +346,7 @@ function TxForm({
       rememberAccount(`${type}:to`, tx.toAccountId);
       const change = result.data && "spendable" in result.data ? result.data.spendable : null;
       if (change) return onSaved(change);
-      toast.success(mode === "recurring" ? "정기 거래를 등록했어요" : initial ? "수정했어요" : "기록했어요");
+      toast.success(mode === "recurring" ? (rule ? "정기 거래를 수정했어요" : "정기 거래를 등록했어요") : initial ? "수정했어요" : "기록했어요");
       onOpenChange(false);
     });
   }
@@ -515,7 +533,9 @@ function TxForm({
               <Input id="end" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="h-9" />
             </Field>
           </div>
-          <p className="text-xs text-muted-foreground">시작일부터 오늘까지 지난 회차도 바로 생성됩니다.</p>
+          <p className="text-xs text-muted-foreground">
+            {rule ? "이미 생성된 거래는 그대로 두고, 다음 회차부터 바뀐 내용으로 생성돼요." : "시작일부터 오늘까지 지난 회차도 바로 생성됩니다."}
+          </p>
         </div>
       ) : null}
 

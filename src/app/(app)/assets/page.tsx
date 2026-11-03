@@ -1,4 +1,7 @@
+import Link from "next/link";
+import { PiggyBank } from "lucide-react";
 import { Money } from "@/components/common/money";
+import { buttonVariants } from "@/components/ui/button";
 import { PageHeader } from "@/components/common/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AccountMenu, NewAccountButton, type AccountFormEnv } from "@/features/accounts/components/account-dialogs";
@@ -43,7 +46,18 @@ export default async function AssetsPage({ searchParams }: { searchParams: Promi
 
   return (
     <div className="grid gap-5">
-      <PageHeader title="자산" description="계좌 잔액 = 마지막으로 맞춘 잔액 + 이후 거래" actions={<NewAccountButton env={env} />} />
+      <PageHeader
+        title="자산"
+        description="계좌 잔액 = 마지막으로 맞춘 잔액 + 이후 거래"
+        actions={
+          <>
+            <Link href="/assets/savings" className={buttonVariants({ variant: "outline" })}>
+              <PiggyBank /> 고정 저축
+            </Link>
+            <NewAccountButton env={env} />
+          </>
+        }
+      />
 
       <div className="grid gap-3 lg:grid-cols-[2fr_3fr]">
         <Card>
@@ -110,6 +124,7 @@ export default async function AssetsPage({ searchParams }: { searchParams: Promi
                             {[
                               a.institution,
                               a.type === "CREDIT_CARD" ? billingLabel(a) : null,
+                              a.type === "SAVINGS" && a.maturityDate ? `${a.maturityDate.replaceAll("-", ".")} 만기` : null,
                               ctx.isCouple ? ownerLabel(a.ownerUserId) : null,
                               ctx.isCouple ? VISIBILITY_LABEL[a.defaultVisibility] : null,
                             ]
@@ -128,6 +143,9 @@ export default async function AssetsPage({ searchParams }: { searchParams: Promi
                             defaultVisibility: a.defaultVisibility,
                             billingDay: a.billingDay,
                             paymentAccountId: a.paymentAccountId,
+                            openedOn: a.openedOn,
+                            maturityDate: a.maturityDate,
+                            interestRate: a.interestRate,
                             isArchived: a.isArchived,
                           }}
                           balance={a.balance}
