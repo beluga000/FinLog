@@ -140,5 +140,6 @@ npx vercel deploy --prod --yes            # 환경변수는 새 배포부터 적
 | `20261103015920_rate_limit` | `RateLimit` 테이블 (시도 횟수 제한) | 2026-11-03 |
 | `20261103021325_user_approval` | `User.approvedAt` + 기존 사용자 승인 처리 | 2026-11-03 |
 | `20261103023712_card_billing` | `Account.billingDay`·`paymentAccountId` | 2026-11-03 |
+| `20261103042458_session_version` | `User.sessionVersion` (모든 기기에서 로그아웃) | 2026-11-03 |
 
 새 마이그레이션을 운영에 적용하면 이 표에 한 줄 추가한다.
