@@ -16,29 +16,57 @@ import { todayKST } from "@/lib/finance/period";
 import type { AccountType, Visibility } from "@/lib/finance/types";
 import { ACCOUNT_TYPE_LABEL, ACCOUNT_TYPE_ORDER, VISIBILITY_HINT, VISIBILITY_LABEL } from "@/lib/labels";
 import { createAccount, recordBalance, setAccountArchived, updateAccount } from "../actions";
+import type { OwnerChoice } from "../rules";
 
 interface AccountValue {
   id?: string;
   name: string;
   type: AccountType;
   institution: string | null;
-  owner: "me" | "joint";
+  owner: OwnerChoice;
   defaultVisibility: Visibility;
+  billingDay: number | null;
+  paymentAccountId: string | null;
 }
 
-function AccountForm({ initial, isCouple, onDone }: { initial?: AccountValue; isCouple: boolean; onDone: () => void }) {
+/** 폼이 고를 수 있는 것들 — 화면(서버)에서 한 번 만들어 넘긴다 */
+export interface AccountFormEnv {
+  isCouple: boolean;
+  /** 배우자 이름 (부부일 때) */
+  partnerName: string | null;
+  /** 카드 대금 출금 계좌 후보 (통장·현금) */
+  paymentOptions: { id: string; name: string }[];
+}
+
+const BILLING_DAYS = Array.from({ length: 31 }, (_, i) => i + 1);
+
+function AccountForm({ initial, env, onDone }: { initial?: AccountValue; env: AccountFormEnv; onDone: () => void }) {
+  const { isCouple } = env;
   const [pending, start] = useTransition();
   const [name, setName] = useState(initial?.name ?? "");
   const [type, setType] = useState<AccountType>(initial?.type ?? "CHECKING");
   const [institution, setInstitution] = useState(initial?.institution ?? "");
-  const [owner, setOwner] = useState<"me" | "joint">(initial?.owner ?? "me");
+  const [owner, setOwner] = useState<OwnerChoice>(initial?.owner ?? "me");
   const [visibility, setVisibility] = useState<Visibility>(initial?.defaultVisibility ?? "SHARED");
+  const [billingDay, setBillingDay] = useState<number | null>(initial?.billingDay ?? null);
+  const [paymentAccountId, setPaymentAccountId] = useState(initial?.paymentAccountId ?? "");
+  // 비공개는 원래 내 명의였던 계좌(또는 새 계좌)를 내 명의로 둘 때만
+  const canBePrivate = owner === "me" && (!initial?.id || initial.owner === "me");
   const [opening, setOpening] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   function submit() {
     setError(null);
-    const payload = { name, type, institution: institution || null, owner, defaultVisibility: visibility };
+    const card = type === "CREDIT_CARD";
+    const payload = {
+      name,
+      type,
+      institution: institution || null,
+      owner,
+      defaultVisibility: visibility,
+      billingDay: card ? billingDay : null,
+      paymentAccountId: card ? paymentAccountId || null : null,
+    };
     start(async () => {
       const r = initial?.id ? await updateAccount(initial.id, payload) : await createAccount({ ...payload, openingBalance: opening || "0" });
       if (!r.ok) return setError(r.error);
@@ -79,18 +107,53 @@ function AccountForm({ initial, isCouple, onDone }: { initial?: AccountValue; is
           <AmountInput id="acc-open" value={opening} onChange={setOpening} />
         </Field>
       ) : null}
+      {type === "CREDIT_CARD" ? (
+        <div className="grid grid-cols-[6rem_1fr] gap-3">
+          <Field label="결제일" htmlFor="acc-billing">
+            <NativeSelect
+              id="acc-billing"
+              value={billingDay ?? ""}
+              onChange={(e) => setBillingDay(e.target.value ? Number(e.target.value) : null)}
+            >
+              <option value="">모름</option>
+              {BILLING_DAYS.map((d) => (
+                <option key={d} value={d}>{d}일</option>
+              ))}
+            </NativeSelect>
+          </Field>
+          <Field label="출금 계좌" htmlFor="acc-pay">
+            <NativeSelect id="acc-pay" value={paymentAccountId} onChange={(e) => setPaymentAccountId(e.target.value)}>
+              <option value="">선택 안 함</option>
+              {env.paymentOptions
+                .filter((o) => o.id !== initial?.id)
+                .map((o) => (
+                  <option key={o.id} value={o.id}>{o.name}</option>
+                ))}
+            </NativeSelect>
+          </Field>
+          <p className="col-span-2 -mt-2 text-xs text-muted-foreground">결제일이 다가오면 홈의 확인할 일에서 대금과 통장 잔액을 알려 드려요.</p>
+        </div>
+      ) : null}
       {isCouple ? (
         <>
-          <Field label="명의">
-            <NativeSelect value={owner} onChange={(e) => setOwner(e.target.value as "me" | "joint")}>
+          <Field label="명의" hint={owner === "partner" ? "배우자 대신 등록해요. 둘 다 수정할 수 있어요." : undefined}>
+            <NativeSelect
+              value={owner}
+              onChange={(e) => {
+                const next = e.target.value as OwnerChoice;
+                setOwner(next);
+                if (next !== "me" && visibility === "PRIVATE") setVisibility("SHARED");
+              }}
+            >
               <option value="me">내 명의</option>
-              <option value="joint">공동 (둘 다 관리)</option>
+              <option value="partner">{env.partnerName ? `${env.partnerName} 명의` : "배우자 명의"}</option>
+              <option value="joint">공동</option>
             </NativeSelect>
           </Field>
           <Field label="기본 공개범위" hint={VISIBILITY_HINT[visibility] + " · 이 계좌로 기록하는 거래의 기본값이에요."}>
             <NativeSelect value={visibility} onChange={(e) => setVisibility(e.target.value as Visibility)}>
               {(["SHARED", "SUMMARY_ONLY", "PRIVATE"] as const).map((v) => (
-                <option key={v} value={v} disabled={owner === "joint" && v === "PRIVATE"}>
+                <option key={v} value={v} disabled={v === "PRIVATE" && !canBePrivate}>
                   {VISIBILITY_LABEL[v]}
                 </option>
               ))}
@@ -106,7 +169,7 @@ function AccountForm({ initial, isCouple, onDone }: { initial?: AccountValue; is
   );
 }
 
-export function NewAccountButton({ isCouple }: { isCouple: boolean }) {
+export function NewAccountButton({ env }: { env: AccountFormEnv }) {
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -119,7 +182,7 @@ export function NewAccountButton({ isCouple }: { isCouple: boolean }) {
             <DialogTitle>계좌 추가</DialogTitle>
             <DialogDescription>통장, 카드, 증권, 대출 등 돈이 머무는 곳을 등록해요.</DialogDescription>
           </DialogHeader>
-          {open ? <AccountForm isCouple={isCouple} onDone={() => setOpen(false)} /> : null}
+          {open ? <AccountForm env={env} onDone={() => setOpen(false)} /> : null}
         </DialogContent>
       </Dialog>
     </>
@@ -162,13 +225,11 @@ export function BalanceForm({ id, type, current, onDone }: { id: string; type: A
 export function AccountMenu({
   account,
   balance,
-  isCouple,
-  canManage,
+  env,
 }: {
   account: AccountValue & { id: string; isArchived: boolean };
   balance: bigint;
-  isCouple: boolean;
-  canManage: boolean;
+  env: AccountFormEnv;
 }) {
   const [dialog, setDialog] = useState<"balance" | "edit" | null>(null);
   const [pending, start] = useTransition();
@@ -180,24 +241,21 @@ export function AccountMenu({
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
           <DropdownMenuItem render={<Link href={`/ledger?account=${account.id}`} />}>거래 내역</DropdownMenuItem>
-          {canManage ? (
-            <>
-              <DropdownMenuItem onClick={() => setDialog("balance")}>잔액 맞추기</DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setDialog("edit")}>수정</DropdownMenuItem>
-              <DropdownMenuItem
-                disabled={pending}
-                onClick={() =>
-                  start(async () => {
-                    const r = await setAccountArchived(account.id, !account.isArchived);
-                    if (!r.ok) toast.error(r.error);
-                    else toast.success(account.isArchived ? "다시 사용해요" : "보관했어요 (순자산에서 제외)");
-                  })
-                }
-              >
-                {account.isArchived ? "보관 해제" : "보관 (해지한 계좌)"}
-              </DropdownMenuItem>
-            </>
-          ) : null}
+          {/* 보이는 계좌는 모두 관리 가능 (부부는 서로의 계좌도) — 서버에서 다시 확인한다 */}
+          <DropdownMenuItem onClick={() => setDialog("balance")}>잔액 맞추기</DropdownMenuItem>
+          <DropdownMenuItem onClick={() => setDialog("edit")}>수정</DropdownMenuItem>
+          <DropdownMenuItem
+            disabled={pending}
+            onClick={() =>
+              start(async () => {
+                const r = await setAccountArchived(account.id, !account.isArchived);
+                if (!r.ok) toast.error(r.error);
+                else toast.success(account.isArchived ? "다시 사용해요" : "보관했어요 (순자산에서 제외)");
+              })
+            }
+          >
+            {account.isArchived ? "보관 해제" : "보관 (해지한 계좌)"}
+          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
       <Dialog open={dialog !== null} onOpenChange={(o) => !o && setDialog(null)}>
@@ -207,7 +265,7 @@ export function AccountMenu({
             <DialogDescription className="sr-only">계좌 정보를 변경합니다.</DialogDescription>
           </DialogHeader>
           {dialog === "balance" ? <BalanceForm id={account.id} type={account.type} current={balance} onDone={() => setDialog(null)} /> : null}
-          {dialog === "edit" ? <AccountForm initial={account} isCouple={isCouple} onDone={() => setDialog(null)} /> : null}
+          {dialog === "edit" ? <AccountForm initial={account} env={env} onDone={() => setDialog(null)} /> : null}
         </DialogContent>
       </Dialog>
     </>

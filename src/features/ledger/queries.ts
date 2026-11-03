@@ -32,6 +32,10 @@ export interface AccountRow {
   ownerUserId: string | null;
   defaultVisibility: Visibility;
   isArchived: boolean;
+  /** 카드 결제일 (CREDIT_CARD) */
+  billingDay: number | null;
+  /** 카드 대금 출금 계좌 (CREDIT_CARD) */
+  paymentAccountId: string | null;
 }
 
 const accountSelect = {
@@ -42,6 +46,8 @@ const accountSelect = {
   ownerUserId: true,
   defaultVisibility: true,
   isArchived: true,
+  billingDay: true,
+  paymentAccountId: true,
 } satisfies Prisma.AccountSelect;
 
 /** 뷰 스코프에서 보이는 계좌 */

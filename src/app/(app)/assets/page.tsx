@@ -1,8 +1,10 @@
 import { Money } from "@/components/common/money";
 import { PageHeader } from "@/components/common/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { AccountMenu, NewAccountButton } from "@/features/accounts/components/account-dialogs";
+import { AccountMenu, NewAccountButton, type AccountFormEnv } from "@/features/accounts/components/account-dialogs";
 import { getAccountOverview } from "@/features/accounts/queries";
+import { ownerChoiceOf, PAYMENT_SOURCE_TYPES } from "@/features/accounts/rules";
+import { getAccounts } from "@/features/ledger/queries";
 import { NetWorthChart } from "@/features/dashboard/components/charts";
 import { requireHousehold } from "@/lib/db/context";
 import { isLiability } from "@/lib/finance/balance";
@@ -17,11 +19,23 @@ export default async function AssetsPage({ searchParams }: { searchParams: Promi
   const sp = await searchParams;
   const scope = ctx.isCouple ? parseViewScope(sp.scope) : "us";
   const today = todayKST();
-  const { accounts, netWorth, trend } = await getAccountOverview(ctx, scope, {
-    today,
-    monthStartDay: ctx.household.monthStartDay,
-    trendMonths: 12,
-  });
+  const [{ accounts, netWorth, trend }, allVisible] = await Promise.all([
+    getAccountOverview(ctx, scope, { today, monthStartDay: ctx.household.monthStartDay, trendMonths: 12 }),
+    // 출금 계좌 후보·이름은 뷰 스코프(나/배우자)와 상관없이 가계 전체에서
+    getAccounts(ctx, "us"),
+  ]);
+  const nameById = new Map(allVisible.map((a) => [a.id, a.name]));
+  const env: AccountFormEnv = {
+    isCouple: ctx.isCouple,
+    partnerName: ctx.partner?.name ?? null,
+    paymentOptions: allVisible.filter((a) => PAYMENT_SOURCE_TYPES.includes(a.type)).map((a) => ({ id: a.id, name: a.name })),
+  };
+  const billingLabel = (a: { billingDay: number | null; paymentAccountId: string | null }) =>
+    a.billingDay === null && !a.paymentAccountId
+      ? null
+      : [a.billingDay ? `매월 ${a.billingDay}일 결제` : null, a.paymentAccountId ? nameById.get(a.paymentAccountId) : null]
+          .filter(Boolean)
+          .join(" · ");
 
   const groups = ACCOUNT_TYPE_ORDER.map((type) => ({ type, items: accounts.filter((a) => a.type === type) })).filter((g) => g.items.length);
   const ownerLabel = (owner: string | null) =>
@@ -29,7 +43,7 @@ export default async function AssetsPage({ searchParams }: { searchParams: Promi
 
   return (
     <div className="grid gap-5">
-      <PageHeader title="자산" description="계좌 잔액 = 마지막으로 맞춘 잔액 + 이후 거래" actions={<NewAccountButton isCouple={ctx.isCouple} />} />
+      <PageHeader title="자산" description="계좌 잔액 = 마지막으로 맞춘 잔액 + 이후 거래" actions={<NewAccountButton env={env} />} />
 
       <div className="grid gap-3 lg:grid-cols-[2fr_3fr]">
         <Card>
@@ -88,13 +102,17 @@ export default async function AssetsPage({ searchParams }: { searchParams: Promi
                 </div>
                 <ul className="divide-y rounded-xl border">
                   {g.items.map((a) => {
-                    const canManage = a.ownerUserId === null || a.ownerUserId === ctx.userId;
                     return (
                       <li key={a.id} className="flex items-center gap-2 py-2 pr-1 pl-3">
                         <div className="min-w-0 flex-1">
                           <div className="truncate text-sm font-medium">{a.name}</div>
                           <div className="truncate text-xs text-muted-foreground">
-                            {[a.institution, ctx.isCouple ? ownerLabel(a.ownerUserId) : null, ctx.isCouple ? VISIBILITY_LABEL[a.defaultVisibility] : null]
+                            {[
+                              a.institution,
+                              a.type === "CREDIT_CARD" ? billingLabel(a) : null,
+                              ctx.isCouple ? ownerLabel(a.ownerUserId) : null,
+                              ctx.isCouple ? VISIBILITY_LABEL[a.defaultVisibility] : null,
+                            ]
                               .filter(Boolean)
                               .join(" · ")}
                           </div>
@@ -106,13 +124,14 @@ export default async function AssetsPage({ searchParams }: { searchParams: Promi
                             name: a.name,
                             type: a.type,
                             institution: a.institution,
-                            owner: a.ownerUserId === null ? "joint" : "me",
+                            owner: ownerChoiceOf(a.ownerUserId, ctx.userId),
                             defaultVisibility: a.defaultVisibility,
+                            billingDay: a.billingDay,
+                            paymentAccountId: a.paymentAccountId,
                             isArchived: a.isArchived,
                           }}
                           balance={a.balance}
-                          isCouple={ctx.isCouple}
-                          canManage={canManage}
+                          env={env}
                         />
                       </li>
                     );

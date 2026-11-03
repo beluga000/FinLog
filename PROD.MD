@@ -778,6 +778,15 @@ prisma/
 - AC-22: Android에서 문자를 FINLOG로 공유하면 빠른 입력이 채워진 채 열리고, 원문이 URL·DB에 남지 않는다.
 - AC-23: 붙여넣기·공유로 채운 지출을 저장할 때 같은 금액·±1일 지출이 있으면 확인을 거친다.
 
+### Phase 1.7 — 계좌·카드 관리 (P0, v3.2)
+| 단계 | 내용 | AC |
+|---|---|---|
+| H | 카드 결제일·출금 계좌, 결제 예정 알림(확인할 일), 부부 계좌 대신 등록·공동 관리 | AC-24~26 |
+
+- AC-24: 신용카드에 결제일(1~31, 짧은 달은 말일)과 출금 계좌(입출금·저축·현금)를 지정할 수 있고, 자산 목록에 "매월 N일 결제 · 출금 계좌"로 표시된다. 계좌번호는 저장하지 않는다.
+- AC-25: 결제일 5일 전 ~ 2일 뒤에 미결제 사용액이 있는 카드는 확인할 일 맨 앞에 대금·출금 계좌 잔액(부족분)과 함께 나오고, [결제 기록]은 출금 계좌→카드 이체를 미리 채워 연다. 결제일 10일 전 이후 카드로 들어온 이체가 있으면 나오지 않는다.
+- AC-26: 부부는 명의를 "내 명의 / 배우자 명의 / 공동"으로 골라 서로의 계좌를 대신 등록하고, 보이는 계좌는 둘 다 수정·잔액 맞추기·보관할 수 있다. 비공개는 원래 내 명의인 계좌만 설정할 수 있다(배우자·공동 계좌를 숨길 수 없음). 다른 사람 명의 계좌의 등록·수정은 감사 로그에 남는다.
+
 ### Phase 2 — P1
 성향 진단, 사전 점검, 모델 포트폴리오·커스텀·비교, 시나리오, 카테고리 예산(필요 시), CSV 가져오기(데스크톱 보조), 자동 분류, 정산, 탈퇴 정책, 월간 결산 PDF, PWA 오프라인 입력 큐.
 
@@ -869,4 +878,10 @@ Add src/lib/finance/review.ts (buildMonthlyReview) with tests, and render last m
 ```text
 Add app/manifest.ts with icons and a POST share_target. Add src/lib/finance/card-message.ts (parseCardMessage) with tests for major issuers' approval/cancel formats.
 Quick-add gets a [문자 붙여넣기] step; shared text arrives via a 5-minute httpOnly cookie, never the URL. Warn on likely duplicates before saving. Verify AC-20~23.
+```
+
+### H — 계좌·카드 관리
+```text
+Add Account.billingDay / paymentAccountId (self-relation, SetNull). Owner choice me|partner|joint (features/accounts/rules.ts); PRIVATE only for accounts already owned by the viewer.
+Card due items (lib/finance/card-billing.ts) lead the review list; [결제 기록] opens a TRANSFER draft. Verify AC-24~26.
 ```

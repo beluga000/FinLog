@@ -152,8 +152,14 @@ model Account {
   defaultVisibility Visibility        @default(SHARED)
   assetClassTag     String?
   isArchived        Boolean           @default(false)
+  /// 카드 결제일 (1~31, 짧은 달은 말일). CREDIT_CARD 만 사용
+  billingDay        Int?
+  /// 카드 대금이 빠져나가는 계좌. CREDIT_CARD 만 사용
+  paymentAccountId  String?
   createdAt         DateTime          @default(now())
   household         Household         @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  paymentAccount    Account?          @relation("cardPayment", fields: [paymentAccountId], references: [id], onDelete: SetNull)
+  paidCards         Account[]         @relation("cardPayment")
   snapshots         AccountSnapshot[]
   outgoing          Transaction[]     @relation("fromAccount")
   incoming          Transaction[]     @relation("toAccount")

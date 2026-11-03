@@ -47,8 +47,19 @@ interface Props {
   /** 편집 대상 (tx 모드) */
   initial?: TxRow | null;
   defaultType?: TxType;
+  /** 새 거래를 미리 채운 상태로 연다 (예: 카드 대금 결제 이체) */
+  draft?: TxDraft | null;
   /** 문자로 채우기 진입 — 공유받기 원문 또는 iOS 단축어(입력칸 펼침) */
   paste?: { text?: string; expanded?: boolean };
+}
+
+export interface TxDraft {
+  type: TxType;
+  amount: bigint;
+  date?: string;
+  fromAccountId: string | null;
+  toAccountId: string | null;
+  memo?: string;
 }
 
 const CASH_LIKE: AccountType[] = ["CASH", "CHECKING", "SAVINGS"];
@@ -122,7 +133,7 @@ export function TxFormDialog(props: Props) {
             paste={pasteUsed ? undefined : props.paste}
             onOpenChange={change}
             onSaved={onSaved}
-            key={initial?.id ?? "new"}
+            key={initial?.id ?? (props.draft ? `draft:${props.draft.toAccountId}:${props.draft.fromAccountId}` : "new")}
           />
         )}
       </DialogContent>
@@ -173,18 +184,20 @@ function TxForm({
   mode = "tx",
   initial,
   defaultType,
+  draft,
   paste,
 }: Props & { onSaved: (change: SpendableChange) => void }) {
   const [pending, startTransition] = useTransition();
-  const [type, setType] = useState<TxType>(initial?.type ?? defaultType ?? "EXPENSE");
-  const [amount, setAmount] = useState(initial ? initial.amount.toString() : "");
-  const [date, setDate] = useState(initial?.date ?? todayKST());
-  const [fromAccountId, setFrom] = useState<string>(initial?.fromAccountId ?? "");
-  const [toAccountId, setTo] = useState<string>(initial?.toAccountId ?? "");
+  const seed = initial ?? draft;
+  const [type, setType] = useState<TxType>(seed?.type ?? defaultType ?? "EXPENSE");
+  const [amount, setAmount] = useState(seed ? seed.amount.toString() : "");
+  const [date, setDate] = useState(seed?.date ?? todayKST());
+  const [fromAccountId, setFrom] = useState<string>(seed?.fromAccountId ?? "");
+  const [toAccountId, setTo] = useState<string>(seed?.toAccountId ?? "");
   const [adjustDir, setAdjustDir] = useState<"up" | "down">(initial?.fromAccountId ? "down" : "up");
   const [categoryId, setCategory] = useState<string>(initial?.categoryId ?? "");
   const [merchant, setMerchant] = useState(initial?.merchant ?? "");
-  const [memo, setMemo] = useState(initial?.memo ?? "");
+  const [memo, setMemo] = useState(seed?.memo ?? "");
   const [visibility, setVisibility] = useState<Visibility | null>(initial?.visibility ?? null);
   const [isFixed, setIsFixed] = useState(initial?.isFixed ?? false);
   const [error, setError] = useState<string | null>(null);
@@ -205,7 +218,8 @@ function TxForm({
 
   // 새 거래: 유형별로 마지막에 쓴 계좌를 기본 선택.
   // 유형이 실제로 바뀔 때만 — 서버 액션 뒤 레이아웃이 다시 그려져 accounts 가 새 배열이 돼도 입력값을 지우지 않게
-  const appliedType = useRef<TxType | null>(null);
+  // 미리 채운 거래(draft)는 그 계좌를 그대로 쓴다
+  const appliedType = useRef<TxType | null>(draft?.type ?? null);
   useEffect(() => {
     if (initial || appliedType.current === type) return;
     appliedType.current = type;

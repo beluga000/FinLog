@@ -58,7 +58,7 @@ npm run dev                 # http://localhost:3000
 | 스크립트 | 내용 |
 |---|---|
 | `npm test` | 계산 로직 단위 테스트 (DB 불필요) |
-| `TEST_DATABASE_URL=... DATABASE_URL=... npm run test:db` | DB 통합 테스트 — 공개범위·가구 격리·정기거래(AC-3/4/9), 온보딩(AC-10/11), 홈·쓸 수 있는 돈·확인할 일·결산(AC-13~16, 19) |
+| `TEST_DATABASE_URL=... DATABASE_URL=... npm run test:db` | DB 통합 테스트 — 공개범위·가구 격리·정기거래(AC-3/4/9), 온보딩(AC-10/11), 홈·쓸 수 있는 돈·확인할 일·결산(AC-13~16, 19), 카드 결제일·부부 계좌 관리(AC-25~26) |
 | `npm run typecheck` / `npm run lint` / `npm run build` | 정적 검사·빌드 |
 
 DB 테스트는 각자 만든 데이터만 지우므로 로컬 개발 DB로 돌려도 된다 (`TEST_DATABASE_URL=$DATABASE_URL`).

@@ -11,6 +11,7 @@ import type { GoalView } from "@/features/goals/queries";
 import type { HouseholdContext } from "@/lib/db/context";
 import { fromDbDate, prisma, toDbDate } from "@/lib/db/prisma";
 import { computeBalances } from "@/lib/finance/balance";
+import { upcomingCardDue } from "@/lib/finance/card-billing";
 import { addDays, getMonthKey, getMonthRange } from "@/lib/finance/period";
 import {
   calculateSpendable,
@@ -110,6 +111,16 @@ const REVIEW_LIMIT = 3;
 export type ReviewItem =
   | { kind: "recurring"; key: string; date: DateStr; tx: TxRow }
   | {
+      kind: "cardDue";
+      key: string;
+      /** 결제 예정일 */
+      date: DateStr;
+      /** toPay: 현재 미결제 사용액(양수) */
+      card: { id: string; name: string; toPay: bigint };
+      /** 출금 계좌 — 지정 안 했거나 내가 볼 수 없으면 null */
+      payment: { id: string; name: string; balance: bigint } | null;
+    }
+  | {
       kind: "balance";
       key: string;
       date: DateStr | null;
@@ -117,15 +128,12 @@ export type ReviewItem =
     };
 
 /**
- * 확인할 일 (PROD.MD §2-10): 정기 규칙이 만든 미확인 거래 + 평가액이 30일 넘게 갱신 안 된 자산 계좌.
- * 오래된 순 최대 3건. 내가 편집할 수 있는 것(내 것·공유·공동 명의)만.
+ * 평가액 계좌 중 마지막 잔액 입력이 30일 넘은 것 — 오래된 순.
+ * 부부는 서로의 계좌를 관리할 수 있으므로 내가 볼 수 있는 계좌 전부가 대상이다.
  */
-/** 평가액 계좌 중 마지막 잔액 입력이 30일 넘은 것 (내 것·공동 명의만) — 오래된 순 */
 export async function getStaleBalanceAccounts(ctx: Ctx, opts: { today: DateStr }) {
   const accounts = await getAccounts(ctx, "us");
-  const valuation = accounts.filter(
-    (a) => VALUATION_TYPES.includes(a.type) && (a.ownerUserId === ctx.userId || a.ownerUserId === null),
-  );
+  const valuation = accounts.filter((a) => VALUATION_TYPES.includes(a.type));
   if (!valuation.length) return [];
   const lastSnapshots = await prisma.accountSnapshot.groupBy({
     by: ["accountId"],
@@ -146,14 +154,76 @@ export async function getStaleBalanceAccounts(ctx: Ctx, opts: { today: DateStr }
     .sort((x, y) => (x.last ?? "").localeCompare(y.last ?? ""));
 }
 
+/** 결제 예정일 앞뒤로 이 기간 안에 카드로 들어온 이체가 있으면 이미 낸 것으로 본다 */
+const CARD_PAID_LOOKBACK_DAYS = 10;
+
+type CardDueItem = Extract<ReviewItem, { kind: "cardDue" }>;
+
+/**
+ * 결제일이 가까운 카드 (결제일 5일 전 ~ 2일 뒤). 결제일이 정해진 카드만,
+ * 미결제 사용액이 있고 아직 대금 이체(→카드)를 기록하지 않은 경우만.
+ */
+export async function getCardDueItems(ctx: Ctx, opts: { today: DateStr }): Promise<CardDueItem[]> {
+  const accounts = await getAccounts(ctx, "us");
+  const due = accounts
+    .filter((a) => a.type === "CREDIT_CARD" && a.billingDay !== null)
+    .map((a) => ({ a, date: upcomingCardDue(opts.today, a.billingDay!) }))
+    .filter((x): x is { a: (typeof accounts)[number]; date: DateStr } => x.date !== null);
+  if (!due.length) return [];
+
+  const visibleById = new Map(accounts.map((a) => [a.id, a]));
+  const paymentIds = due.map(({ a }) => a.paymentAccountId).filter((id): id is string => !!id && visibleById.has(id));
+  const ids = [...new Set([...due.map(({ a }) => a.id), ...paymentIds])];
+  const earliest = due.reduce((min, { date }) => (date < min ? date : min), due[0]!.date);
+  const [{ snapshots, flows }, paid] = await Promise.all([
+    getAccountFlows(ctx, ids, opts.today),
+    prisma.transaction.findMany({
+      where: {
+        householdId: ctx.householdId,
+        deletedAt: null,
+        toAccountId: { in: due.map(({ a }) => a.id) },
+        date: { gte: toDbDate(addDays(earliest, -CARD_PAID_LOOKBACK_DAYS)) },
+      },
+      select: { toAccountId: true, date: true },
+    }),
+  ]);
+  const balances = computeBalances(ids, snapshots, flows, opts.today);
+
+  return due.flatMap(({ a, date }): CardDueItem[] => {
+    const from = addDays(date, -CARD_PAID_LOOKBACK_DAYS);
+    const alreadyPaid = paid.some((t) => t.toAccountId === a.id && fromDbDate(t.date) >= from);
+    const toPay = -(balances.get(a.id) ?? 0n);
+    if (alreadyPaid || toPay <= 0n) return [];
+    const src = a.paymentAccountId ? visibleById.get(a.paymentAccountId) : undefined;
+    return [
+      {
+        kind: "cardDue",
+        key: `card:${a.id}:${date}`,
+        date,
+        card: { id: a.id, name: a.name, toPay },
+        payment: src ? { id: src.id, name: src.name, balance: balances.get(src.id) ?? 0n } : null,
+      },
+    ];
+  });
+}
+
+/**
+ * 확인할 일 (PROD.MD §2-10): 결제일이 가까운 카드 + 정기 규칙이 만든 미확인 거래 + 평가액이 30일 넘게 갱신 안 된 자산 계좌.
+ * 카드 결제는 기한이 있으므로 맨 앞, 나머지는 오래된 순. 최대 3건.
+ */
 export async function getReviewItems(ctx: Ctx, opts: { today: DateStr }): Promise<ReviewItem[]> {
-  const [pending, stale] = await Promise.all([getReviewTransactions(ctx, REVIEW_LIMIT), getStaleBalanceAccounts(ctx, opts)]);
-  const items: ReviewItem[] = [
+  const [cards, pending, stale] = await Promise.all([
+    getCardDueItems(ctx, opts),
+    getReviewTransactions(ctx, REVIEW_LIMIT),
+    getStaleBalanceAccounts(ctx, opts),
+  ]);
+  const rest: ReviewItem[] = [
     ...pending.map((tx): ReviewItem => ({ kind: "recurring", key: `tx:${tx.id}`, date: tx.date, tx })),
     ...stale.map(({ last, ...account }): ReviewItem => ({ kind: "balance", key: `acc:${account.id}`, date: last, account })),
   ];
   // 스냅샷이 아예 없는 계좌는 가장 오래된 것으로 본다
-  return items.sort((x, y) => (x.date ?? "").localeCompare(y.date ?? "")).slice(0, REVIEW_LIMIT);
+  rest.sort((x, y) => (x.date ?? "").localeCompare(y.date ?? ""));
+  return [...cards.sort((x, y) => x.date.localeCompare(y.date)), ...rest].slice(0, REVIEW_LIMIT);
 }
 
 /** 최근 기록 — 오늘 기준 60일 안에서 최신 n건 */
