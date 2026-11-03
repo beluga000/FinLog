@@ -47,7 +47,7 @@ vercel deploy --prod        # 배포
 
 ## 실행
 
-처음 한 번만 하는 설정이다.
+처음 한 번만 하는 설정이다. 다른 기기(맥북 등)에서 저장소를 새로 받을 때는 [SETUP.md](SETUP.md) 순서대로.
 
 ```bash
 npm install                 # postinstall 에서 prisma generate 실행
