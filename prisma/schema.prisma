@@ -92,6 +92,8 @@ model User {
   createdAt       DateTime          @default(now())
   /// 관리자 가입 승인 시각. null = 승인 대기 (로그인 불가). ADMIN_EMAILS 의 이메일은 가입 즉시 승인
   approvedAt      DateTime?
+  /// 로그인 세션 세대. "모든 기기에서 로그아웃" 시 +1 → 이전에 발급된 로그인 토큰이 모두 무효
+  sessionVersion  Int               @default(0)
   memberships     HouseholdMember[]
   riskAssessments RiskAssessment[]
 }

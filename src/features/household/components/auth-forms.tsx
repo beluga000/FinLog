@@ -10,12 +10,18 @@ import { login, signup, socialLogin } from "../actions";
 
 const SOCIAL_LABEL: Record<string, string> = { kakao: "카카오로 계속하기", google: "Google로 계속하기" };
 
-export function SocialButtons({ providers }: { providers: { id: string; name: string }[] }) {
+export function SocialButtons({
+  providers,
+  callbackUrl,
+}: {
+  providers: { id: string; name: string }[];
+  callbackUrl?: string;
+}) {
   if (!providers.length) return null;
   return (
     <div className="grid gap-2">
       {providers.map((p) => (
-        <form key={p.id} action={socialLogin.bind(null, p.id)}>
+        <form key={p.id} action={socialLogin.bind(null, p.id, callbackUrl)}>
           <Button type="submit" variant="outline" size="lg" className="w-full">
             {SOCIAL_LABEL[p.id] ?? `${p.name}로 계속하기`}
           </Button>

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { CalendarClock, LogOut, Settings, ShieldCheck, UserRound } from "lucide-react";
+import { CalendarClock, LogOut, MonitorSmartphone, Settings, ShieldCheck, UserRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -10,9 +10,9 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { logout } from "@/features/household/actions";
+import { logout, logoutEverywhere } from "@/features/household/actions";
 
-/** 헤더 프로필 메뉴 — 탭에 없는 화면(설정·정기 거래)과 로그아웃 */
+/** 헤더 프로필 메뉴 — 탭에 없는 화면(설정·정기 거래)과 로그아웃(이 기기 / 모든 기기) */
 export function ProfileMenu({
   name,
   householdName,
@@ -50,6 +50,10 @@ export function ProfileMenu({
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={() => void logout()}>
           <LogOut /> 로그아웃
+        </DropdownMenuItem>
+        {/* 휴대폰 분실 등: 다른 기기에 남은 로그인까지 모두 끊는다 */}
+        <DropdownMenuItem onClick={() => void logoutEverywhere()}>
+          <MonitorSmartphone /> 모든 기기에서 로그아웃
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

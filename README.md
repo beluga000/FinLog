@@ -20,6 +20,8 @@ npm run dev
 
 운영 주소: https://finlog-chi.vercel.app — DB는 Neon Postgres(`neon.ts`, 싱가포르), 함수 리전은 `vercel.json` 의 `sin1`.
 
+> 마이그레이션·배포·롤백 절차 전체는 [DEPLOY.md](DEPLOY.md)
+
 ```bash
 npx prisma migrate deploy   # 스키마 변경이 있을 때만. directUrl(DATABASE_URL_UNPOOLED)로 적용된다
 vercel deploy --prod        # 배포

@@ -8,7 +8,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/db/prisma";
 import { clientIp, consumeRateLimit, LIMITS, resetRateLimit } from "@/lib/security/rate-limit";
 import { isAdminEmail } from "./admin";
-import { authConfig } from "./config";
+import { applyLoginWindow, authConfig } from "./config";
 
 /** 제공자 프로필에서 이메일 인증 여부 확인 (Google: email_verified, Kakao: kakao_account.is_email_verified·is_email_valid) */
 export function isVerifiedEmail(provider: string, profile: unknown): boolean {
@@ -102,17 +102,22 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     async jwt({ token, user, account, profile }) {
       if (account && user) {
         if (account.provider === "credentials") {
+          const dbUser = await prisma.user.findUniqueOrThrow({ where: { id: user.id }, select: { sessionVersion: true } });
           token.uid = user.id;
+          token.sv = dbUser.sessionVersion;
         } else {
           const dbUser = await upsertOAuthUser(account, user, profile);
           token.uid = dbUser.id;
           token.name = dbUser.name;
+          token.sv = dbUser.sessionVersion;
         }
       }
-      return token;
+      return applyLoginWindow(token, !!(account && user));
     },
     session({ session, token }) {
       if (token.uid) session.user.id = token.uid as string;
+      // 세션 세대: getViewer 가 DB 의 User.sessionVersion 과 비교해 "모든 기기에서 로그아웃" 을 반영한다
+      session.user.sessionVersion = typeof token.sv === "number" ? token.sv : -1;
       return session;
     },
   },

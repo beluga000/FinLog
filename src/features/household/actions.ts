@@ -11,6 +11,7 @@ import { INVITE_ALPHABET, INVITE_CODE_LENGTH, INVITE_CODE_RE, normalizeInviteCod
 import type { ActionResult } from "@/features/ledger/schema";
 import { signIn, signOut } from "@/lib/auth";
 import { isAdminEmail } from "@/lib/auth/admin";
+import { safeCallback } from "@/lib/auth/callback";
 import { PENDING_MESSAGE } from "@/lib/auth/messages";
 import { getViewer, requireHousehold, writeAudit } from "@/lib/db/context";
 import { prisma } from "@/lib/db/prisma";
@@ -58,7 +59,7 @@ export async function login(raw: unknown): Promise<ActionResult> {
     await signIn("credentials", {
       email: parsed.data.email,
       password: parsed.data.password,
-      redirectTo: safeCallback(parsed.data.callbackUrl),
+      redirectTo: safeCallback(parsed.data.callbackUrl, (await headers()).get("host")),
     });
   } catch (e) {
     // redirect 는 NEXT_REDIRECT 예외로 전달되므로 다시 던진다
@@ -76,16 +77,19 @@ export async function login(raw: unknown): Promise<ActionResult> {
   return { ok: true };
 }
 
-function safeCallback(url: string | undefined): string {
-  return url && url.startsWith("/") && !url.startsWith("//") ? url : "/dashboard";
-}
-
-export async function socialLogin(provider: string) {
-  await signIn(provider, { redirectTo: "/dashboard" });
+export async function socialLogin(provider: string, callbackUrl?: string) {
+  await signIn(provider, { redirectTo: safeCallback(callbackUrl, (await headers()).get("host")) });
 }
 
 export async function logout() {
   await signOut({ redirectTo: "/login" });
+}
+
+/** 모든 기기에서 로그아웃: 세션 세대를 올려 이미 발급된 로그인(다른 기기 포함)을 모두 무효화한다 */
+export async function logoutEverywhere() {
+  const { user } = await getViewer();
+  await prisma.user.update({ where: { id: user.id }, data: { sessionVersion: { increment: 1 } } });
+  await signOut({ redirectTo: "/login?error=revoked" });
 }
 
 // ───────────────────────── 온보딩 ─────────────────────────
