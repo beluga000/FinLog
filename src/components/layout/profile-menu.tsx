@@ -50,7 +50,7 @@ export function ProfileMenu({
         </DropdownMenuItem>
         {pendingSignups !== null ? (
           <DropdownMenuItem render={<Link href="/admin" />}>
-            <ShieldCheck /> 가입 승인{pendingSignups ? ` (${pendingSignups})` : ""}
+            <ShieldCheck /> 관리자{pendingSignups ? ` (${pendingSignups})` : ""}
           </DropdownMenuItem>
         ) : null}
         <DropdownMenuSeparator />
