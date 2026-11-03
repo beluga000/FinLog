@@ -1,0 +1,12 @@
+# 로컬 비밀값·생성물은 업로드하지 않는다 (운영 값은 Vercel 환경변수로 관리)
+.env
+.env.*
+!.env.example
+.neon
+.next
+node_modules
+coverage
+src/generated
+tsconfig.tsbuildinfo
+PROD.v1.MD
+PROD.v2.MD

@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { CalendarClock, LogOut, Settings, UserRound } from "lucide-react";
+import { CalendarClock, LogOut, Settings, ShieldCheck, UserRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -13,11 +13,23 @@ import {
 import { logout } from "@/features/household/actions";
 
 /** 헤더 프로필 메뉴 — 탭에 없는 화면(설정·정기 거래)과 로그아웃 */
-export function ProfileMenu({ name, householdName }: { name: string; householdName: string }) {
+export function ProfileMenu({
+  name,
+  householdName,
+  pendingSignups = null,
+}: {
+  name: string;
+  householdName: string;
+  /** 관리자에게만 숫자(승인 대기 건수), 아니면 null */
+  pendingSignups?: number | null;
+}) {
   return (
     <DropdownMenu>
-      <DropdownMenuTrigger render={<Button variant="ghost" size="icon" aria-label="프로필 메뉴" />}>
+      <DropdownMenuTrigger
+        render={<Button variant="ghost" size="icon" aria-label={pendingSignups ? `프로필 메뉴 (가입 승인 대기 ${pendingSignups}명)` : "프로필 메뉴"} className="relative" />}
+      >
         <UserRound />
+        {pendingSignups ? <span className="absolute top-1.5 right-1.5 size-2 rounded-full bg-destructive" aria-hidden /> : null}
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="min-w-48">
         <div className="px-2 py-1.5 text-xs text-muted-foreground">
@@ -30,6 +42,11 @@ export function ProfileMenu({ name, householdName }: { name: string; householdNa
         <DropdownMenuItem render={<Link href="/settings" />}>
           <Settings /> 설정
         </DropdownMenuItem>
+        {pendingSignups !== null ? (
+          <DropdownMenuItem render={<Link href="/admin" />}>
+            <ShieldCheck /> 가입 승인{pendingSignups ? ` (${pendingSignups})` : ""}
+          </DropdownMenuItem>
+        ) : null}
         <DropdownMenuSeparator />
         <DropdownMenuItem onClick={() => void logout()}>
           <LogOut /> 로그아웃

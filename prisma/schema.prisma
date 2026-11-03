@@ -5,11 +5,14 @@
 generator client {
   provider = "prisma-client"
   output   = "../src/generated/prisma"
+  // Rust 쿼리 엔진 없이 드라이버 어댑터(pg)로 접속 — Vercel 번들에 엔진 바이너리가 빠지는 문제 회피
+  engineType = "client"
 }
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
+  url       = env("DATABASE_URL") // 앱 쿼리: Neon pooled(-pooler)
+  directUrl = env("DATABASE_URL_UNPOOLED") // 마이그레이션: direct (PgBouncer 경유 시 prepared statement 오류)
 }
 
 enum Role {
@@ -87,6 +90,8 @@ model User {
   name            String
   passwordHash    String?
   createdAt       DateTime          @default(now())
+  /// 관리자 가입 승인 시각. null = 승인 대기 (로그인 불가). ADMIN_EMAILS 의 이메일은 가입 즉시 승인
+  approvedAt      DateTime?
   memberships     HouseholdMember[]
   riskAssessments RiskAssessment[]
 }
@@ -343,4 +348,11 @@ model AuditLog {
   household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
 
   @@index([householdId, at])
+}
+
+/// 시도 횟수 제한 (로그인·가입·초대 코드). 고정 창 카운터 — src/lib/security/rate-limit.ts
+model RateLimit {
+  key     String   @id
+  count   Int
+  resetAt DateTime
 }

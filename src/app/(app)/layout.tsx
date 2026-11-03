@@ -4,6 +4,7 @@ import { Suspense } from "react";
 import { BottomTabBar, SidebarNav } from "@/components/layout/app-nav";
 import { ProfileMenu } from "@/components/layout/profile-menu";
 import { ScopeToggle } from "@/components/layout/scope-toggle";
+import { getPendingCountForAdmin } from "@/features/admin/access";
 import { QuickAdd } from "@/features/ledger/components/quick-add";
 import { getAccounts, getCategories } from "@/features/ledger/queries";
 import { SHARED_TEXT_COOKIE } from "@/features/ledger/shared-text";
@@ -19,7 +20,12 @@ function safeDecode(v: string) {
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const ctx = await requireHousehold();
-  const [accounts, categories, cookieStore] = await Promise.all([getAccounts(ctx, "us"), getCategories(ctx), cookies()]);
+  const [accounts, categories, cookieStore, pendingSignups] = await Promise.all([
+    getAccounts(ctx, "us"),
+    getCategories(ctx),
+    cookies(),
+    getPendingCountForAdmin(ctx.user.email),
+  ]);
   const shared = cookieStore.get(SHARED_TEXT_COOKIE)?.value;
   const sharedText = shared ? safeDecode(shared) : undefined;
 
@@ -56,7 +62,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
                 isCouple={ctx.isCouple}
                 sharedText={sharedText}
               />
-              <ProfileMenu name={ctx.user.name ?? ""} householdName={ctx.household.name} />
+              <ProfileMenu name={ctx.user.name ?? ""} householdName={ctx.household.name} pendingSignups={pendingSignups} />
             </div>
           </div>
         </header>

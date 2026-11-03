@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { consumeSharedText } from "../actions";
@@ -23,6 +24,9 @@ interface Props {
 export function QuickAdd({ sharedText, ...props }: Props) {
   const [open, setOpen] = useState(false);
   const [paste, setPaste] = useState<{ text?: string; expanded?: boolean } | undefined>();
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => setMounted(true), []);
 
   useEffect(() => {
     const url = new URL(window.location.href);
@@ -50,14 +54,19 @@ export function QuickAdd({ sharedText, ...props }: Props) {
       <Button onClick={() => setOpen(true)} className="hidden md:inline-flex" size="lg">
         <Plus /> 기록하기
       </Button>
-      <button
-        type="button"
-        aria-label="거래 기록하기"
-        onClick={() => setOpen(true)}
-        className="fixed right-4 bottom-[calc(4.5rem+env(safe-area-inset-bottom))] z-40 flex size-14 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg active:scale-95 md:hidden"
-      >
-        <Plus className="size-6" />
-      </button>
+      {/* 헤더의 backdrop-blur 가 fixed 의 기준 상자가 되므로 body 로 포털해야 화면 기준으로 뜬다 */}
+      {mounted &&
+        createPortal(
+          <button
+            type="button"
+            aria-label="거래 기록하기"
+            onClick={() => setOpen(true)}
+            className="fixed right-4 bottom-[calc(4.5rem+env(safe-area-inset-bottom))] z-40 flex size-14 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg active:scale-95 md:hidden"
+          >
+            <Plus className="size-6" />
+          </button>,
+          document.body,
+        )}
       <TxFormDialog open={open} onOpenChange={change} paste={paste} {...props} />
     </>
   );

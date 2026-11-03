@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
 import { BUCKET_LABEL } from "@/lib/labels";
 import { addCategory, createInvite, joinHousehold, setCategoryBucket, updateHouseholdSettings } from "../actions";
+import { INVITE_CODE_LENGTH, normalizeInviteCode } from "../invite-code";
 
 export function HouseholdSettingsForm({
   initial,
@@ -134,12 +135,14 @@ export function JoinPanel() {
       <Field label="초대 코드" htmlFor="join-code">
         <Input
           id="join-code"
-          inputMode="numeric"
-          maxLength={6}
+          autoCapitalize="characters"
+          autoComplete="off"
+          spellCheck={false}
+          maxLength={INVITE_CODE_LENGTH}
           value={code}
-          onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
+          onChange={(e) => setCode(normalizeInviteCode(e.target.value))}
           className="h-10 tracking-[0.3em] tabular"
-          placeholder="000000"
+          placeholder="ABCD2345"
         />
       </Field>
       <Field label="지금까지 기록한 데이터는?">
@@ -151,7 +154,7 @@ export function JoinPanel() {
       </Field>
       {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
       <div>
-        <Button type="submit" disabled={pending || code.length !== 6}>{pending ? "연결 중…" : "배우자 가구에 참여"}</Button>
+        <Button type="submit" disabled={pending || code.length !== INVITE_CODE_LENGTH}>{pending ? "연결 중…" : "배우자 가구에 참여"}</Button>
       </div>
     </form>
   );

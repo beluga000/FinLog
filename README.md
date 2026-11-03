@@ -2,7 +2,50 @@
 
 부부·개인 가계부 + 목표 자산 시뮬레이션. 요구사항은 [PROD.MD](./PROD.MD) (PRD v3) 참고. 이전 버전은 PROD.v2.MD.
 
+## 서버 올리기 (한 줄)
+
+처음 설정(아래 [실행](#실행))을 한 번 마쳤다면, 이후에는 프로젝트 폴더에서 이 명령어 하나면 된다.
+
+```bash
+npm run dev
+```
+
+- PC: http://localhost:3000
+- 폰(같은 와이파이): 터미널에 뜨는 `Network: http://192.168.x.x:3000` 주소로 접속
+- 3000번 포트를 다른 앱이 쓰고 있으면 포트를 바꿔서 띄운다: `npm run dev -- -p 3001`
+- 끄기: 터미널에서 `Ctrl + C`
+- 개발 모드는 각 페이지를 **처음 열 때** 컴파일하느라 1초 안팎 걸린다(두 번째부터는 빠름). 실제 속도를 보려면 `npm run build && npm start`
+
+## 배포 (Vercel + Neon)
+
+운영 주소: https://finlog-chi.vercel.app — DB는 Neon Postgres(`neon.ts`, 싱가포르), 함수 리전은 `vercel.json` 의 `sin1`.
+
+```bash
+npx prisma migrate deploy   # 스키마 변경이 있을 때만. directUrl(DATABASE_URL_UNPOOLED)로 적용된다
+vercel deploy --prod        # 배포
+```
+
+- 운영 환경변수(`DATABASE_URL`, `DATABASE_URL_UNPOOLED`, `AUTH_SECRET`, `CRON_SECRET`)는 Vercel에만 있다: `vercel env ls`
+- Prisma 는 Rust 엔진 없이 `@prisma/adapter-pg`(node-postgres)로 접속한다(`engineType = "client"`). 엔진 바이너리가 Vercel 번들에서 빠지는 문제 때문
+- 로컬에서 `npm start` 로 실서버 모드를 띄울 때는 `AUTH_TRUST_HOST=true` 가 필요하다(Vercel 에서는 자동)
+- 로컬 `.env` 는 로컬 Postgres 만 가리킨다. `neon env pull`/`neon deploy` 는 `.env` 의 `DATABASE_URL` 을 운영 주소로 덮어쓰므로 쓰지 않는다.
+  운영 마이그레이션은 `neon connection-string production --ssl verify-full` 로 받은 direct 주소를 그 명령에만 넘긴다
+- 시드는 원격 DB 에서 실행되지 않는다(`ALLOW_REMOTE_SEED=1` 일 때만)
+- 운영 데모 계정 비밀번호는 `demo1234` 가 아니다 — 로컬 `.env.demo.local`(커밋 제외)에만 있다
+
+## 보안
+
+- **가입 승인**: 새 가입자는 승인 대기(`User.approvedAt = null`)로 만들어지고 로그인할 수 없다. 관리자가 [프로필 메뉴 → 가입 승인](`/admin`)에서 승인·거절·승인 취소.
+  관리자 = 환경변수 `ADMIN_EMAILS`(쉼표 구분)의 이메일 — 이 이메일로 가입하면 즉시 승인된다. 승인 취소하면 기존 세션도 다음 요청부터 막힌다.
+  운영 설정: `vercel env add ADMIN_EMAILS production` 후 `vercel deploy --prod`
+- **시도 횟수 제한** (`src/lib/security/rate-limit.ts`, DB `RateLimit` 테이블): 로그인 계정별 15분 5회·IP별 15분 30회, 가입 IP별 1시간 5회, 초대 코드 사용자별 1시간 10회
+- **초대 코드**: 8자리(헷갈리는 I·O·0·1 제외 32글자, 약 1조 가지), 72시간·1회용
+- **소셜 로그인**: 제공자가 인증한 이메일만 기존 계정에 연결(`isVerifiedEmail`)
+- **보안 헤더** (`next.config.ts`): 다른 사이트에 끼워넣기 금지(`frame-ancestors 'none'`, `X-Frame-Options`), `nosniff`, Referrer·Permissions 정책
+
 ## 실행
+
+처음 한 번만 하는 설정이다.
 
 ```bash
 npm install                 # postinstall 에서 prisma generate 실행

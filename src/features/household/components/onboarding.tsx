@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
 import { formatCompactKRW } from "@/lib/finance/money";
 import { formatMonthLabel, lastDayOfMonth, monthsBetween, parseMonthKey, shiftMonth, toDateStr } from "@/lib/finance/period";
+import { INVITE_CODE_LENGTH, normalizeInviteCode } from "../invite-code";
 import { calculateMonthsToGoal, calculateRequiredInvestment } from "@/lib/finance/projection";
 import { completeOnboarding, joinHousehold } from "../actions";
 import {
@@ -123,7 +124,7 @@ export function Onboarding({ userName, today }: { userName: string; today: strin
   function stepError(): string | null {
     switch (draft.step) {
       case 1:
-        if (draft.mode === "join") return draft.code.length === 6 ? null : "6자리 초대 코드를 입력하세요.";
+        if (draft.mode === "join") return draft.code.length === INVITE_CODE_LENGTH ? null : "8자리 초대 코드를 입력하세요.";
         return draft.householdName.trim() ? null : "가구 이름을 입력하세요.";
       case 2:
         if (!draft.goalName.trim()) return "목표 이름을 입력하세요.";
@@ -256,12 +257,14 @@ function StepMode({ draft, set, userName }: StepProps & { userName: string }) {
         <Field label="초대 코드" htmlFor="code" hint="참여하면 배우자가 정한 목표로 바로 시작해요.">
           <Input
             id="code"
-            inputMode="numeric"
-            maxLength={6}
+            autoCapitalize="characters"
+            autoComplete="off"
+            spellCheck={false}
+            maxLength={INVITE_CODE_LENGTH}
             value={draft.code}
-            onChange={(e) => set({ code: e.target.value.replace(/\D/g, "") })}
+            onChange={(e) => set({ code: normalizeInviteCode(e.target.value) })}
             className="h-11 text-center text-xl tracking-[0.4em] tabular"
-            placeholder="000000"
+            placeholder="ABCD2345"
           />
         </Field>
       ) : (

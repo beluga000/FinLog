@@ -5,12 +5,26 @@
  * 실행: npm run db:seed (기존 데모 사용자는 지우고 다시 만든다)
  */
 import { PrismaClient, type TxType, type Visibility } from "../src/generated/prisma/client";
+import { PrismaPg } from "@prisma/adapter-pg";
 import bcrypt from "bcryptjs";
 import { createHouseholdWithDefaults } from "../src/features/household/setup";
 import { DEFAULT_ASSET_CLASSES } from "../src/lib/finance/portfolio";
 import { addDays, todayKST, toDateStr } from "../src/lib/finance/period";
 
-const prisma = new PrismaClient();
+// 시드는 기존 데모 사용자를 지우고 다시 만든다 — 운영 DB 등 원격 DB에서 실수로 돌지 않게 막는다
+const dbHost = (() => {
+  try {
+    return new URL(process.env.DATABASE_URL ?? "").hostname;
+  } catch {
+    return "";
+  }
+})();
+if (!["localhost", "127.0.0.1", "::1"].includes(dbHost) && process.env.ALLOW_REMOTE_SEED !== "1") {
+  console.error(`✖ 원격 DB(${dbHost || "알 수 없음"})에는 시드를 넣지 않습니다. 의도한 것이면 ALLOW_REMOTE_SEED=1 을 붙이세요.`);
+  process.exit(1);
+}
+
+const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }) });
 const d = (s: string) => new Date(`${s}T00:00:00.000Z`);
 
 async function main() {
@@ -29,8 +43,8 @@ async function main() {
   await prisma.user.deleteMany({ where: { email: { in: emails } } });
 
   const passwordHash = await bcrypt.hash("demo1234", 10);
-  const minsu = await prisma.user.create({ data: { email: emails[0], name: "민수", passwordHash } });
-  const jiyoung = await prisma.user.create({ data: { email: emails[1], name: "지영", passwordHash } });
+  const minsu = await prisma.user.create({ data: { email: emails[0], name: "민수", passwordHash, approvedAt: new Date() } });
+  const jiyoung = await prisma.user.create({ data: { email: emails[1], name: "지영", passwordHash, approvedAt: new Date() } });
 
   const household = await prisma.$transaction((db) => createHouseholdWithDefaults(db, { name: "민수·지영네", ownerUserId: minsu.id }), {
     timeout: 30_000,

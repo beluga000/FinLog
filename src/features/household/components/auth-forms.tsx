@@ -5,6 +5,7 @@ import { useState, useTransition } from "react";
 import { Field } from "@/components/common/field";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PENDING_MESSAGE } from "@/lib/auth/messages";
 import { login, signup, socialLogin } from "../actions";
 
 const SOCIAL_LABEL: Record<string, string> = { kakao: "카카오로 계속하기", google: "Google로 계속하기" };
@@ -61,6 +62,21 @@ export function LoginForm({ callbackUrl }: { callbackUrl?: string }) {
 export function SignupForm() {
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [waiting, setWaiting] = useState(false);
+
+  if (waiting) {
+    return (
+      <div className="grid gap-4" role="status">
+        <p className="rounded-lg bg-muted px-4 py-3 text-sm">
+          가입 신청이 접수됐어요. {PENDING_MESSAGE}
+        </p>
+        <Button render={<Link href="/login" />} variant="outline" size="lg">
+          로그인 화면으로
+        </Button>
+      </div>
+    );
+  }
+
   return (
     <form
       className="grid gap-4"
@@ -71,6 +87,7 @@ export function SignupForm() {
         start(async () => {
           const r = await signup({ name: fd.get("name"), email: fd.get("email"), password: fd.get("password") });
           if (r && !r.ok) setError(r.error);
+          else if (r?.ok && r.data?.pending) setWaiting(true);
         });
       }}
     >

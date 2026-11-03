@@ -64,7 +64,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
 
       {/* 모바일은 DOM 순서대로 1단, 데스크톱은 왼쪽(목표·최근 기록) / 오른쪽(쓸 수 있는 돈·저축·확인할 일) */}
       <div className="grid gap-4 lg:grid-cols-2 lg:grid-rows-[auto_auto_auto_1fr] lg:items-start">
-        <div className="min-w-0 lg:col-start-1 lg:row-span-2 lg:row-start-1">
+        <div className="min-w-0 lg:col-start-1 lg:row-start-1">
           <PrimaryGoalCard goals={goals} today={today} />
         </div>
         <div className="min-w-0 lg:col-start-2 lg:row-start-1">
@@ -82,7 +82,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
             isCouple={ctx.isCouple}
           />
         </div>
-        <div className="min-w-0 lg:col-start-1 lg:row-span-2 lg:row-start-3">
+        <div className="min-w-0 lg:col-start-1 lg:row-span-3 lg:row-start-2">
           <Card>
             <CardHeader>
               <CardTitle>최근 기록</CardTitle>

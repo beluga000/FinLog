@@ -3,10 +3,15 @@
 import bcrypt from "bcryptjs";
 import { randomInt } from "node:crypto";
 import { revalidatePath } from "next/cache";
+import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { z } from "zod";
+import { clientIp, consumeRateLimit, LIMITS } from "@/lib/security/rate-limit";
+import { INVITE_ALPHABET, INVITE_CODE_LENGTH, INVITE_CODE_RE, normalizeInviteCode } from "./invite-code";
 import type { ActionResult } from "@/features/ledger/schema";
 import { signIn, signOut } from "@/lib/auth";
+import { isAdminEmail } from "@/lib/auth/admin";
+import { PENDING_MESSAGE } from "@/lib/auth/messages";
 import { getViewer, requireHousehold, writeAudit } from "@/lib/db/context";
 import { prisma } from "@/lib/db/prisma";
 import { lastDayOfMonth, parseMonthKey, toDateStr, todayKST } from "@/lib/finance/period";
@@ -25,15 +30,25 @@ const signupSchema = z.object({
   password: z.string().min(8, "비밀번호는 8자 이상이어야 합니다.").max(72),
 });
 
-export async function signup(raw: unknown): Promise<ActionResult> {
+/** 가입: 관리자(ADMIN_EMAILS)는 바로 승인·로그인, 그 외는 승인 대기로 만들고 로그인시키지 않는다 */
+export async function signup(raw: unknown): Promise<ActionResult<{ pending: boolean }>> {
   const parsed = signupSchema.safeParse(raw);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "입력값을 확인하세요." };
   const { name, email, password } = parsed.data;
+  // 가입 남용·이메일 가입 여부 대량 조회 방지: IP 당 시간당 제한
+  const { limit, windowMs } = LIMITS.signupIp;
+  if (!(await consumeRateLimit(`signup:ip:${clientIp(await headers())}`, limit, windowMs))) {
+    return { ok: false, error: "시도가 너무 많습니다. 잠시 뒤에 다시 시도하세요." };
+  }
   const exists = await prisma.user.findUnique({ where: { email } });
   if (exists) return { ok: false, error: "이미 가입된 이메일입니다." };
-  await prisma.user.create({ data: { name, email, passwordHash: await bcrypt.hash(password, 10) } });
+  const approved = isAdminEmail(email);
+  await prisma.user.create({
+    data: { name, email, passwordHash: await bcrypt.hash(password, 10), approvedAt: approved ? new Date() : null },
+  });
+  if (!approved) return { ok: true, data: { pending: true } };
   await signIn("credentials", { email, password, redirectTo: "/onboarding" });
-  return { ok: true };
+  return { ok: true, data: { pending: false } };
 }
 
 export async function login(raw: unknown): Promise<ActionResult> {
@@ -47,6 +62,9 @@ export async function login(raw: unknown): Promise<ActionResult> {
     });
   } catch (e) {
     // redirect 는 NEXT_REDIRECT 예외로 전달되므로 다시 던진다
+    const code = e && typeof e === "object" && "code" in e ? (e as { code: string }).code : undefined;
+    if (code === "rate_limited") return { ok: false, error: "로그인 시도가 너무 많습니다. 15분 뒤에 다시 시도하세요." };
+    if (code === "pending_approval") return { ok: false, error: PENDING_MESSAGE };
     if (e instanceof Error && e.name === "CredentialsSignin") {
       return { ok: false, error: "이메일 또는 비밀번호가 올바르지 않습니다." };
     }
@@ -114,7 +132,7 @@ export async function createInvite(): Promise<ActionResult<{ code: string; expir
     data: { expiresAt: new Date() },
   });
   for (let attempt = 0; attempt < 5; attempt++) {
-    const code = String(randomInt(0, 1_000_000)).padStart(6, "0");
+    const code = Array.from({ length: INVITE_CODE_LENGTH }, () => INVITE_ALPHABET[randomInt(0, INVITE_ALPHABET.length)]).join("");
     const taken = await prisma.householdInvite.findUnique({ where: { code } });
     if (taken) {
       if (taken.usedAt || taken.expiresAt < new Date()) await prisma.householdInvite.delete({ where: { code } });
@@ -131,7 +149,7 @@ export async function createInvite(): Promise<ActionResult<{ code: string; expir
 }
 
 const joinSchema = z.object({
-  code: z.string().regex(/^\d{6}$/, "6자리 숫자 코드를 입력하세요."),
+  code: z.string().transform(normalizeInviteCode).pipe(z.string().regex(INVITE_CODE_RE, "8자리 초대 코드를 입력하세요.")),
   /** keep: 공유로 가져오기 / private: 비공개로 가져오기 / fresh: 가져오지 않음 */
   dataMode: z.enum(["keep", "private", "fresh"]),
 });
@@ -140,6 +158,11 @@ export async function joinHousehold(raw: unknown): Promise<ActionResult> {
   const { user, membership } = await getViewer();
   const parsed = joinSchema.safeParse(raw);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "입력값을 확인하세요." };
+  // 초대 코드 대입 방지: 사용자별 시간당 시도 횟수 제한 (형식이 맞는 시도만 센다)
+  const { limit, windowMs } = LIMITS.joinUser;
+  if (!(await consumeRateLimit(`join:user:${user.id}`, limit, windowMs))) {
+    return { ok: false, error: "시도가 너무 많습니다. 1시간 뒤에 다시 시도하세요." };
+  }
 
   const invite = await prisma.householdInvite.findUnique({
     where: { code: parsed.data.code },
