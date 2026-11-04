@@ -49,6 +49,16 @@ export function CommitButton({ id, monthly, committed }: { id: string; monthly: 
   );
 }
 
+/** 대안 (d) — 바로 위 진행 중 목표 위로 한 칸 */
+export function RaisePriorityButton({ id }: { id: string }) {
+  const { pending, run } = useAction();
+  return (
+    <Button size="sm" variant="outline" disabled={pending} onClick={() => run(() => moveGoalPriority(id, "up", { overActive: true }), "우선순위를 올렸어요")}>
+      올리기
+    </Button>
+  );
+}
+
 export function ApplyAlternativeButton({
   id,
   change,

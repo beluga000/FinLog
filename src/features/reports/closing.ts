@@ -114,6 +114,7 @@ export async function getMonthlyClosing(
       categoryName: index.top(t.categoryId)?.name ?? UNCATEGORIZED,
       amount: t.amount,
       fixed: t.isFixed || t.recurringRuleId !== null,
+      needs: index.bucketOf(t.categoryId) === "NEEDS",
     }));
 
   const prevByCat = new Map(prevStats.expenseByTopCategory.map((c) => [c.categoryId, c.amount]));

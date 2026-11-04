@@ -3,13 +3,14 @@ import { notFound } from "next/navigation";
 import { ChevronLeft } from "lucide-react";
 import { Money } from "@/components/common/money";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { ApplyAlternativeButton, CommitButton, GoalMenu } from "@/features/goals/components/goal-controls";
+import { GoalAlternativesCard } from "@/features/goals/components/goal-alternatives";
+import { CommitButton, GoalMenu } from "@/features/goals/components/goal-controls";
 import { GoalPace, GoalProgressBar } from "@/features/goals/components/goal-status";
 import { GoalWhatIf } from "@/features/goals/components/goal-what-if";
 import { getGoalsOverview } from "@/features/goals/queries";
 import { requireHousehold } from "@/lib/db/context";
 import { formatPercent } from "@/lib/finance/money";
-import { addMonthsExact, todayKST } from "@/lib/finance/period";
+import { todayKST } from "@/lib/finance/period";
 
 export const metadata = { title: "목표" };
 
@@ -17,13 +18,11 @@ export default async function GoalDetailPage({ params }: { params: Promise<{ id:
   const { id } = await params;
   const ctx = await requireHousehold();
   const today = todayKST();
-  const { goals, accounts } = await getGoalsOverview(ctx, { today, monthStartDay: ctx.household.monthStartDay });
+  const { goals, accounts, capacity } = await getGoalsOverview(ctx, { today, monthStartDay: ctx.household.monthStartDay });
   const goal = goals.find((g) => g.id === id);
   if (!goal) notFound();
 
   const e = goal.evaluation;
-  const alt = e.alternatives;
-  const extendTo = alt?.extendToMonths != null ? addMonthsExact(today, alt.extendToMonths) : null;
 
   return (
     <div className="grid gap-5">
@@ -78,57 +77,7 @@ export default async function GoalDetailPage({ params }: { params: Promise<{ id:
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>{alt ? "이렇게 조정해 보세요" : "계획대로 가고 있어요"}</CardTitle>
-            <CardDescription>
-              {alt ? `월 ${Math.round(goal.contribution / 1e4).toLocaleString("ko-KR")}만원 기준 대안` : "지금 배분액을 유지하면 목표일 전에 달성해요"}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="grid gap-3 text-sm">
-            {alt ? (
-              <>
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span>
-                    (a) 기간 연장 —{" "}
-                    {extendTo === null ? "100년 안에 어려워요" : <b>{extendTo.slice(0, 7).replace("-", "년 ")}월</b>}
-                  </span>
-                  {extendTo !== null ? <ApplyAlternativeButton id={goal.id} label="적용" change={{ targetDate: extendTo }} /> : null}
-                </div>
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span>
-                    (b) 목표 금액 조정 — <b><Money value={alt.reachableTarget} compact /></b>
-                  </span>
-                  {alt.reachableTarget > 0 ? (
-                    <ApplyAlternativeButton id={goal.id} label="적용" change={{ targetAmount: String(alt.reachableTarget) }} />
-                  ) : null}
-                </div>
-                {alt.higherReturn ? (
-                  <div className="grid gap-1">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <span>
-                        (c) 기대수익률 {(alt.higherReturn.annualReturn * 100).toFixed(1)}% 가정 — 월 <b><Money value={alt.higherReturn.monthly} compact /></b>
-                      </span>
-                      <ApplyAlternativeButton id={goal.id} label="적용" change={{ expectedReturn: alt.higherReturn.annualReturn }} />
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      {alt.higherReturn.shortfall === 0 ? (
-                        <span className="text-good">적용하면 지금 배정액으로 달성해요.</span>
-                      ) : (
-                        <>
-                          적용해도 월 <Money value={alt.higherReturn.shortfall} compact /> 부족해요.
-                        </>
-                      )}{" "}
-                      수익률이 높을수록 손실 가능성(변동성)도 커져요.
-                    </p>
-                  </div>
-                ) : null}
-              </>
-            ) : (
-              <p className="text-muted-foreground">남는 저축 여력은 다음 우선순위 목표로 배분돼요.</p>
-            )}
-          </CardContent>
-        </Card>
+        <GoalAlternativesCard goal={goal} today={today} capacity={capacity.capacity} />
       </div>
 
       <GoalWhatIf

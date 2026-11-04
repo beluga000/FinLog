@@ -3,7 +3,7 @@ import { getAccountOverview } from "@/features/accounts/queries";
 import { getSavingCapacity } from "@/features/dashboard/queries";
 import type { HouseholdContext } from "@/lib/db/context";
 import { fromDbDate, prisma } from "@/lib/db/prisma";
-import { allocateByPriority, evaluateGoal, type GoalEvaluation } from "@/lib/finance/goals";
+import { allocateByPriority, evaluateGoal, simulatePriorityRaise, type GoalEvaluation } from "@/lib/finance/goals";
 import { calculateRequiredInvestment } from "@/lib/finance/projection";
 import { monthsBetween } from "@/lib/finance/period";
 import type { DateStr } from "@/lib/finance/types";
@@ -33,6 +33,16 @@ export interface GoalView {
   contribution: number;
   contributionSource: "commit" | "allocated";
   shortfall: number;
+  /**
+   * 대안 (d) — 자동 배분 목표가 우선순위에 밀려 부족할 때, 한 칸 올리면 어떻게 되는지.
+   * displaced.committed = 확정액 목표라 납입액은 그대로지만 확정액보다 모자라게 된다.
+   */
+  priorityRaise: {
+    allocated: number;
+    gain: number;
+    shortfall: number;
+    displaced: { id: string; name: string; loss: number; committed: boolean }[];
+  } | null;
   evaluation: GoalEvaluation;
 }
 
@@ -79,9 +89,17 @@ export async function getGoalsOverview(ctx: Ctx, opts: { today: DateStr; monthSt
     capacity.capacity,
   );
 
+  const ordered = base.map((b) => ({ id: b.g.id, demand: b.demand, active: b.g.status === "ACTIVE" }));
+  const byId = new Map(base.map((b) => [b.g.id, b]));
+
   const views: GoalView[] = base.map((b) => {
     const alloc = allocation.get(b.g.id) ?? { allocated: 0, shortfall: 0 };
     const contribution = b.commit ?? alloc.allocated;
+    // 확정액 목표는 배분과 무관하게 확정액을 납입하므로 올려도 납입액이 같다
+    const raise =
+      b.commit === null && b.g.status === "ACTIVE" && alloc.shortfall > 0
+        ? simulatePriorityRaise(ordered, capacity.capacity, b.g.id)
+        : null;
     return {
       id: b.g.id,
       name: b.g.name,
@@ -99,6 +117,13 @@ export async function getGoalsOverview(ctx: Ctx, opts: { today: DateStr; monthSt
       contribution,
       contributionSource: b.commit !== null ? "commit" : "allocated",
       shortfall: alloc.shortfall,
+      priorityRaise: raise && {
+        ...raise,
+        displaced: raise.displaced.map((d) => {
+          const o = byId.get(d.id)!;
+          return { id: d.id, name: o.g.name, loss: d.loss, committed: o.commit !== null };
+        }),
+      },
       evaluation: evaluateGoal({
         target: b.target,
         targetIsReal: b.g.targetIsReal,

@@ -98,3 +98,44 @@ export function allocateByPriority<T extends { id: string; priority: number; dem
   }
   return result;
 }
+
+export interface PriorityRaise {
+  /** 올린 뒤 이 목표의 배정액 */
+  allocated: number;
+  gain: number;
+  /** 올려도 요구액에 모자란 월 금액 (0 = 해결) */
+  shortfall: number;
+  /** 대신 배정이 줄어드는 목표 */
+  displaced: { id: string; loss: number }[];
+}
+
+/**
+ * 우선순위를 "바로 위 진행 중 목표" 위로 한 칸 올렸을 때의 배분 (§4-6 대안 (d)).
+ * goals 는 지금 우선순위 순서. 진행 중이 아닌 목표(일시정지·달성)는 배분에 영향이 없어 건너뛴다.
+ * 위에 진행 중 목표가 없거나 올려도 배정이 늘지 않으면 null.
+ */
+export function simulatePriorityRaise(
+  goals: { id: string; demand: number; active: boolean }[],
+  capacity: number,
+  id: string,
+): PriorityRaise | null {
+  const i = goals.findIndex((g) => g.id === id);
+  if (i < 0) return null;
+  let j = i - 1;
+  while (j >= 0 && !goals[j].active) j--;
+  if (j < 0) return null;
+  const raised = [...goals];
+  const [me] = raised.splice(i, 1);
+  raised.splice(j, 0, me);
+  const rank = (list: typeof goals) => list.map((g, idx) => ({ id: g.id, priority: idx, demand: g.demand }));
+  const before = allocateByPriority(rank(goals), capacity);
+  const after = allocateByPriority(rank(raised), capacity);
+  const now = after.get(id)!;
+  const gain = now.allocated - before.get(id)!.allocated;
+  if (gain <= 0) return null;
+  const displaced = goals
+    .filter((g) => g.id !== id)
+    .map((g) => ({ id: g.id, loss: before.get(g.id)!.allocated - after.get(g.id)!.allocated }))
+    .filter((d) => d.loss > 0);
+  return { allocated: now.allocated, gain, shortfall: now.shortfall, displaced };
+}

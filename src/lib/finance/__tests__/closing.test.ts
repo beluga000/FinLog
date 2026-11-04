@@ -149,6 +149,13 @@ describe("사용처 집중 찾기", () => {
     expect(findFrequentMerchant(list)).toEqual({ name: "배민", count: 8, amount: 72_000n });
     expect(findFrequentMerchant(list.slice(1, 8))).toBeNull();
   });
+
+  it("필요(NEEDS) 지출은 8번 넘어도 제외, 구분 없는 지출은 센다", () => {
+    const mart = Array.from({ length: 15 }, () => ({ ...exp(100_000n, "이마트"), needs: true }));
+    const cafe = Array.from({ length: 8 }, () => exp(5_000n, "스타벅스"));
+    expect(findFrequentMerchant(mart)).toBeNull();
+    expect(findFrequentMerchant([...mart, ...cafe])).toEqual({ name: "스타벅스", count: 8, amount: 40_000n });
+  });
 });
 
 describe("대표 목표 앞섬·뒤처짐 변화", () => {

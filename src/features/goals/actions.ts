@@ -146,14 +146,19 @@ export async function setGoalStatus(id: string, status: "ACTIVE" | "ACHIEVED" | 
   return { ok: true };
 }
 
-/** 우선순위 한 칸 위/아래로 */
-export async function moveGoalPriority(id: string, direction: "up" | "down"): Promise<ActionResult> {
+/**
+ * 우선순위 한 칸 위/아래로.
+ * overActive: 바로 위 "진행 중" 목표 위로 올린다 (사이의 일시정지·달성 목표는 건너뜀) — 목표 상세 대안 (d), simulatePriorityRaise 와 같은 기준.
+ */
+export async function moveGoalPriority(id: string, direction: "up" | "down", opts: { overActive?: boolean } = {}): Promise<ActionResult> {
   const ctx = await requireHousehold();
   const goals = await prisma.assetGoal.findMany({ where: { householdId: ctx.householdId }, orderBy: [{ priority: "asc" }, { createdAt: "asc" }] });
   const i = goals.findIndex((g) => g.id === id);
-  const j = direction === "up" ? i - 1 : i + 1;
+  let j = direction === "up" ? i - 1 : i + 1;
+  if (opts.overActive && direction === "up") while (j >= 0 && goals[j].status !== "ACTIVE") j--;
   if (i < 0 || j < 0 || j >= goals.length) return { ok: true };
-  [goals[i], goals[j]] = [goals[j], goals[i]];
+  const [me] = goals.splice(i, 1);
+  goals.splice(j, 0, me);
   await prisma.$transaction(goals.map((g, idx) => prisma.assetGoal.update({ where: { id: g.id }, data: { priority: idx + 1 } })));
   revalidatePath("/", "layout");
   return { ok: true };

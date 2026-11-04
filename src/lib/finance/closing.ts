@@ -8,7 +8,7 @@ import { formatCompactKRW } from "./money";
  *  20 카테고리: 쓸 수 있는 돈을 넘겼으면 전월 대비 가장 많이 늘어난 지출 카테고리 (전월 기록이 없으면 가장 많이 쓴 곳).
  *     큰 지출 한 건은 이 증감에서 뺀다 — 한 번 산 가전 때문에 "가전을 줄이세요"가 나오지 않게.
  *  30 목표: 목표 저축을 2개월 연속 못 채웠으면 대표 목표 조정 ("만약에"로 이동)
- *  40 사용처 집중: 고정·정기가 아닌 같은 사용처에 한 달 8번 이상
+ *  40 사용처 집중: 고정·정기가 아니고 필요(NEEDS) 지출도 아닌 같은 사용처에 한 달 8번 이상 (장보기·병원은 줄이라고 하지 않는다)
  *  50 정기 거래 확인: 결산 달까지 확인 안 한 정기 거래가 남아 있으면
  *  60 잔액: 잔액 입력이 30일 넘은 자산 계좌가 있으면
  */
@@ -48,6 +48,8 @@ export interface ClosingExpense {
   amount: bigint;
   /** 고정 지출이거나 정기 규칙으로 만든 거래 */
   fixed: boolean;
+  /** 카테고리 구분이 필요(NEEDS) — 구분이 없으면 false */
+  needs?: boolean;
 }
 
 export interface OneOffExpense {
@@ -73,12 +75,12 @@ export interface FrequentMerchant {
   amount: bigint;
 }
 
-/** 고정·정기가 아닌 지출에서 같은 사용처가 8번 이상이면 가장 자주 간 곳 (같으면 금액 큰 곳) */
+/** 고정·정기·필요 지출이 아닌 것에서 같은 사용처가 8번 이상이면 가장 자주 간 곳 (같으면 금액 큰 곳). 구분 없는 카테고리는 센다 */
 export function findFrequentMerchant(expenses: ClosingExpense[]): FrequentMerchant | null {
   const byName = new Map<string, FrequentMerchant>();
   for (const e of expenses) {
     const name = e.merchant?.trim();
-    if (e.fixed || !name) continue;
+    if (e.fixed || e.needs || !name) continue;
     const m = byName.get(name) ?? { name, count: 0, amount: 0n };
     m.count += 1;
     m.amount += e.amount;
