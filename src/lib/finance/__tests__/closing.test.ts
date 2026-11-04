@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeAheadChange, suggestAdjustments } from "../closing";
+import { describeAheadChange, findFrequentMerchant, findOneOffExpense, suggestAdjustments, type ClosingExpense } from "../closing";
 
 const base = {
   overspent: false,
@@ -57,6 +57,97 @@ describe("월간 결산 조정 제안 (§4-7)", () => {
       staleAccounts: [{ name: "ISA" }],
     });
     expect(all.map((s) => s.kind)).toEqual(["category", "goal", "balance"]);
+  });
+
+  it("큰 지출 한 건은 맨 앞에 두고, 카테고리 증감에서는 뺀다", () => {
+    const oneOff = { label: "하이마트", categoryName: "쇼핑", amount: 1_200_000n, share: 0.4 };
+    const out = suggestAdjustments({ ...base, overspent: true, oneOff, categoryDiffs: [{ name: "쇼핑", diff: 1_300_000n }, { name: "식비", diff: 50_000n }] });
+    expect(out.map((s) => s.kind)).toEqual(["oneOff", "category"]);
+    expect(out[0].text).toBe("하이마트 120만 한 건이 지난달 지출의 40%예요. 한 번뿐인 지출이면 이번 달은 평소대로 가도 돼요.");
+    // 쇼핑 증가분 130만 중 120만이 한 건 → 남은 10만이 식비 5만보다 크다
+    expect(out[1].text).toContain("쇼핑 +10만");
+  });
+
+  it("큰 지출을 빼면 늘어난 곳이 없을 때 카테고리 제안은 없다", () => {
+    const oneOff = { label: "하이마트", categoryName: "쇼핑", amount: 1_200_000n, share: 0.4 };
+    const out = suggestAdjustments({ ...base, overspent: true, oneOff, categoryDiffs: [{ name: "쇼핑", diff: 1_000_000n }] });
+    expect(out.map((s) => s.kind)).toEqual(["oneOff"]);
+  });
+
+  it("초과하지 않았으면 큰 지출 한 건 제안은 없다", () => {
+    const oneOff = { label: "하이마트", categoryName: "쇼핑", amount: 1_200_000n, share: 0.4 };
+    expect(suggestAdjustments({ ...base, oneOff })).toEqual([]);
+  });
+
+  it("남은 돈은 대표 목표 계좌로 옮기라고 하고, 당겨지는 개월이 있으면 함께", () => {
+    const goal = { id: "g1", name: "내 집 마련", monthsSooner: 1 };
+    expect(suggestAdjustments({ ...base, surplus: { amount: 230_000n, goal } })).toEqual([
+      { kind: "surplus", text: "지난달 23만 남겼어요. 내 집 마련 계좌로 옮기면 목표가 1개월 당겨져요.", href: "/goals/g1" },
+    ]);
+    const [noMonths] = suggestAdjustments({ ...base, surplus: { amount: 230_000n, goal: { ...goal, monthsSooner: null } } });
+    expect(noMonths.text).toBe("지난달 23만 남겼어요. 내 집 마련 계좌로 옮겨 두면 목표에 보탬이 돼요.");
+    const [noGoal] = suggestAdjustments({ ...base, surplus: { amount: 230_000n, goal: null } });
+    expect(noGoal).toMatchObject({ kind: "surplus", href: "/assets" });
+  });
+
+  it("남은 돈이 10만 원 미만이거나 초과한 달이면 옮기기 제안은 없다", () => {
+    expect(suggestAdjustments({ ...base, surplus: { amount: 99_999n, goal: null } })).toEqual([]);
+    const out = suggestAdjustments({ ...base, overspent: true, categoryDiffs: [], surplus: { amount: 500_000n, goal: null } });
+    expect(out).toEqual([]);
+  });
+
+  it("사용처 집중과 확인 안 한 정기 거래", () => {
+    const out = suggestAdjustments({ ...base, frequentMerchant: { name: "스타벅스", count: 14, amount: 84_000n }, pendingReviews: 4 });
+    expect(out).toEqual([
+      { kind: "merchant", text: "스타벅스 14번, 8.4만 — 횟수를 절반으로 줄이면 한 달 4.2만 아껴요.", href: "/ledger?month=2026-09" },
+      { kind: "review", text: "확인 안 한 정기 거래 4건이 있어요. 확인해야 결산이 정확해져요.", href: "/dashboard" },
+    ]);
+  });
+
+  it("많이 걸리면 우선순위 순으로 3개만", () => {
+    const out = suggestAdjustments({
+      ...base,
+      savingShort: [true, true],
+      staleAccounts: [{ name: "ISA" }],
+      frequentMerchant: { name: "스타벅스", count: 9, amount: 50_000n },
+      pendingReviews: 1,
+      surplus: { amount: 200_000n, goal: null },
+    });
+    expect(out.map((s) => s.kind)).toEqual(["surplus", "goal", "merchant"]);
+  });
+});
+
+const exp = (amount: bigint, merchant: string | null = null, fixed = false): ClosingExpense => ({ merchant, categoryName: "쇼핑", amount, fixed });
+
+describe("큰 지출 한 건 찾기", () => {
+  it("고정·정기가 아닌 가장 큰 한 건이 20% 이상, 30만 이상일 때만", () => {
+    expect(findOneOffExpense([exp(1_200_000n, " 하이마트 "), exp(800_000n)], 3_000_000n)).toEqual({
+      label: "하이마트",
+      categoryName: "쇼핑",
+      amount: 1_200_000n,
+      share: 0.4,
+    });
+    expect(findOneOffExpense([exp(500_000n)], 3_000_000n)).toBeNull(); // 17%
+    expect(findOneOffExpense([exp(250_000n)], 500_000n)).toBeNull(); // 30만 미만
+    expect(findOneOffExpense([exp(2_000_000n, "월세", true)], 3_000_000n)).toBeNull();
+    expect(findOneOffExpense([], 0n)).toBeNull();
+  });
+
+  it("사용처가 없으면 카테고리 이름으로", () => {
+    expect(findOneOffExpense([exp(1_000_000n)], 2_000_000n)?.label).toBe("쇼핑");
+  });
+});
+
+describe("사용처 집중 찾기", () => {
+  it("8번 이상 간 사용처 중 가장 자주 간 곳, 고정·정기와 빈 사용처는 제외", () => {
+    const list = [
+      ...Array.from({ length: 8 }, () => exp(5_000n, "스타벅스")),
+      ...Array.from({ length: 8 }, () => exp(9_000n, "배민 ")),
+      ...Array.from({ length: 10 }, () => exp(50_000n, "관리비", true)),
+      ...Array.from({ length: 10 }, () => exp(1_000n, "  ")),
+    ];
+    expect(findFrequentMerchant(list)).toEqual({ name: "배민", count: 8, amount: 72_000n });
+    expect(findFrequentMerchant(list.slice(1, 8))).toBeNull();
   });
 });
 

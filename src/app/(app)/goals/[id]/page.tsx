@@ -9,14 +9,9 @@ import { GoalWhatIf } from "@/features/goals/components/goal-what-if";
 import { getGoalsOverview } from "@/features/goals/queries";
 import { requireHousehold } from "@/lib/db/context";
 import { formatPercent } from "@/lib/finance/money";
-import { toDateStr, todayKST } from "@/lib/finance/period";
+import { addMonthsExact, todayKST } from "@/lib/finance/period";
 
 export const metadata = { title: "목표" };
-
-function addMonths(date: string, months: number) {
-  const [y, m, d] = date.split("-").map(Number);
-  return toDateStr(y, m + months, Math.min(d, 28));
-}
 
 export default async function GoalDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -28,6 +23,7 @@ export default async function GoalDetailPage({ params }: { params: Promise<{ id:
 
   const e = goal.evaluation;
   const alt = e.alternatives;
+  const extendTo = alt?.extendToMonths != null ? addMonthsExact(today, alt.extendToMonths) : null;
 
   return (
     <div className="grid gap-5">
@@ -95,15 +91,9 @@ export default async function GoalDetailPage({ params }: { params: Promise<{ id:
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span>
                     (a) 기간 연장 —{" "}
-                    {alt.extendToMonths === null ? (
-                      "100년 안에 어려워요"
-                    ) : (
-                      <b>{addMonths(today, alt.extendToMonths).slice(0, 7).replace("-", "년 ")}월</b>
-                    )}
+                    {extendTo === null ? "100년 안에 어려워요" : <b>{extendTo.slice(0, 7).replace("-", "년 ")}월</b>}
                   </span>
-                  {alt.extendToMonths !== null ? (
-                    <ApplyAlternativeButton id={goal.id} label="적용" change={{ targetDate: addMonths(today, alt.extendToMonths) }} />
-                  ) : null}
+                  {extendTo !== null ? <ApplyAlternativeButton id={goal.id} label="적용" change={{ targetDate: extendTo }} /> : null}
                 </div>
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <span>
@@ -121,7 +111,16 @@ export default async function GoalDetailPage({ params }: { params: Promise<{ id:
                       </span>
                       <ApplyAlternativeButton id={goal.id} label="적용" change={{ expectedReturn: alt.higherReturn.annualReturn }} />
                     </div>
-                    <p className="text-xs text-muted-foreground">수익률이 높을수록 손실 가능성(변동성)도 커져요.</p>
+                    <p className="text-xs text-muted-foreground">
+                      {alt.higherReturn.shortfall === 0 ? (
+                        <span className="text-good">적용하면 지금 배정액으로 달성해요.</span>
+                      ) : (
+                        <>
+                          적용해도 월 <Money value={alt.higherReturn.shortfall} compact /> 부족해요.
+                        </>
+                      )}{" "}
+                      수익률이 높을수록 손실 가능성(변동성)도 커져요.
+                    </p>
                   </div>
                 ) : null}
               </>

@@ -47,7 +47,7 @@ npx prisma migrate dev --name <변경_이름>     # 예: card_billing
 npx tsc --noEmit
 npm run lint
 npm test                                                      # 단위 테스트
-TEST_DATABASE_URL="<로컬 DATABASE_URL>" npm run test:db        # DB 통합 테스트 (각자 만든 데이터만 지운다)
+TEST_DATABASE_URL="<로컬 DATABASE_URL>" DATABASE_URL="<로컬 DATABASE_URL>" npm run test:db   # DB 통합 테스트 (각자 만든 데이터만 지운다)
 npm run build                                                 # 선택: 배포 빌드 확인
 ```
 

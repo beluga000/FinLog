@@ -75,6 +75,17 @@ export function formatMonthLabel(key: MonthKey): string {
   return `${y}년 ${m}월`;
 }
 
+/**
+ * from 에서 months 개월이 꽉 차는 첫 날 — monthsBetween(from, 결과) === months.
+ * 그 달에 같은 일자가 없으면(1/31 → 2월) 다음 달 1일. 28일로 자르면 한 달이 모자라게 센다.
+ */
+export function addMonthsExact(from: DateStr, months: number): DateStr {
+  const [y, m, d] = from.split("-").map(Number);
+  const first = toDateStr(y, m + months, 1);
+  const [ty, tm] = first.split("-").map(Number);
+  return d <= lastDayOfMonth(ty, tm) ? toDateStr(ty, tm, d) : toDateStr(ty, tm + 1, 1);
+}
+
 export function addDays(date: DateStr, days: number): DateStr {
   const [y, m, d] = date.split("-").map(Number);
   return toDateStr(y, m, d + days);

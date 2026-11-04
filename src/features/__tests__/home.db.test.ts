@@ -152,7 +152,9 @@ describe("월간 결산 (AC-16)", () => {
     expect(closing!.month).toBe("2026-11");
     expect(closing!.spendableResult < 0n).toBe(true);
     expect(closing!.suggestions.length).toBeLessThanOrEqual(3);
-    expect(closing!.suggestions[0]).toMatchObject({ kind: "category", href: "/ledger?month=2026-11" });
+    // 900만 한 건이 월 지출 대부분 → 큰 지출 한 건으로 짚고, 외식 카테고리 증가로는 짚지 않는다
+    expect(closing!.suggestions[0]).toMatchObject({ kind: "oneOff", href: "/ledger?month=2026-11" });
+    expect(closing!.suggestions.some((s) => s.kind === "category" && s.text.startsWith("외식"))).toBe(false);
     expect(closing!.primaryGoal?.name).toBe("주택 자금");
     await prisma.transaction.delete({ where: { id: tx.id } });
   });

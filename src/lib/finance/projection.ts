@@ -178,8 +178,8 @@ export interface Alternatives {
   extendToMonths: number | null;
   /** (b) 목표일까지 현재 저축 가능액으로 모을 수 있는 금액 (target 과 같은 기준: 실질/명목) */
   reachableTarget: number;
-  /** (c) 더 높은 수익률 가정 시 월 필요 납입액 */
-  higherReturn: { annualReturn: number; monthly: number } | null;
+  /** (c) 더 높은 수익률 가정 시 월 필요 납입액. shortfall = 그래도 지금 납입액(capacity)으로 모자란 월 금액 (0 = 적용하면 달성) */
+  higherReturn: { annualReturn: number; monthly: number; shortfall: number } | null;
 }
 
 export function suggestAlternatives(input: AlternativesInput): Alternatives {
@@ -195,12 +195,17 @@ export function suggestAlternatives(input: AlternativesInput): Alternatives {
   });
   const fv = futureValue(input.pv, input.capacity, toMonthlyRate(input.annualReturn), months);
   const reachableTarget = Math.floor((input.targetIsReal ? deflate(fv, months, inflation) : fv) + 1e-6);
-  const higherReturn =
+  const higherMonthly =
     input.higherReturn !== undefined && input.higherReturn > input.annualReturn
-      ? {
-          annualReturn: input.higherReturn,
-          monthly: calculateRequiredInvestment({ ...input, annualReturn: input.higherReturn }).monthly,
-        }
+      ? calculateRequiredInvestment({ ...input, annualReturn: input.higherReturn }).monthly
       : null;
+  const higherReturn =
+    higherMonthly === null
+      ? null
+      : {
+          annualReturn: input.higherReturn!,
+          monthly: higherMonthly,
+          shortfall: Math.max(0, Math.ceil(higherMonthly - input.capacity)),
+        };
   return { extendToMonths, reachableTarget, higherReturn };
 }

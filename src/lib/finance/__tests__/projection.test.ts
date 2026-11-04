@@ -127,6 +127,15 @@ describe("suggestAlternatives", () => {
     expect(alt.extendToMonths).toBe(24);
     expect(alt.reachableTarget).toBe(60_000);
     expect(alt.higherReturn?.monthly).toBeLessThan(10_000);
+    // 수익률을 올려도 5천으로는 모자란다
+    expect(alt.higherReturn!.shortfall).toBe(Math.ceil(alt.higherReturn!.monthly - 5_000));
+    expect(alt.higherReturn!.shortfall).toBeGreaterThan(0);
+  });
+  it("(c) 수익률을 올리면 지금 납입액으로 충분하면 부족액 0", () => {
+    const alt = suggestAlternatives({ target: 120_000, pv: 0, months: 120, annualReturn: 0, capacity: 900, higherReturn: 0.05 });
+    expect(alt.extendToMonths).toBeGreaterThan(120);
+    expect(alt.higherReturn!.monthly).toBeLessThanOrEqual(900);
+    expect(alt.higherReturn!.shortfall).toBe(0);
   });
   it("더 높은 수익률이 없으면 (c) 대안 없음", () => {
     const alt = suggestAlternatives({ target: 100, pv: 0, months: 12, annualReturn: 0.1, capacity: 1, higherReturn: 0.05 });

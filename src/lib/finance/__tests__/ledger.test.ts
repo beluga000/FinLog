@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { computeBalances, summarizeNetWorth } from "../balance";
 import { formatCompactKRW, formatKRW, parseWon, ratio } from "../money";
-import { getMonthKey, getMonthRange, inRange, monthsBetween, shiftMonth } from "../period";
+import { addMonthsExact, getMonthKey, getMonthRange, inRange, monthsBetween, shiftMonth } from "../period";
 import { dueDates, scheduledDateFor } from "../recurring";
 import { calculateMonthlyStats, compareMonths } from "../stats";
 import { validateTxShape } from "../tx-rules";
@@ -167,6 +167,16 @@ describe("월 경계 (AC-5)", () => {
   it("시작일은 1~28로 보정", () => {
     expect(getMonthRange("2026-03", 31)).toEqual({ start: "2026-02-28", end: "2026-03-28" });
   });
+  it("addMonthsExact — 결과까지 monthsBetween 이 정확히 months (29~31일 포함)", () => {
+    expect(addMonthsExact("2026-10-06", 12)).toBe("2027-10-06");
+    expect(addMonthsExact("2026-01-31", 1)).toBe("2026-03-01");
+    expect(addMonthsExact("2026-12-30", 2)).toBe("2027-03-01");
+    expect(addMonthsExact("2024-01-29", 1)).toBe("2024-02-29");
+    for (const from of ["2026-01-28", "2026-01-29", "2026-01-30", "2026-01-31", "2026-08-31", "2026-11-15"]) {
+      for (const n of [1, 2, 6, 13, 30]) expect(monthsBetween(from, addMonthsExact(from, n))).toBe(n);
+    }
+  });
+
   it("monthsBetween", () => {
     expect(monthsBetween("2026-10-06", "2027-10-06")).toBe(12);
     expect(monthsBetween("2026-10-06", "2027-10-05")).toBe(11);

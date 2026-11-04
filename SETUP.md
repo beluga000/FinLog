@@ -64,7 +64,7 @@ npm run db:seed      # 데모 부부 가구 (minsu@demo.finlog / jiyoung@demo.fi
 npm run dev                     # http://localhost:3000
 npm test                        # 단위 테스트 (DB 불필요)
 npm run typecheck && npm run lint
-TEST_DATABASE_URL="$(grep '^DATABASE_URL=' .env | cut -d= -f2-)" npm run test:db   # DB 통합 테스트 (로컬 DB)
+U="$(grep '^DATABASE_URL=' .env | cut -d= -f2- | tr -d '"')"; TEST_DATABASE_URL="$U" DATABASE_URL="$U" npm run test:db   # DB 통합 테스트 (로컬 DB, 두 변수 모두 필요)
 ```
 
 DB 테스트는 각자 만든 데이터만 지우므로 로컬 개발 DB 로 돌려도 된다.
