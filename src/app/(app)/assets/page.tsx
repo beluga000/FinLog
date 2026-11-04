@@ -59,8 +59,8 @@ export default async function AssetsPage({ searchParams }: { searchParams: Promi
         }
       />
 
-      <div className="grid gap-3 lg:grid-cols-[2fr_3fr]">
-        <Card>
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-[2fr_3fr]">
+        <Card data-hero="">
           <CardContent className="grid gap-4">
             <div>
               <div className="text-xs text-muted-foreground">순자산</div>
@@ -104,12 +104,12 @@ export default async function AssetsPage({ searchParams }: { searchParams: Promi
           </CardContent>
         </Card>
       ) : (
-        <div className="grid gap-4 md:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           {groups.map((g) => {
             const total = g.items.reduce((s, a) => s + a.balance, 0n);
             const liability = isLiability(g.type);
             return (
-              <section key={g.type} className="grid content-start gap-1.5">
+              <section key={g.type} className="grid min-w-0 grid-cols-1 content-start gap-1.5">
                 <div className="flex items-baseline justify-between px-1">
                   <h2 className="text-sm font-semibold">{ACCOUNT_TYPE_LABEL[g.type]}</h2>
                   <Money value={liability ? -total : total} className="text-sm text-muted-foreground" />

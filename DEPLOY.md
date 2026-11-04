@@ -142,5 +142,6 @@ npx vercel deploy --prod --yes            # 환경변수는 새 배포부터 적
 | `20261103023712_card_billing` | `Account.billingDay`·`paymentAccountId` | 2026-11-03 |
 | `20261103042458_session_version` | `User.sessionVersion` (모든 기기에서 로그아웃) | 2026-11-03 |
 | `20261103062424_savings_product` | `Account.openedOn`·`maturityDate`·`interestRate` (예적금 가입일·만기일·금리) | 2026-11-03 |
+| `20261104004039_user_palette` | `User.palette` (화면 테마: 숲·바다·저녁, 사용자별) | 2026-11-04 |
 
 새 마이그레이션을 운영에 적용하면 이 표에 한 줄 추가한다.

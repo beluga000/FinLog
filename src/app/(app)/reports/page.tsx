@@ -76,7 +76,7 @@ export default async function ReportsPage({
           <section className="grid grid-cols-2 gap-3 lg:grid-cols-5" aria-label="이번 달 요약">
             {/* 모바일 2열에서 5개째가 혼자 남지 않도록 순자산을 한 줄 전체로 */}
             <div className="col-span-2 grid lg:col-span-1">
-              <MetricCard label="순자산" value={<Money value={overview.netWorth.netWorth} compact />} delta={nwDelta} href={`/assets${qs}`} />
+              <MetricCard hero label="순자산" value={<Money value={overview.netWorth.netWorth} compact />} delta={nwDelta} href={`/assets${qs}`} />
             </div>
             <MetricCard label="수입" value={<Money value={cur.income} compact />} delta={cmp.income} />
             <MetricCard label="지출" value={<Money value={cur.expense} compact />} delta={cmp.expense} invert />

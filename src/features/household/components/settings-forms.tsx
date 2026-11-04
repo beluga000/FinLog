@@ -260,10 +260,10 @@ function BucketSelect({
 export function ThemeSelect() {
   const { theme, setTheme } = useTheme();
   return (
-    <NativeSelect value={theme ?? "system"} onChange={(e) => setTheme(e.target.value)} aria-label="화면 테마">
-      <option value="system">시스템 설정</option>
-      <option value="light">라이트</option>
-      <option value="dark">다크</option>
+    <NativeSelect id="theme-mode" value={theme ?? "system"} onChange={(e) => setTheme(e.target.value)}>
+      <option value="system">기기 설정 따르기</option>
+      <option value="light">밝게</option>
+      <option value="dark">어둡게</option>
     </NativeSelect>
   );
 }

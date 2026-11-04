@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { ChevronRight, Users } from "lucide-react";
+import { Field } from "@/components/common/field";
 import { PageHeader } from "@/components/common/page-header";
+import { PalettePicker } from "@/features/appearance/components/palette-picker";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   CategoryEditor,
@@ -61,9 +63,13 @@ export default async function SettingsPage() {
       <Card>
         <CardHeader>
           <CardTitle>화면</CardTitle>
+          <CardDescription>테마는 내 계정에만 적용돼요. 배우자는 따로 고를 수 있어요.</CardDescription>
         </CardHeader>
-        <CardContent className="max-w-xs">
-          <ThemeSelect />
+        <CardContent className="grid gap-5">
+          <PalettePicker initial={ctx.user.palette} />
+          <Field label="밝기" htmlFor="theme-mode" className="max-w-xs">
+            <ThemeSelect />
+          </Field>
         </CardContent>
       </Card>
     </div>

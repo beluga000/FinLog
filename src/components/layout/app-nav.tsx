@@ -40,12 +40,18 @@ export function BottomTabBar() {
           <Link
             key={href}
             href={href}
+            data-slot="tabbar-item"
+            data-active={isActive(pathname, href) ? "" : undefined}
+            aria-current={isActive(pathname, href) ? "page" : undefined}
             className={cn(
               "flex flex-col items-center gap-0.5 py-2 text-[11px] text-muted-foreground",
-              isActive(pathname, href) && "font-semibold text-foreground",
+              isActive(pathname, href) && "font-semibold",
             )}
           >
-            <Icon className="size-5" />
+            {/* 선택 표시 모양은 테마가 정한다 (globals.css 의 tabbar) */}
+            <span data-slot="tabbar-icon">
+              <Icon className="size-5" />
+            </span>
             {label}
           </Link>
         ))}

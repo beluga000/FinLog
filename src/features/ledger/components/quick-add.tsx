@@ -19,7 +19,8 @@ interface Props {
 
 /**
  * 데스크톱: 헤더 버튼 / 모바일: 하단 탭바 위 플로팅 버튼.
- * 모바일 수집 진입 (§2-5): ?add=shared — 공유받은 문자로 채운 채 열기, ?add=paste — iOS 단축어용 붙여넣기 단계로 열기
+ * 모바일 수집 진입 (§2-5): ?add=shared — 공유받은 문자로 채운 채 열기, ?add=paste — iOS 단축어용 붙여넣기 단계로 열기,
+ * ?add=new — 빈 입력 창 바로 열기 (앱 아이콘 길게 누르기 바로가기)
  */
 export function QuickAdd({ sharedText, ...props }: Props) {
   const [open, setOpen] = useState(false);
@@ -40,6 +41,8 @@ export function QuickAdd({ sharedText, ...props }: Props) {
       void consumeSharedText();
     } else if (add === "paste") {
       setPaste({ expanded: true });
+      setOpen(true);
+    } else if (add === "new") {
       setOpen(true);
     }
   }, [sharedText]);

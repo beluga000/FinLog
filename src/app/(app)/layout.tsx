@@ -5,6 +5,8 @@ import { BottomTabBar, SidebarNav } from "@/components/layout/app-nav";
 import { ProfileMenu } from "@/components/layout/profile-menu";
 import { ScopeToggle } from "@/components/layout/scope-toggle";
 import { getPendingCountForAdmin } from "@/features/admin/access";
+import { Logo } from "@/components/common/logo-mark";
+import { PaletteSync } from "@/features/appearance/components/palette-sync";
 import { QuickAdd } from "@/features/ledger/components/quick-add";
 import { getAccounts, getCategories } from "@/features/ledger/queries";
 import { SHARED_TEXT_COOKIE } from "@/features/ledger/shared-text";
@@ -31,9 +33,9 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   return (
     <div className="min-h-dvh md:grid md:grid-cols-[220px_1fr]">
-      <aside className="sticky top-0 hidden h-dvh flex-col gap-6 border-r px-3 py-5 md:flex">
-        <Link href="/dashboard" className="px-3 text-lg font-black tracking-tight">
-          FINLOG
+      <aside data-slot="sidebar" className="sticky top-0 hidden h-dvh flex-col gap-6 border-r px-3 py-5 md:flex">
+        <Link href="/dashboard" data-slot="logo" aria-label="FINLOG 홈" className="px-3 text-lg font-black tracking-tight">
+          <Logo />
         </Link>
         <SidebarNav />
         <div className="mt-auto truncate px-3 text-xs text-muted-foreground">
@@ -42,10 +44,10 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       </aside>
 
       <div className="flex min-w-0 flex-col">
-        <header className="sticky top-0 z-30 flex items-center gap-3 border-b bg-background/95 px-4 pt-[env(safe-area-inset-top)] backdrop-blur md:px-8">
+        <header data-slot="topbar" className="sticky top-0 z-30 flex items-center gap-3 border-b bg-background/95 px-4 pt-[env(safe-area-inset-top)] backdrop-blur md:px-8">
           <div className="flex h-14 flex-1 items-center gap-3">
-            <Link href="/dashboard" className="text-base font-black tracking-tight md:hidden">
-              FINLOG
+            <Link href="/dashboard" data-slot="logo" aria-label="FINLOG 홈" className="text-base font-black tracking-tight md:hidden">
+              <Logo />
             </Link>
             {ctx.isCouple ? (
               <Suspense>
@@ -69,6 +71,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         <main className="mx-auto w-full max-w-6xl flex-1 px-4 pt-5 pb-28 md:px-8 md:pb-12">{children}</main>
       </div>
       <BottomTabBar />
+      <PaletteSync palette={ctx.user.palette} />
     </div>
   );
 }

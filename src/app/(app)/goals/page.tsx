@@ -24,7 +24,7 @@ export default async function GoalsPage() {
     <div className="grid gap-5">
       <PageHeader title="목표" description="우선순위가 높은 목표부터 저축 가능액을 배분해요." actions={<NewGoalButton accounts={accounts} />} />
 
-      <Card size="sm">
+      <Card size="sm" data-hero="">
         <CardContent className="grid gap-3 sm:grid-cols-3">
           <div>
             <div className="text-xs text-muted-foreground">월 저축 가능액</div>

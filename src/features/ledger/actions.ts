@@ -8,11 +8,13 @@ import { requireHousehold, writeAudit, type HouseholdContext } from "@/lib/db/co
 import { fromDbDate, prisma, toDbDate } from "@/lib/db/prisma";
 import { addDays, getMonthKey, getMonthRange, inRange, todayKST } from "@/lib/finance/period";
 import { lastRunAfterScheduleChange } from "@/lib/finance/recurring";
+import { TX_TYPES_ORDER } from "@/lib/finance/tx-rules";
+import type { TxType } from "@/lib/finance/types";
 import { txAccess } from "@/lib/finance/visibility";
 import { recurringInputSchema, type ActionResult } from "./schema";
 import { materializeRecurring, resolveTxInput } from "./service";
 import { SHARED_TEXT_COOKIE } from "./shared-text";
-import type { RecurringTemplate } from "./queries";
+import { queryMerchantSuggestions, type MerchantSuggestion, type RecurringTemplate } from "./queries";
 
 function done() {
   revalidatePath("/", "layout");
@@ -204,6 +206,16 @@ export async function deleteRecurringRule(id: string): Promise<ActionResult> {
 /** 공유받기 쿠키를 한 번 읽고 지운다 (AC-22) */
 export async function consumeSharedText(): Promise<void> {
   (await cookies()).delete(SHARED_TEXT_COOKIE);
+}
+
+/**
+ * 사용처 자동완성 — 이 유형의 최근 거래에서 자주 쓴 사용처와 그곳에 마지막으로 쓴 카테고리·계좌.
+ * 배우자 거래는 '공유'만 본다 (queryMerchantSuggestions 참고).
+ */
+export async function getMerchantSuggestions(type: string): Promise<MerchantSuggestion[]> {
+  const ctx = await requireHousehold();
+  if (!(TX_TYPES_ORDER as readonly string[]).includes(type)) return [];
+  return queryMerchantSuggestions(ctx, type as TxType);
 }
 
 export interface PastedExpenseInfo {

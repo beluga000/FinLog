@@ -86,7 +86,7 @@ export default async function LedgerPage({
         }
       />
 
-      <dl className="grid grid-cols-3 gap-2 rounded-xl border p-3 text-center">
+      <dl data-hero="" className="grid grid-cols-3 gap-2 rounded-xl border p-3 text-center">
         <div>
           <dt className="text-xs text-muted-foreground">수입</dt>
           <dd className="font-semibold"><Money value={stats.income} compact /></dd>

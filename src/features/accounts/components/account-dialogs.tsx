@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
 import { isLiability } from "@/lib/finance/balance";
 import { todayKST } from "@/lib/finance/period";
+import { institutionGroupsFor, isKnownInstitution } from "@/lib/institutions";
 import type { AccountType, Visibility } from "@/lib/finance/types";
 import { ACCOUNT_TYPE_LABEL, ACCOUNT_TYPE_ORDER, VISIBILITY_HINT, VISIBILITY_LABEL } from "@/lib/labels";
 import { createAccount, recordBalance, setAccountArchived, updateAccount } from "../actions";
@@ -63,6 +64,10 @@ function AccountForm({
   const [name, setName] = useState(initial?.name ?? "");
   const [type, setType] = useState<AccountType>(initial?.type ?? defaultType ?? "CHECKING");
   const [institution, setInstitution] = useState(initial?.institution ?? "");
+  // 목록에 없는 금융사는 직접 입력 — 예전에 직접 쓴 값으로 수정 화면을 열면 입력칸부터 보여 준다
+  const [customInst, setCustomInst] = useState(Boolean(initial?.institution && !isKnownInstitution(initial.institution)));
+  // 이름이 비어 있으면 고른 금융사 이름으로 채운다 (직접 고친 이름은 덮지 않는다)
+  const [autoName, setAutoName] = useState<string | null>(null);
   const [owner, setOwner] = useState<OwnerChoice>(initial?.owner ?? "me");
   const [visibility, setVisibility] = useState<Visibility>(initial?.defaultVisibility ?? "SHARED");
   const [billingDay, setBillingDay] = useState<number | null>(initial?.billingDay ?? null);
@@ -118,9 +123,49 @@ function AccountForm({
           </NativeSelect>
         </Field>
         <Field label="금융사 (선택)" htmlFor="acc-inst">
-          <Input id="acc-inst" value={institution} maxLength={40} onChange={(e) => setInstitution(e.target.value)} className="h-9" />
+          <NativeSelect
+            id="acc-inst"
+            value={customInst ? "__custom" : institution}
+            onChange={(e) => {
+              const v = e.target.value;
+              if (v === "__custom") {
+                setCustomInst(true);
+                setInstitution("");
+                return;
+              }
+              setCustomInst(false);
+              setInstitution(v);
+              if (v && (!name || name === autoName)) {
+                setName(v);
+                setAutoName(v);
+              }
+            }}
+          >
+            <option value="">선택 안 함</option>
+            {institutionGroupsFor(type).map((g) => (
+              <optgroup key={g.label} label={g.label}>
+                {g.items.map((i) => (
+                  <option key={i} value={i}>{i}</option>
+                ))}
+              </optgroup>
+            ))}
+            <option value="__custom">직접 입력</option>
+          </NativeSelect>
         </Field>
       </div>
+      {customInst ? (
+        <Field label="금융사 이름" htmlFor="acc-inst-custom">
+          <Input
+            id="acc-inst-custom"
+            value={institution}
+            maxLength={40}
+            autoFocus={!initial?.id}
+            onChange={(e) => setInstitution(e.target.value)}
+            placeholder="예: OO저축은행"
+            className="h-9"
+          />
+        </Field>
+      ) : null}
       <Field label="이름" htmlFor="acc-name" hint="계좌번호는 입력하지 마세요. 별칭이면 충분해요.">
         <Input id="acc-name" value={name} maxLength={40} onChange={(e) => setName(e.target.value)} placeholder="예: 생활비 통장, 신한카드" className="h-9" />
       </Field>

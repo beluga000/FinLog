@@ -13,6 +13,7 @@ export function MetricCard({
   delta,
   invert,
   href,
+  hero,
 }: {
   label: string;
   value: React.ReactNode;
@@ -21,9 +22,11 @@ export function MetricCard({
   /** 지출처럼 늘어나면 나쁜 지표 */
   invert?: boolean;
   href?: string;
+  /** 화면의 대표 지표 — 테마색으로 채운다 */
+  hero?: boolean;
 }) {
   const body = (
-    <Card size="sm" className="h-full">
+    <Card size="sm" className="h-full" data-hero={hero ? "" : undefined}>
       <CardContent className="grid gap-1">
         <div className="text-xs text-muted-foreground">{label}</div>
         <div className="text-lg font-bold md:text-xl">{value}</div>

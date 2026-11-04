@@ -1,7 +1,6 @@
 "use client";
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { cn } from "cn";
 import { SCOPE_LABEL } from "@/lib/labels";
 import { parseViewScope, VIEW_SCOPES } from "@/lib/finance/visibility";
 
@@ -12,7 +11,7 @@ export function ScopeToggle({ partnerName }: { partnerName: string }) {
   const params = useSearchParams();
   const current = parseViewScope(params.get("scope"));
   return (
-    <div role="radiogroup" aria-label="보기 범위" className="inline-flex rounded-lg bg-muted p-[3px] text-sm">
+    <div role="radiogroup" aria-label="보기 범위" className="seg text-sm">
       {VIEW_SCOPES.map((scope) => (
         <button
           key={scope}
@@ -26,10 +25,7 @@ export function ScopeToggle({ partnerName }: { partnerName: string }) {
             const q = next.toString();
             router.push(q ? `${pathname}?${q}` : pathname);
           }}
-          className={cn(
-            "rounded-md px-3 py-1 text-muted-foreground transition-colors",
-            current === scope && "bg-background font-semibold text-foreground shadow-sm",
-          )}
+          className="seg-item"
         >
           {scope === "partner" ? partnerName : SCOPE_LABEL[scope]}
         </button>

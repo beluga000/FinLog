@@ -16,14 +16,14 @@ export const getViewer = cache(async () => {
 
   const found = await prisma.user.findUnique({
     where: { id: userId },
-    select: { id: true, name: true, email: true, approvedAt: true, sessionVersion: true },
+    select: { id: true, name: true, email: true, approvedAt: true, sessionVersion: true, palette: true },
   });
   if (!found) redirect("/login");
   // "모든 기기에서 로그아웃" 이후 남아 있는 예전 로그인 → 다시 로그인
   if (session.user.sessionVersion !== found.sessionVersion) redirect("/login?error=revoked");
   // 승인 전이거나 승인이 취소된 사용자는 세션이 남아 있어도 들어오지 못한다
   if (!found.approvedAt) redirect("/login?error=pending");
-  const user = { id: found.id, name: found.name, email: found.email };
+  const user = { id: found.id, name: found.name, email: found.email, palette: found.palette };
 
   const membership = await prisma.householdMember.findFirst({
     where: { userId, leftAt: null },

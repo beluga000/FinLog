@@ -124,7 +124,8 @@ export function SpendableCard({ spendable: s, hasIncome }: { spendable: Spendabl
   const ratio = s.usedRatio ?? (s.variableExpense > 0n ? 1 : 0);
   const tone = s.overspent ? "critical" : ratio >= CAUTION_RATIO ? "warning" : "accent";
   return (
-    <Card>
+    // 홈의 대표 카드 — 테마색으로 채운다 (globals.css 의 data-hero)
+    <Card data-hero="">
       <CardHeader>
         <CardTitle>이번 달 쓸 수 있는 돈</CardTitle>
       </CardHeader>

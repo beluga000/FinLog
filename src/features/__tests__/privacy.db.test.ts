@@ -7,7 +7,7 @@ process.env.DATABASE_URL = process.env.TEST_DATABASE_URL;
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getAccountOverview } from "@/features/accounts/queries";
 import { getMonthlySeries } from "@/features/dashboard/queries";
-import { getAccounts, getScopedTransactions, getTransaction } from "@/features/ledger/queries";
+import { getAccounts, getScopedTransactions, getTransaction, queryMerchantSuggestions } from "@/features/ledger/queries";
 import { materializeRecurring, resolveTxInput } from "@/features/ledger/service";
 import { createHouseholdWithDefaults } from "@/features/household/setup";
 import { moveHouseholdData } from "@/features/household/merge";
@@ -132,5 +132,23 @@ describe("개인 가구 → 부부 가구 합류 (private 모드)", () => {
     expect(moved.visibility).toBe("PRIVATE");
     const acc = await prisma.account.findUniqueOrThrow({ where: { id: ids.cAcc } });
     expect(acc).toMatchObject({ householdId: couple, defaultVisibility: "PRIVATE", ownerUserId: C });
+  });
+});
+
+describe("사용처 자동완성 — 공개범위", () => {
+  it("배우자 거래는 '공유'만 후보에 오르고, 다른 가구 거래는 보이지 않는다", async () => {
+    const names = (await queryMerchantSuggestions(ctxB(), "EXPENSE")).map((s) => s.merchant);
+    expect(names).toContain("m-1000"); // A 공유
+    expect(names).toContain("m-8000"); // B 본인
+    expect(names).not.toContain("m-2000"); // A 합계만 공개 — 건별 내용이 아니므로 사용처도 숨김
+    expect(names).not.toContain("m-4000"); // A 비공개
+    expect(names).not.toContain("m-16000"); // 다른 가구
+  });
+
+  it("작성자 본인에게는 자기 거래가 공개범위와 상관없이 후보에 오르고, 마지막 카테고리·계좌를 함께 준다", async () => {
+    const list = await queryMerchantSuggestions({ householdId: couple, userId: A }, "EXPENSE");
+    const names = list.map((s) => s.merchant);
+    expect(names).toEqual(expect.arrayContaining(["m-1000", "m-2000", "m-4000", "m-8000"]));
+    expect(list.find((s) => s.merchant === "m-4000")).toMatchObject({ categoryId: ids.food, fromAccountId: ids.joint });
   });
 });

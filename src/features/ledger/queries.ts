@@ -230,3 +230,51 @@ export interface RecurringTemplate {
   memo: string | null;
   visibility: Visibility;
 }
+
+export interface MerchantSuggestion {
+  merchant: string;
+  /** 이 사용처에 마지막으로 쓴 카테고리·계좌 — 고르면 입력 창에 채운다 */
+  categoryId: string | null;
+  fromAccountId: string | null;
+  toAccountId: string | null;
+}
+
+const MERCHANT_SCAN = 400;
+const MERCHANT_MAX = 40;
+
+/**
+ * 사용처 자동완성 후보 — 최근 거래 400건에서 사용처를 자주 쓴 순(같으면 최근 순)으로 40개.
+ * 배우자 거래는 '공유'만 본다. '합계만 공개'는 건별 내용을 보여 주지 않기로 했으므로 사용처도 제외한다.
+ */
+export async function queryMerchantSuggestions(ctx: Ctx, type: TxType): Promise<MerchantSuggestion[]> {
+  const rows = await prisma.transaction.findMany({
+    where: {
+      householdId: ctx.householdId,
+      deletedAt: null,
+      type,
+      merchant: { not: null },
+      OR: [{ createdByUserId: ctx.userId }, { visibility: "SHARED" }],
+    },
+    orderBy: [{ date: "desc" }, { createdAt: "desc" }],
+    take: MERCHANT_SCAN,
+    select: { merchant: true, categoryId: true, fromAccountId: true, toAccountId: true },
+  });
+  // 최신순으로 훑으며 사용처별 첫 행(= 가장 최근 값)과 횟수를 모은다
+  const byMerchant = new Map<string, { s: MerchantSuggestion; count: number; order: number }>();
+  rows.forEach((r, i) => {
+    const name = r.merchant!.trim();
+    if (!name) return;
+    const hit = byMerchant.get(name);
+    if (hit) hit.count += 1;
+    else
+      byMerchant.set(name, {
+        s: { merchant: name, categoryId: r.categoryId, fromAccountId: r.fromAccountId, toAccountId: r.toAccountId },
+        count: 1,
+        order: i,
+      });
+  });
+  return [...byMerchant.values()]
+    .sort((a, b) => b.count - a.count || a.order - b.order)
+    .slice(0, MERCHANT_MAX)
+    .map((v) => v.s);
+}

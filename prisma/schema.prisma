@@ -94,6 +94,8 @@ model User {
   approvedAt      DateTime?
   /// 로그인 세션 세대. "모든 기기에서 로그아웃" 시 +1 → 이전에 발급된 로그인 토큰이 모두 무효
   sessionVersion  Int               @default(0)
+  /// 화면 테마: forest(숲) | sea(바다) | dusk(저녁). 사용자별 — 배우자와 따로 고른다
+  palette         String            @default("forest")
   memberships     HouseholdMember[]
   riskAssessments RiskAssessment[]
 }
