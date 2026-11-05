@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { MoreHorizontal, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { AmountInput } from "@/components/common/amount-input";
@@ -12,11 +12,12 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
 import { isLiability } from "@/lib/finance/balance";
-import { todayKST } from "@/lib/finance/period";
+import { addMonthsExact, todayKST } from "@/lib/finance/period";
+import { isSavingsProduct, monthlyContribution, SAVINGS_PRODUCT_KEYS, SAVINGS_PRODUCTS, type SavingsProductKey } from "@/lib/finance/savings-products";
 import { institutionGroupsFor, isKnownInstitution } from "@/lib/institutions";
 import type { AccountType, Visibility } from "@/lib/finance/types";
 import { ACCOUNT_TYPE_LABEL, ACCOUNT_TYPE_ORDER, VISIBILITY_HINT, VISIBILITY_LABEL } from "@/lib/labels";
-import { createAccount, recordBalance, setAccountArchived, updateAccount } from "../actions";
+import { createAccount, deleteAccount, getArchiveImpact, getDeleteImpact, recordBalance, setAccountArchived, updateAccount } from "../actions";
 import type { OwnerChoice } from "../rules";
 
 interface AccountValue {
@@ -32,6 +33,9 @@ interface AccountValue {
   maturityDate: string | null;
   /** 연 금리 비율 (0.035 = 3.5%) */
   interestRate: number | null;
+  /** 정책형 적금 (청년도약계좌·청년미래적금) */
+  savingsProduct: string | null;
+  savingsTier: string | null;
 }
 
 /** 폼이 고를 수 있는 것들 — 화면(서버)에서 한 번 만들어 넘긴다 */
@@ -41,6 +45,8 @@ export interface AccountFormEnv {
   partnerName: string | null;
   /** 카드 대금 출금 계좌 후보 (통장·현금) */
   paymentOptions: { id: string; name: string }[];
+  /** 적금 자동이체 출금 계좌 기본값 */
+  defaultSourceId?: string | null;
 }
 
 const BILLING_DAYS = Array.from({ length: 31 }, (_, i) => i + 1);
@@ -75,6 +81,18 @@ function AccountForm({
   const [openedOn, setOpenedOn] = useState(initial?.openedOn ?? "");
   const [maturityDate, setMaturityDate] = useState(initial?.maturityDate ?? "");
   const [ratePct, setRatePct] = useState(pctText(initial?.interestRate ?? null));
+  const [product, setProduct] = useState<SavingsProductKey | "">(isSavingsProduct(initial?.savingsProduct) ? initial.savingsProduct : "");
+  const [tier, setTier] = useState(initial?.savingsTier ?? "");
+  const productInfo = product ? SAVINGS_PRODUCTS[product] : null;
+  const tierInfo = productInfo?.tiers.find((t) => t.key === tier) ?? null;
+  // 정책형 상품은 가입일만 넣으면 만기일을 채운다 (직접 넣은 만기일은 덮지 않는다)
+  const fillMaturity = (p: SavingsProductKey | "", opened: string) => {
+    if (p && opened && !maturityDate) setMaturityDate(addMonthsExact(opened, SAVINGS_PRODUCTS[p].termMonths));
+  };
+  // 새 적금: 매달 자동이체 (월 납입액을 넣을 때만 만든다)
+  const [monthly, setMonthly] = useState("");
+  const [payDay, setPayDay] = useState<number | null>(null);
+  const [fromId, setFromId] = useState(env.defaultSourceId ?? "");
   // 비공개는 원래 내 명의였던 계좌(또는 새 계좌)를 내 명의로 둘 때만
   const canBePrivate = owner === "me" && (!initial?.id || initial.owner === "me");
   const [opening, setOpening] = useState("");
@@ -97,11 +115,20 @@ function AccountForm({
       openedOn: savings ? openedOn || null : null,
       maturityDate: savings ? maturityDate || null : null,
       interestRatePct: savings ? rate : null,
+      savingsProduct: savings ? product || null : null,
+      savingsTier: savings && product ? tier || null : null,
     };
+    const withAutoSave = savings && !initial?.id && monthly !== "" && BigInt(monthly) > 0n;
+    if (withAutoSave && !fromId) return setError("자동이체 출금 계좌를 고르세요.");
+    // 납입일을 안 고르면 가입일의 날짜, 가입일도 없으면 오늘 날짜
+    const day = payDay ?? Number((openedOn || todayKST()).slice(8, 10));
+    const autoSave = withAutoSave ? { amount: monthly, dayOfMonth: day, fromAccountId: fromId } : null;
     start(async () => {
-      const r = initial?.id ? await updateAccount(initial.id, payload) : await createAccount({ ...payload, openingBalance: opening || "0" });
+      const r = initial?.id
+        ? await updateAccount(initial.id, payload)
+        : await createAccount({ ...payload, openingBalance: opening || "0", autoSave });
       if (!r.ok) return setError(r.error);
-      toast.success(initial?.id ? "계좌를 수정했어요" : "계좌를 추가했어요");
+      toast.success(initial?.id ? "계좌를 수정했어요" : autoSave ? "계좌와 매달 자동이체를 추가했어요" : "계좌를 추가했어요");
       onDone();
     });
   }
@@ -207,8 +234,49 @@ function AccountForm({
       ) : null}
       {type === "SAVINGS" ? (
         <div className="grid grid-cols-2 gap-3">
+          <Field label="상품" htmlFor="acc-product" className="col-span-2">
+            <NativeSelect
+              id="acc-product"
+              value={product}
+              onChange={(e) => {
+                const next = e.target.value as SavingsProductKey | "";
+                setProduct(next);
+                setTier(next ? SAVINGS_PRODUCTS[next].tiers[0].key : "");
+                if (next && !name) setName(SAVINGS_PRODUCTS[next].label);
+                fillMaturity(next, openedOn);
+              }}
+            >
+              <option value="">일반 예적금</option>
+              {SAVINGS_PRODUCT_KEYS.map((k) => (
+                <option key={k} value={k}>{SAVINGS_PRODUCTS[k].label}</option>
+              ))}
+            </NativeSelect>
+          </Field>
+          {productInfo ? (
+            <Field label="기여금 구간" htmlFor="acc-tier" className="col-span-2">
+              <NativeSelect id="acc-tier" value={tier} onChange={(e) => setTier(e.target.value)}>
+                {productInfo.tiers.map((t) => (
+                  <option key={t.key} value={t.key}>{t.label}</option>
+                ))}
+              </NativeSelect>
+            </Field>
+          ) : null}
+          {productInfo ? (
+            <p className="col-span-2 -mt-1 text-xs text-muted-foreground">
+              {productInfo.hint} 정부기여금과 비과세를 넣어 만기 예상액을 계산해요. 현재 잔액에는 내가 넣은 돈만 넣어 주세요.
+            </p>
+          ) : null}
           <Field label="가입일 (선택)" htmlFor="acc-opened">
-            <Input id="acc-opened" type="date" value={openedOn} onChange={(e) => setOpenedOn(e.target.value)} className="h-9" />
+            <Input
+              id="acc-opened"
+              type="date"
+              value={openedOn}
+              onChange={(e) => {
+                setOpenedOn(e.target.value);
+                fillMaturity(product, e.target.value);
+              }}
+              className="h-9"
+            />
           </Field>
           <Field label="만기일 (선택)" htmlFor="acc-maturity">
             <Input id="acc-maturity" type="date" value={maturityDate} onChange={(e) => setMaturityDate(e.target.value)} className="h-9" />
@@ -227,6 +295,54 @@ function AccountForm({
           <p className="col-span-2 -mt-1 text-xs text-muted-foreground">
             적금·예금이면 만기일과 금리를 넣어 두세요. 고정 저축 화면에서 만기까지 남은 기간과 예상 수령액을 보여 드려요.
           </p>
+        </div>
+      ) : null}
+      {type === "SAVINGS" && !initial?.id ? (
+        <div className="grid gap-3 rounded-lg border p-3">
+          <Field
+            label="월 납입액 (선택)"
+            htmlFor="acc-monthly"
+            hint={
+              productInfo
+                ? `월 ${(productInfo.monthlyMax / 10_000).toLocaleString("ko-KR")}만원까지` +
+                  (tierInfo && monthly && Number(monthly) > 0
+                    ? ` · 정부기여금 매달 약 ${monthlyContribution(tierInfo, productInfo.monthlyMax, Number(monthly)).toLocaleString("ko-KR")}원`
+                    : "")
+                : "적금이면 매달 넣는 금액. 예금처럼 한 번에 넣었다면 비워 두세요."
+            }
+          >
+            <AmountInput id="acc-monthly" value={monthly} onChange={setMonthly} placeholder="예: 300,000" />
+          </Field>
+          {monthly !== "" && monthly !== "0" ? (
+            <>
+              <div className="grid grid-cols-[6rem_1fr] gap-3">
+                <Field label="납입일" htmlFor="acc-payday">
+                  <NativeSelect
+                    id="acc-payday"
+                    value={payDay ?? Number((openedOn || todayKST()).slice(8, 10))}
+                    onChange={(e) => setPayDay(Number(e.target.value))}
+                  >
+                    {BILLING_DAYS.map((d) => (
+                      <option key={d} value={d}>매월 {d}일</option>
+                    ))}
+                    <option value={0}>매월 말일</option>
+                  </NativeSelect>
+                </Field>
+                <Field label="출금 계좌" htmlFor="acc-from">
+                  <NativeSelect id="acc-from" value={fromId} onChange={(e) => setFromId(e.target.value)}>
+                    <option value="">선택하세요</option>
+                    {env.paymentOptions.map((o) => (
+                      <option key={o.id} value={o.id}>{o.name}</option>
+                    ))}
+                  </NativeSelect>
+                </Field>
+              </div>
+              <p className="-mt-1 text-xs text-muted-foreground">
+                매달 자동이체도 함께 등록돼요. 지금까지 넣은 돈은 현재 잔액에 넣고, 내일부터 납입일마다 자동으로 기록돼요
+                {maturityDate ? " · 만기일에 멈춰요" : ""}.
+              </p>
+            </>
+          ) : null}
         </div>
       ) : null}
       {isCouple ? (
@@ -327,6 +443,166 @@ export function BalanceForm({ id, type, current, onDone }: { id: string; type: A
   );
 }
 
+/** 보관 확인 — 이 계좌로 오가는 자동이체가 있으면 함께 멈출지 묻는다 */
+function ArchiveForm({ id, name, onDone }: { id: string; name: string; onDone: () => void }) {
+  const [pending, start] = useTransition();
+  const [impact, setImpact] = useState<{ mine: number; others: number } | null>(null);
+  const [stop, setStop] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    void getArchiveImpact(id).then((r) => {
+      if (!alive) return;
+      if (r.ok && r.data) setImpact(r.data);
+      else if (!r.ok) setError(r.error);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [id]);
+  return (
+    <div className="grid gap-4">
+      <p className="text-sm text-muted-foreground">
+        {name} 계좌를 순자산과 계좌 목록에서 빼요. 거래 기록은 그대로 남고, 자산 화면 맨 아래 &lsquo;보관한 계좌&rsquo;에서 언제든 되돌릴 수 있어요.
+      </p>
+      {impact === null && !error ? <p className="text-sm text-muted-foreground">자동이체 확인 중…</p> : null}
+      {impact && impact.mine > 0 ? (
+        <label className="flex items-start gap-2 rounded-lg border p-3 text-sm">
+          <input type="checkbox" checked={stop} onChange={(e) => setStop(e.target.checked)} className="mt-0.5 size-4" />
+          <span>
+            이 계좌로 오가는 자동이체 {impact.mine}건도 중지
+            <span className="block text-xs text-muted-foreground">해지한 계좌에 납입이 계속 기록되지 않아요. 정기 거래에서 다시 켤 수 있어요.</span>
+          </span>
+        </label>
+      ) : null}
+      {impact && impact.others > 0 ? (
+        <p className="text-xs text-muted-foreground">배우자가 만든 자동이체 {impact.others}건은 배우자가 직접 중지해야 해요.</p>
+      ) : null}
+      {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
+      <DialogFooter>
+        <Button
+          size="lg"
+          disabled={pending || (impact === null && !error)}
+          onClick={() =>
+            start(async () => {
+              const r = await setAccountArchived(id, true, { stopRecurring: stop && (impact?.mine ?? 0) > 0 });
+              if (!r.ok) return setError(r.error);
+              const stopped = r.data?.stopped ?? 0;
+              toast.success(stopped ? `보관했어요 · 자동이체 ${stopped}건 중지` : "보관했어요 (순자산에서 제외)");
+              onDone();
+            })
+          }
+        >
+          {pending ? "보관 중…" : "보관"}
+        </Button>
+      </DialogFooter>
+    </div>
+  );
+}
+
+/** 보관한 계좌 줄의 되돌리기 버튼 */
+export function RestoreAccountButton({ id }: { id: string }) {
+  const [pending, start] = useTransition();
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      disabled={pending}
+      onClick={() =>
+        start(async () => {
+          const r = await setAccountArchived(id, false);
+          if (!r.ok) toast.error(r.error);
+          else toast.success("다시 사용해요 · 멈춘 자동이체는 정기 거래에서 다시 켜 주세요");
+        })
+      }
+    >
+      {pending ? "되돌리는 중…" : "보관 해제"}
+    </Button>
+  );
+}
+
+/** 보관한 계좌 삭제 — 거래가 없는 계좌만. 먼저 확인 창에서 지울 수 있는지 보여 준다 */
+export function DeleteArchivedAccountButton({ id, name }: { id: string; name: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <Button variant="ghost" size="sm" className="text-destructive" onClick={() => setOpen(true)}>
+        삭제
+      </Button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{name} 삭제</DialogTitle>
+            <DialogDescription className="sr-only">보관한 계좌를 완전히 삭제합니다.</DialogDescription>
+          </DialogHeader>
+          {open ? <DeleteAccountForm id={id} onDone={() => setOpen(false)} /> : null}
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+function DeleteAccountForm({ id, onDone }: { id: string; onDone: () => void }) {
+  const [pending, start] = useTransition();
+  const [impact, setImpact] = useState<{ transactions: number; myRules: number; otherRules: number } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    void getDeleteImpact(id).then((r) => {
+      if (!alive) return;
+      if (r.ok && r.data) setImpact(r.data);
+      else if (!r.ok) setError(r.error);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [id]);
+  const blocked = impact ? impact.transactions > 0 || impact.otherRules > 0 : true;
+  return (
+    <div className="grid gap-4">
+      {impact === null && !error ? <p className="text-sm text-muted-foreground">확인 중…</p> : null}
+      {impact && impact.transactions > 0 ? (
+        <p className="text-sm">
+          이 계좌로 기록한 거래 {impact.transactions}건이 있어 삭제할 수 없어요. 지우면 지난 리포트 숫자가 바뀌기 때문이에요. 보관해 두면 순자산과 계좌 선택에서 빠져요.
+        </p>
+      ) : null}
+      {impact && impact.transactions === 0 && impact.otherRules > 0 ? (
+        <p className="text-sm">배우자가 만든 자동이체 {impact.otherRules}건이 연결돼 있어요. 배우자가 먼저 그 자동이체를 삭제해야 해요.</p>
+      ) : null}
+      {impact && !blocked ? (
+        <p className="text-sm">
+          거래 기록이 없는 계좌라 삭제할 수 있어요.
+          {impact.myRules > 0 ? ` 연결된 자동이체 ${impact.myRules}건도 함께 삭제돼요.` : ""} 삭제하면 되돌릴 수 없어요.
+        </p>
+      ) : null}
+      {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
+      <DialogFooter>
+        {blocked ? (
+          <Button size="lg" variant="outline" onClick={onDone}>
+            닫기
+          </Button>
+        ) : (
+          <Button
+            size="lg"
+            variant="destructive"
+            disabled={pending}
+            onClick={() =>
+              start(async () => {
+                const r = await deleteAccount(id);
+                if (!r.ok) return setError(r.error);
+                toast.success("계좌를 삭제했어요");
+                onDone();
+              })
+            }
+          >
+            {pending ? "삭제 중…" : "삭제"}
+          </Button>
+        )}
+      </DialogFooter>
+    </div>
+  );
+}
+
 export function AccountMenu({
   account,
   balance,
@@ -336,7 +612,7 @@ export function AccountMenu({
   balance: bigint;
   env: AccountFormEnv;
 }) {
-  const [dialog, setDialog] = useState<"balance" | "edit" | null>(null);
+  const [dialog, setDialog] = useState<"balance" | "edit" | "archive" | null>(null);
   const [pending, start] = useTransition();
   return (
     <>
@@ -352,11 +628,13 @@ export function AccountMenu({
           <DropdownMenuItem
             disabled={pending}
             onClick={() =>
-              start(async () => {
-                const r = await setAccountArchived(account.id, !account.isArchived);
-                if (!r.ok) toast.error(r.error);
-                else toast.success(account.isArchived ? "다시 사용해요" : "보관했어요 (순자산에서 제외)");
-              })
+              account.isArchived
+                ? start(async () => {
+                    const r = await setAccountArchived(account.id, false);
+                    if (!r.ok) toast.error(r.error);
+                    else toast.success("다시 사용해요");
+                  })
+                : setDialog("archive")
             }
           >
             {account.isArchived ? "보관 해제" : "보관 (해지한 계좌)"}
@@ -366,11 +644,14 @@ export function AccountMenu({
       <Dialog open={dialog !== null} onOpenChange={(o) => !o && setDialog(null)}>
         <DialogContent className="max-h-[92dvh] overflow-y-auto sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>{dialog === "balance" ? `${account.name} 잔액 맞추기` : "계좌 수정"}</DialogTitle>
+            <DialogTitle>
+              {dialog === "balance" ? `${account.name} 잔액 맞추기` : dialog === "archive" ? `${account.name} 보관` : "계좌 수정"}
+            </DialogTitle>
             <DialogDescription className="sr-only">계좌 정보를 변경합니다.</DialogDescription>
           </DialogHeader>
           {dialog === "balance" ? <BalanceForm id={account.id} type={account.type} current={balance} onDone={() => setDialog(null)} /> : null}
           {dialog === "edit" ? <AccountForm initial={account} env={env} onDone={() => setDialog(null)} /> : null}
+          {dialog === "archive" ? <ArchiveForm id={account.id} name={account.name} onDone={() => setDialog(null)} /> : null}
         </DialogContent>
       </Dialog>
     </>

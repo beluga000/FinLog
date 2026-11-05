@@ -7,7 +7,8 @@ import type { DateStr } from "./types";
  * - 적금(매달 정기 저축이 들어오는 계좌): 단리 적금 이자 = 월 납입액 × 연 금리/12 × N(N+1)/2 (N = 납입 개월 수)
  *   + 월 납입으로 설명되지 않는 원금(목돈)은 가입일(모르면 오늘)부터 만기까지 단리
  * - 예금(정기 저축 없이 목돈만 있는 계좌): 단리 이자 = 잔액 × 연 금리 × 개월/12
- * 이자소득세는 일반과세 15.4%(소득세 14% + 지방소득세 1.4%)로 본다. 비과세·세금우대 상품은 세후가 실제보다 적게 보인다.
+ * 이자소득세는 일반과세 15.4%(소득세 14% + 지방소득세 1.4%)로 본다. 비과세 상품(청년도약계좌 등)은 0.
+ * 정부기여금(정책형 적금)은 월 기여금 × 가입 기간 개월 수 — 만기에 함께 받는다. 잔액에는 기여금이 들어 있지 않다고 본다.
  */
 
 export const INTEREST_TAX_RATE = 0.154;
@@ -32,6 +33,8 @@ export interface MaturityEstimate {
   /** 만기 때 원금 = 현재 잔액 + 남은 납입액 */
   principal: bigint;
   interest: bigint;
+  /** 정부기여금 (정책형 적금, 없으면 0) */
+  contribution: bigint;
   tax: bigint;
   afterTax: bigint;
   /** 남은 납입 횟수 (적금) */
@@ -46,6 +49,10 @@ export function estimateMaturity(input: {
   openedOn: DateStr | null;
   maturityDate: DateStr;
   today: DateStr;
+  /** 이자 비과세 */
+  taxFree?: boolean;
+  /** 월 납입액 기준 월 정부기여금 (원) */
+  monthlyContribution?: number;
 }): MaturityEstimate {
   const { balance, deposits, maturityDate, today } = input;
   const rate = input.annualRate ?? 0;
@@ -56,6 +63,7 @@ export function estimateMaturity(input: {
   const monthly = deposits.reduce((s, d) => s + d.amount, 0n);
 
   let interest: number;
+  let contribution = 0;
   let kind: MaturityEstimate["kind"];
   if (monthly > 0n) {
     kind = "installment";
@@ -63,6 +71,7 @@ export function estimateMaturity(input: {
     const n = input.openedOn
       ? Math.max(1, monthsBetween(input.openedOn, maturityDate))
       : Math.max(1, Math.round(Number(principal) / Number(monthly)));
+    contribution = (input.monthlyContribution ?? 0) * n;
     interest = Number(monthly) * (rate / 12) * ((n * (n + 1)) / 2);
     // 월 납입으로 설명되지 않는 원금(가입 때 넣은 목돈·추가 입금)은 예금처럼 단리로 더한다
     const lump = Number(principal) - Number(monthly) * n;
@@ -74,8 +83,17 @@ export function estimateMaturity(input: {
   }
   // 부동소수 오차(116,999.9999…) 보정 후 원 단위 내림
   const interestWon = BigInt(Math.max(0, Math.floor(interest + 1e-6)));
-  const tax = BigInt(Math.floor(Number(interestWon) * INTEREST_TAX_RATE));
-  return { kind, principal, interest: interestWon, tax, afterTax: principal + interestWon - tax, remainingCount };
+  const tax = input.taxFree ? 0n : BigInt(Math.floor(Number(interestWon) * INTEREST_TAX_RATE));
+  const contributionWon = BigInt(Math.max(0, Math.floor(contribution)));
+  return {
+    kind,
+    principal,
+    interest: interestWon,
+    contribution: contributionWon,
+    tax,
+    afterTax: principal + interestWon + contributionWon - tax,
+    remainingCount,
+  };
 }
 
 /** 가입일~만기일 중 오늘까지 지난 비율 (0~1). 둘 중 하나라도 모르면 null */

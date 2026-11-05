@@ -1,3 +1,4 @@
+import { isSavingsProduct, SAVINGS_PRODUCTS } from "@/lib/finance/savings-products";
 import type { AccountType, Visibility } from "@/lib/finance/types";
 
 /**
@@ -12,6 +13,16 @@ export const OWNER_CHOICES = ["me", "partner", "joint"] as const;
 
 /** 대금을 낼 수 있는 계좌 종류 */
 export const PAYMENT_SOURCE_TYPES: AccountType[] = ["CHECKING", "SAVINGS", "CASH"];
+
+/** 새 자동이체의 출금 계좌 기본값: 내 명의 입출금 → 공동 입출금 → 아무 입출금 통장 */
+export function defaultSourceAccount<T extends { type: AccountType; ownerUserId: string | null }>(accounts: T[], viewerId: string): T | null {
+  return (
+    accounts.find((a) => a.type === "CHECKING" && a.ownerUserId === viewerId) ??
+    accounts.find((a) => a.type === "CHECKING" && a.ownerUserId === null) ??
+    accounts.find((a) => a.type === "CHECKING") ??
+    null
+  );
+}
 
 export function ownerChoiceOf(ownerUserId: string | null, viewerId: string): OwnerChoice {
   if (ownerUserId === null) return "joint";
@@ -49,17 +60,36 @@ export interface SavingsProductInput {
   maturityDate: string | null;
   /** 연 금리 % (3.5 = 3.5%) */
   interestRatePct: number | null;
+  /** 정책형 적금 종류·기여금 구간 (일반 상품은 null) */
+  savingsProduct?: string | null;
+  savingsTier?: string | null;
 }
 
 /** 예적금 상품 정보 정리: 저축 통장이 아니면 비운다. 금리는 % → 비율 */
 export function normalizeSavings(
   type: AccountType,
   input: SavingsProductInput,
-): { ok: true; openedOn: string | null; maturityDate: string | null; interestRate: number | null } | { ok: false; error: string } {
-  if (type !== "SAVINGS") return { ok: true, openedOn: null, maturityDate: null, interestRate: null };
+):
+  | {
+      ok: true;
+      openedOn: string | null;
+      maturityDate: string | null;
+      interestRate: number | null;
+      savingsProduct: string | null;
+      savingsTier: string | null;
+    }
+  | { ok: false; error: string } {
+  if (type !== "SAVINGS") {
+    return { ok: true, openedOn: null, maturityDate: null, interestRate: null, savingsProduct: null, savingsTier: null };
+  }
   const openedOn = input.openedOn || null;
   const maturityDate = input.maturityDate || null;
   if (openedOn && maturityDate && maturityDate <= openedOn) return { ok: false, error: "만기일은 가입일보다 뒤여야 해요." };
   const interestRate = input.interestRatePct === null ? null : Math.round(input.interestRatePct * 10_000) / 1_000_000;
-  return { ok: true, openedOn, maturityDate, interestRate };
+  const raw = input.savingsProduct || null;
+  if (raw && !isSavingsProduct(raw)) return { ok: false, error: "상품 종류를 확인하세요." };
+  const product = raw && isSavingsProduct(raw) ? raw : null;
+  const tier = product ? input.savingsTier || null : null;
+  if (product && tier && !SAVINGS_PRODUCTS[product].tiers.some((t) => t.key === tier)) return { ok: false, error: "기여금 구간을 확인하세요." };
+  return { ok: true, openedOn, maturityDate, interestRate, savingsProduct: product, savingsTier: tier };
 }

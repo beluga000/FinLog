@@ -40,6 +40,9 @@ export interface AccountRow {
   openedOn: DateStr | null;
   maturityDate: DateStr | null;
   interestRate: number | null;
+  /** 정책형 적금 종류·기여금 구간 (SAVINGS) */
+  savingsProduct: string | null;
+  savingsTier: string | null;
 }
 
 const accountSelect = {
@@ -55,6 +58,8 @@ const accountSelect = {
   openedOn: true,
   maturityDate: true,
   interestRate: true,
+  savingsProduct: true,
+  savingsTier: true,
 } satisfies Prisma.AccountSelect;
 
 /** 뷰 스코프에서 보이는 계좌 */

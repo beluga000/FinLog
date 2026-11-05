@@ -2,11 +2,13 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import type { ActionResult } from "@/features/ledger/schema";
+import type { RecurringTemplate } from "@/features/ledger/queries";
+import { amountStr, type ActionResult } from "@/features/ledger/schema";
 import { requireHousehold, writeAudit, type HouseholdContext } from "@/lib/db/context";
 import { prisma, toDbDate } from "@/lib/db/prisma";
 import { isLiability } from "@/lib/finance/balance";
 import { addDays, todayKST } from "@/lib/finance/period";
+import { isSavingsProduct, SAVINGS_PRODUCTS } from "@/lib/finance/savings-products";
 import { canSeeAccount } from "@/lib/finance/visibility";
 import { normalizeBilling, normalizeSavings, OWNER_CHOICES, PAYMENT_SOURCE_TYPES, resolveOwner, visibilityError } from "./rules";
 
@@ -30,6 +32,17 @@ const accountSchema = z.object({
   openedOn: dateStr.nullable().default(null),
   maturityDate: dateStr.nullable().default(null),
   interestRatePct: z.number().min(0, "금리를 확인하세요.").max(30, "금리는 30% 이하로 입력하세요.").nullable().default(null),
+  /** 정책형 적금 종류·기여금 구간 (SAVINGS 만) */
+  savingsProduct: z.string().max(20).nullable().default(null),
+  savingsTier: z.string().max(20).nullable().default(null),
+});
+
+/** 적금 계좌 추가와 함께 만드는 매달 자동이체 (SAVINGS 새 계좌만) */
+const autoSaveSchema = z.object({
+  amount: amountStr,
+  /** 1~31, 0 = 말일 */
+  dayOfMonth: z.number().int().min(0).max(31),
+  fromAccountId: z.string().min(1, "출금 계좌를 고르세요."),
 });
 
 const balanceSchema = z.object({
@@ -74,32 +87,85 @@ async function resolveInput(ctx: Ctx, d: z.infer<typeof accountSchema>, type: (t
     openedOn: savings.openedOn ? toDbDate(savings.openedOn) : null,
     maturityDate: savings.maturityDate ? toDbDate(savings.maturityDate) : null,
     interestRate: savings.interestRate,
+    savingsProduct: savings.savingsProduct,
+    savingsTier: savings.savingsTier,
   };
 }
 
 export async function createAccount(raw: unknown): Promise<ActionResult<{ id: string }>> {
   const ctx = await requireHousehold();
-  const parsed = accountSchema.extend({ openingBalance: balanceSchema.shape.balance }).safeParse(raw);
+  const parsed = accountSchema
+    .extend({ openingBalance: balanceSchema.shape.balance, autoSave: autoSaveSchema.nullable().default(null) })
+    .safeParse(raw);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "입력값을 확인하세요." };
   const d = parsed.data;
   const r = await resolveInput(ctx, d, d.type);
   if (!r.ok) return r;
-  const account = await prisma.account.create({
-    data: {
-      householdId: ctx.householdId,
-      ownerUserId: r.ownerUserId,
-      name: d.name,
-      type: d.type,
-      institution: d.institution || null,
-      defaultVisibility: d.defaultVisibility,
-      billingDay: r.billingDay,
-      paymentAccountId: r.paymentAccountId,
-      openedOn: r.openedOn,
-      maturityDate: r.maturityDate,
-      interestRate: r.interestRate,
-      // 시작 잔액 = 어제 마감 잔액 → 오늘 입력하는 거래부터 반영된다
-      snapshots: { create: { asOf: toDbDate(addDays(todayKST(), -1)), balance: toStoredBalance(d.type, d.openingBalance) } },
-    },
+
+  // 월 납입액을 넣었으면 자동이체도 같이 — 시작 잔액에 지난 납입이 들어 있으니 내일(또는 가입일)부터 기록한다
+  const autoSave = d.type === "SAVINGS" ? d.autoSave : null;
+  let rulePlan: { fromVisibility: (typeof d)["defaultVisibility"]; startDate: string; endDate: string | null } | null = null;
+  if (autoSave) {
+    const fromErr = await checkPaymentAccount(ctx, autoSave.fromAccountId);
+    if (fromErr) return { ok: false, error: fromErr };
+    const product = r.savingsProduct && isSavingsProduct(r.savingsProduct) ? SAVINGS_PRODUCTS[r.savingsProduct] : null;
+    if (product && BigInt(autoSave.amount) > BigInt(product.monthlyMax)) {
+      return { ok: false, error: `${product.label}은 월 ${(product.monthlyMax / 10_000).toLocaleString("ko-KR")}만원까지 넣을 수 있어요.` };
+    }
+    const from = await prisma.account.findUniqueOrThrow({ where: { id: autoSave.fromAccountId }, select: { defaultVisibility: true } });
+    const tomorrow = addDays(todayKST(), 1);
+    const startDate = d.openedOn && d.openedOn > tomorrow ? d.openedOn : tomorrow;
+    const endDate = d.maturityDate;
+    if (endDate && endDate < startDate) return { ok: false, error: "만기일이 지나 자동이체를 만들 수 없어요. 월 납입액을 비워 주세요." };
+    rulePlan = { fromVisibility: from.defaultVisibility, startDate, endDate };
+  }
+
+  const account = await prisma.$transaction(async (db) => {
+    const created = await db.account.create({
+      data: {
+        householdId: ctx.householdId,
+        ownerUserId: r.ownerUserId,
+        name: d.name,
+        type: d.type,
+        institution: d.institution || null,
+        defaultVisibility: d.defaultVisibility,
+        billingDay: r.billingDay,
+        paymentAccountId: r.paymentAccountId,
+        openedOn: r.openedOn,
+        maturityDate: r.maturityDate,
+        interestRate: r.interestRate,
+        savingsProduct: r.savingsProduct,
+        savingsTier: r.savingsTier,
+        // 시작 잔액 = 어제 마감 잔액 → 오늘 입력하는 거래부터 반영된다
+        snapshots: { create: { asOf: toDbDate(addDays(todayKST(), -1)), balance: toStoredBalance(d.type, d.openingBalance) } },
+      },
+    });
+    if (autoSave && rulePlan) {
+      const template: RecurringTemplate = {
+        type: "SAVE_INVEST",
+        amount: autoSave.amount,
+        fromAccountId: autoSave.fromAccountId,
+        toAccountId: created.id,
+        categoryId: null,
+        merchant: null,
+        memo: null,
+        // 정기 거래 폼과 같은 기준: 출금 계좌 기본 공개범위
+        visibility: rulePlan.fromVisibility,
+      };
+      await db.recurringRule.create({
+        data: {
+          householdId: ctx.householdId,
+          createdByUserId: ctx.userId,
+          name: d.name,
+          template: template as object,
+          dayOfMonth: autoSave.dayOfMonth,
+          businessDayAdjust: "NONE",
+          startDate: toDbDate(rulePlan.startDate),
+          endDate: rulePlan.endDate ? toDbDate(rulePlan.endDate) : null,
+        },
+      });
+    }
+    return created;
   });
   if (r.ownerUserId !== ctx.userId) await writeAudit(ctx, "ACCOUNT_CREATE_FOR_OTHER", "Account", account.id);
   revalidatePath("/", "layout");
@@ -143,6 +209,8 @@ export async function updateAccount(id: string, raw: unknown): Promise<ActionRes
       openedOn: r.openedOn,
       maturityDate: r.maturityDate,
       interestRate: r.interestRate,
+      savingsProduct: r.savingsProduct,
+      savingsTier: r.savingsTier,
     },
   });
   if (account.ownerUserId !== ctx.userId || r.ownerUserId !== account.ownerUserId) {
@@ -171,12 +239,100 @@ export async function recordBalance(id: string, raw: unknown): Promise<ActionRes
   return { ok: true };
 }
 
-export async function setAccountArchived(id: string, isArchived: boolean): Promise<ActionResult> {
+/** 이 계좌로 들어가거나 나가는 진행 중 자동이체 (정기 거래 템플릿은 JSON 이라 가계 규칙을 읽어 거른다) */
+async function activeRulesOf(householdId: string, accountId: string) {
+  const rules = await prisma.recurringRule.findMany({ where: { householdId, isActive: true } });
+  return rules.filter((r) => {
+    const t = r.template as { fromAccountId?: string | null; toAccountId?: string | null };
+    return t.fromAccountId === accountId || t.toAccountId === accountId;
+  });
+}
+
+/** 보관 전 확인: 같이 멈출 자동이체 수 (내 것 / 배우자 것 — 배우자 규칙은 만든 사람만 바꿀 수 있다) */
+export async function getArchiveImpact(id: string): Promise<ActionResult<{ mine: number; others: number }>> {
   const ctx = await requireHousehold();
   const account = await findManageable(ctx, id);
   if (!account) return { ok: false, error: NOT_FOUND };
-  await prisma.account.update({ where: { id }, data: { isArchived } });
-  await writeAudit(ctx, isArchived ? "ACCOUNT_ARCHIVE" : "ACCOUNT_RESTORE", "Account", id);
+  const rules = await activeRulesOf(ctx.householdId, id);
+  const mine = rules.filter((r) => r.createdByUserId === ctx.userId).length;
+  return { ok: true, data: { mine, others: rules.length - mine } };
+}
+
+export async function setAccountArchived(
+  id: string,
+  isArchived: boolean,
+  opts: { stopRecurring?: boolean } = {},
+): Promise<ActionResult<{ stopped: number }>> {
+  const ctx = await requireHousehold();
+  const account = await findManageable(ctx, id);
+  if (!account) return { ok: false, error: NOT_FOUND };
+  // 해지한 계좌로 납입이 계속 기록되지 않게, 보관할 때 내가 만든 자동이체를 함께 멈출 수 있다 (다시 켜기 가능)
+  const stopIds =
+    isArchived && opts.stopRecurring
+      ? (await activeRulesOf(ctx.householdId, id)).filter((r) => r.createdByUserId === ctx.userId).map((r) => r.id)
+      : [];
+  await prisma.$transaction([
+    prisma.account.update({ where: { id }, data: { isArchived } }),
+    prisma.recurringRule.updateMany({ where: { id: { in: stopIds } }, data: { isActive: false } }),
+  ]);
+  await writeAudit(ctx, isArchived ? "ACCOUNT_ARCHIVE" : "ACCOUNT_RESTORE", "Account", id, stopIds.length ? { stoppedRules: stopIds } : undefined);
+  revalidatePath("/", "layout");
+  return { ok: true, data: { stopped: stopIds.length } };
+}
+
+/** 계좌에 연결된 자동이체 전부 (진행·중지 모두) */
+async function rulesOf(householdId: string, accountId: string) {
+  const rules = await prisma.recurringRule.findMany({ where: { householdId } });
+  return rules.filter((r) => {
+    const t = r.template as { fromAccountId?: string | null; toAccountId?: string | null };
+    return t.fromAccountId === accountId || t.toAccountId === accountId;
+  });
+}
+
+/** 지워지지 않은 거래 중 이 계좌를 쓰는 건수 */
+function liveTxCount(householdId: string, accountId: string) {
+  return prisma.transaction.count({
+    where: { householdId, deletedAt: null, OR: [{ fromAccountId: accountId }, { toAccountId: accountId }] },
+  });
+}
+
+/** 삭제 전 확인: 거래가 남아 있거나 배우자 자동이체가 걸려 있으면 지울 수 없다 */
+export async function getDeleteImpact(
+  id: string,
+): Promise<ActionResult<{ transactions: number; myRules: number; otherRules: number }>> {
+  const ctx = await requireHousehold();
+  const account = await findManageable(ctx, id);
+  if (!account) return { ok: false, error: NOT_FOUND };
+  const [transactions, rules] = await Promise.all([liveTxCount(ctx.householdId, id), rulesOf(ctx.householdId, id)]);
+  const myRules = rules.filter((r) => r.createdByUserId === ctx.userId).length;
+  return { ok: true, data: { transactions, myRules, otherRules: rules.length - myRules } };
+}
+
+/**
+ * 보관한 계좌 삭제 — 거래가 하나도 없는 계좌만 (잘못 만든 계좌 정리용).
+ * 거래가 있으면 과거 리포트가 바뀌므로 보관으로 둔다.
+ * 함께 정리: 지운(휴지통) 거래 · 내가 만든 자동이체 · 목표의 연결 계좌. 잔액 기록은 DB 가 같이 지우고, 카드 출금 계좌는 비워진다.
+ */
+export async function deleteAccount(id: string): Promise<ActionResult> {
+  const ctx = await requireHousehold();
+  const account = await findManageable(ctx, id);
+  if (!account) return { ok: false, error: NOT_FOUND };
+  if (!account.isArchived) return { ok: false, error: "보관한 계좌만 삭제할 수 있어요." };
+  const [transactions, rules] = await Promise.all([liveTxCount(ctx.householdId, id), rulesOf(ctx.householdId, id)]);
+  if (transactions > 0) return { ok: false, error: `거래 ${transactions}건이 있어 삭제할 수 없어요. 보관해 두세요.` };
+  if (rules.some((r) => r.createdByUserId !== ctx.userId)) {
+    return { ok: false, error: "배우자가 만든 자동이체가 연결돼 있어요. 배우자가 먼저 그 자동이체를 삭제해야 해요." };
+  }
+  const goals = await prisma.assetGoal.findMany({ where: { householdId: ctx.householdId, linkedAccountIds: { has: id } } });
+  await prisma.$transaction([
+    prisma.transaction.deleteMany({ where: { householdId: ctx.householdId, OR: [{ fromAccountId: id }, { toAccountId: id }] } }),
+    prisma.recurringRule.deleteMany({ where: { id: { in: rules.map((r) => r.id) } } }),
+    ...goals.map((g) =>
+      prisma.assetGoal.update({ where: { id: g.id }, data: { linkedAccountIds: g.linkedAccountIds.filter((x) => x !== id) } }),
+    ),
+    prisma.account.delete({ where: { id } }),
+  ]);
+  await writeAudit(ctx, "ACCOUNT_DELETE", "Account", id, { name: account.name, type: account.type, rules: rules.length });
   revalidatePath("/", "layout");
   return { ok: true };
 }

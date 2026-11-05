@@ -5,7 +5,7 @@ import { PageHeader } from "@/components/common/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { getAccountOverview, type AccountWithBalance } from "@/features/accounts/queries";
 import { AccountMenu, NewAccountButton, type AccountFormEnv } from "@/features/accounts/components/account-dialogs";
-import { ownerChoiceOf, PAYMENT_SOURCE_TYPES } from "@/features/accounts/rules";
+import { defaultSourceAccount, ownerChoiceOf, PAYMENT_SOURCE_TYPES } from "@/features/accounts/rules";
 import { NewRecurringButton, RecurringList, type RecurringRowView } from "@/features/ledger/components/recurring-controls";
 import { getAccounts, getCategories, getRecurringRules } from "@/features/ledger/queries";
 import { scheduleOf } from "@/features/ledger/recurring-view";
@@ -14,6 +14,7 @@ import { SAVING_DESTINATION_TYPES } from "@/lib/finance/balance";
 import { formatKRW } from "@/lib/finance/money";
 import { todayKST } from "@/lib/finance/period";
 import { estimateMaturity, termProgress, type MaturityEstimate } from "@/lib/finance/savings";
+import { monthlyContribution, productRule } from "@/lib/finance/savings-products";
 import type { DateStr } from "@/lib/finance/types";
 import { ACCOUNT_TYPE_LABEL } from "@/lib/labels";
 
@@ -79,6 +80,7 @@ export default async function SavingsPage() {
     const live = own.filter((r, i) => rows[i].schedule.status === "active");
     const monthly = live.reduce((s, r) => s + BigInt(r.template.amount), 0n);
     const maturity = account.type === "SAVINGS" ? account.maturityDate : null;
+    const policy = account.type === "SAVINGS" ? productRule(account.savingsProduct, account.savingsTier) : null;
     return {
       account,
       rows,
@@ -91,6 +93,8 @@ export default async function SavingsPage() {
             openedOn: account.openedOn,
             maturityDate: maturity,
             today,
+            taxFree: policy?.product.taxFree ?? false,
+            monthlyContribution: policy?.tier ? monthlyContribution(policy.tier, policy.product.monthlyMax, Number(monthly)) : 0,
           })
         : null,
       progress: termProgress(account.openedOn, maturity, today),
@@ -125,17 +129,13 @@ export default async function SavingsPage() {
   const overdue = items.filter((i) => i.dDay !== null && i.dDay < 0 && i.monthly > 0n);
 
   const formEnv = { accounts: allVisible, categories, viewerId: ctx.userId, isCouple: ctx.isCouple };
+  const defaultFrom = defaultSourceAccount(allVisible, ctx.userId);
   const accountEnv: AccountFormEnv = {
     isCouple: ctx.isCouple,
     partnerName: ctx.partner?.name ?? null,
     paymentOptions: allVisible.filter((a) => PAYMENT_SOURCE_TYPES.includes(a.type)).map((a) => ({ id: a.id, name: a.name })),
+    defaultSourceId: defaultFrom?.id ?? null,
   };
-  // 새 자동이체의 출금 계좌 기본값: 내 명의·공동 입출금 통장
-  const defaultFrom =
-    allVisible.find((a) => a.type === "CHECKING" && a.ownerUserId === ctx.userId) ??
-    allVisible.find((a) => a.type === "CHECKING" && a.ownerUserId === null) ??
-    allVisible.find((a) => a.type === "CHECKING") ??
-    null;
   const draftFor = (toAccountId: string | null) => ({
     type: "SAVE_INVEST" as const,
     amount: 0n,
@@ -165,7 +165,7 @@ export default async function SavingsPage() {
         <div className="grid justify-items-center gap-3 rounded-xl border border-dashed px-6 py-12 text-center">
           <p className="font-medium">아직 고정 저축이 없어요</p>
           <p className="max-w-xs text-sm text-muted-foreground">
-            적금 계좌를 추가하고 매달 들어가는 자동이체를 등록하면, 그날 자동으로 기록되고 만기 예상액까지 계산해 드려요.
+            적금 계좌를 추가할 때 월 납입액을 넣으면 자동이체도 함께 등록돼요. 납입일마다 자동으로 기록되고 만기 예상액까지 계산해 드려요.
           </p>
           <NewAccountButton env={accountEnv} defaultType="SAVINGS" label="적금 계좌 추가" />
         </div>
@@ -223,7 +223,7 @@ export default async function SavingsPage() {
                         <p className="truncate text-xs text-muted-foreground">
                           {a
                             ? [
-                                ACCOUNT_TYPE_LABEL[a.type],
+                                productRule(a.savingsProduct, a.savingsTier)?.product.label ?? ACCOUNT_TYPE_LABEL[a.type],
                                 a.institution,
                                 a.interestRate !== null && a.type === "SAVINGS" ? `연 ${pct(a.interestRate)}` : null,
                                 ctx.isCouple ? ownerLabel(a.ownerUserId) : null,
@@ -252,6 +252,8 @@ export default async function SavingsPage() {
                               openedOn: a.openedOn,
                               maturityDate: a.maturityDate,
                               interestRate: a.interestRate,
+                              savingsProduct: a.savingsProduct,
+                              savingsTier: a.savingsTier,
                               isArchived: a.isArchived,
                             }}
                             balance={a.balance}
@@ -287,9 +289,15 @@ export default async function SavingsPage() {
                         {item.dDay !== null && item.dDay >= 0 ? (
                           <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
                             <span className="text-xs text-muted-foreground">
-                              {a.interestRate === null
-                                ? "금리를 넣으면 이자까지 계산해 드려요"
-                                : `원금 ${formatKRW(e.principal)} + 이자 ${formatKRW(e.interest)} − 세금 ${formatKRW(e.tax)}`}
+                              {[
+                                `원금 ${formatKRW(e.principal)}`,
+                                a.interestRate === null ? null : `+ 이자 ${formatKRW(e.interest)}`,
+                                e.contribution > 0n ? `+ 정부기여금 ${formatKRW(e.contribution)}` : null,
+                                a.interestRate === null ? null : productRule(a.savingsProduct, a.savingsTier)?.product.taxFree ? "(비과세)" : `− 세금 ${formatKRW(e.tax)}`,
+                              ]
+                                .filter(Boolean)
+                                .join(" ")}
+                              {a.interestRate === null ? " · 금리를 넣으면 이자까지 계산해 드려요" : ""}
                               {e.remainingCount > 0 ? ` · 남은 납입 ${e.remainingCount}회` : ""}
                             </span>
                             <span className="text-sm">
@@ -327,7 +335,7 @@ export default async function SavingsPage() {
           </div>
 
           <p className="px-1 text-xs text-muted-foreground">
-            만기 예상액은 단리, 이자소득세 15.4% 기준 추정이에요. 비과세·우대금리 상품은 실제 수령액이 더 많을 수 있어요.
+            만기 예상액은 단리, 이자소득세 15.4% 기준 추정이에요. 청년도약계좌·청년미래적금은 비과세와 정부기여금(기여금 이자 제외)을 넣어 계산해요. 우대금리 상품은 실제 수령액이 더 많을 수 있어요.
             {ctx.isCouple ? ` ${ctx.partner?.name ?? "배우자"}님이 등록한 자동이체는 등록한 사람만 수정·중지할 수 있어요.` : ""}
           </p>
         </>

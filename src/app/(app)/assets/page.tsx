@@ -4,9 +4,9 @@ import { Money } from "@/components/common/money";
 import { buttonVariants } from "@/components/ui/button";
 import { PageHeader } from "@/components/common/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { AccountMenu, NewAccountButton, type AccountFormEnv } from "@/features/accounts/components/account-dialogs";
+import { AccountMenu, DeleteArchivedAccountButton, NewAccountButton, RestoreAccountButton, type AccountFormEnv } from "@/features/accounts/components/account-dialogs";
 import { getAccountOverview } from "@/features/accounts/queries";
-import { ownerChoiceOf, PAYMENT_SOURCE_TYPES } from "@/features/accounts/rules";
+import { defaultSourceAccount, ownerChoiceOf, PAYMENT_SOURCE_TYPES } from "@/features/accounts/rules";
 import { getAccounts } from "@/features/ledger/queries";
 import { NetWorthChart } from "@/features/dashboard/components/charts";
 import { requireHousehold } from "@/lib/db/context";
@@ -27,11 +27,14 @@ export default async function AssetsPage({ searchParams }: { searchParams: Promi
     // 출금 계좌 후보·이름은 뷰 스코프(나/배우자)와 상관없이 가계 전체에서
     getAccounts(ctx, "us"),
   ]);
+  // 보관한 계좌 — 순자산에서 빠지고 여기서만 되돌린다 (뷰 스코프는 위 목록과 같게)
+  const archived = (await getAccounts(ctx, scope, { includeArchived: true })).filter((a) => a.isArchived);
   const nameById = new Map(allVisible.map((a) => [a.id, a.name]));
   const env: AccountFormEnv = {
     isCouple: ctx.isCouple,
     partnerName: ctx.partner?.name ?? null,
     paymentOptions: allVisible.filter((a) => PAYMENT_SOURCE_TYPES.includes(a.type)).map((a) => ({ id: a.id, name: a.name })),
+    defaultSourceId: defaultSourceAccount(allVisible, ctx.userId)?.id ?? null,
   };
   const billingLabel = (a: { billingDay: number | null; paymentAccountId: string | null }) =>
     a.billingDay === null && !a.paymentAccountId
@@ -146,6 +149,8 @@ export default async function AssetsPage({ searchParams }: { searchParams: Promi
                             openedOn: a.openedOn,
                             maturityDate: a.maturityDate,
                             interestRate: a.interestRate,
+                            savingsProduct: a.savingsProduct,
+                            savingsTier: a.savingsTier,
                             isArchived: a.isArchived,
                           }}
                           balance={a.balance}
@@ -161,6 +166,34 @@ export default async function AssetsPage({ searchParams }: { searchParams: Promi
           })}
         </div>
       )}
+
+      {archived.length ? (
+        <details className="group rounded-xl border">
+          <summary className="flex cursor-pointer list-none items-center justify-between px-3 py-2.5 text-sm">
+            <span className="font-semibold">보관한 계좌 {archived.length}개</span>
+            <span className="text-xs text-muted-foreground group-open:hidden">펼치기</span>
+            <span className="hidden text-xs text-muted-foreground group-open:inline">접기</span>
+          </summary>
+          <ul className="divide-y border-t">
+            {archived.map((a) => (
+              <li key={a.id} className="flex items-center gap-2 py-2 pr-2 pl-3">
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-medium">{a.name}</div>
+                  <div className="truncate text-xs text-muted-foreground">
+                    {[ACCOUNT_TYPE_LABEL[a.type], a.institution, ctx.isCouple ? ownerLabel(a.ownerUserId) : null].filter(Boolean).join(" · ")}
+                  </div>
+                </div>
+                <Link href={`/ledger?account=${a.id}`} className={buttonVariants({ variant: "ghost", size: "sm" })}>
+                  거래 내역
+                </Link>
+                <RestoreAccountButton id={a.id} />
+                <DeleteArchivedAccountButton id={a.id} name={a.name} />
+              </li>
+            ))}
+          </ul>
+          <p className="border-t px-3 py-2 text-xs text-muted-foreground">보관한 계좌는 순자산과 계좌 선택에서 빠져요. 거래 기록은 그대로 남아 있어요. 거래가 없는 계좌는 삭제할 수 있어요.</p>
+        </details>
+      ) : null}
     </div>
   );
 }

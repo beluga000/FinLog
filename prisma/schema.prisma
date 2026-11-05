@@ -166,6 +166,10 @@ model Account {
   maturityDate      DateTime?         @db.Date
   /// 예적금 연 금리 (0.035 = 3.5%). SAVINGS 만 사용
   interestRate      Decimal?          @db.Decimal(9, 6)
+  /// 정책형 적금 종류 (YOUTH_LEAP 청년도약계좌 · YOUTH_FUTURE 청년미래적금). SAVINGS 만, 일반 상품은 null
+  savingsProduct    String?
+  /// 정책형 적금의 기여금 구간 (소득 구간·일반/우대형). 값은 src/lib/finance/savings-products.ts
+  savingsTier       String?
   createdAt         DateTime          @default(now())
   household         Household         @relation(fields: [householdId], references: [id], onDelete: Cascade)
   paymentAccount    Account?          @relation("cardPayment", fields: [paymentAccountId], references: [id], onDelete: SetNull)

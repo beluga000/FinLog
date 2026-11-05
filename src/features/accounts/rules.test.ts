@@ -36,18 +36,34 @@ describe("카드 결제 정보", () => {
 });
 
 describe("예적금 상품 정보", () => {
+  it("정책형 적금: 상품·구간 확인, 상품이 없으면 구간도 비운다", () => {
+    const base = { openedOn: null, maturityDate: null, interestRatePct: null };
+    expect(normalizeSavings("SAVINGS", { ...base, savingsProduct: "YOUTH_FUTURE", savingsTier: "PREFERRED" })).toMatchObject({
+      ok: true,
+      savingsProduct: "YOUTH_FUTURE",
+      savingsTier: "PREFERRED",
+    });
+    expect(normalizeSavings("SAVINGS", { ...base, savingsProduct: null, savingsTier: "PREFERRED" })).toMatchObject({ savingsTier: null });
+    expect(normalizeSavings("SAVINGS", { ...base, savingsProduct: "ETC" }).ok).toBe(false);
+    expect(normalizeSavings("SAVINGS", { ...base, savingsProduct: "YOUTH_LEAP", savingsTier: "PREFERRED" }).ok).toBe(false);
+  });
+
   it("저축 통장만 저장하고 금리는 % → 비율", () => {
     expect(normalizeSavings("SAVINGS", { openedOn: "2026-01-10", maturityDate: "2027-01-10", interestRatePct: 3.55 })).toEqual({
       ok: true,
       openedOn: "2026-01-10",
       maturityDate: "2027-01-10",
       interestRate: 0.0355,
+      savingsProduct: null,
+      savingsTier: null,
     });
     expect(normalizeSavings("CHECKING", { openedOn: "2026-01-10", maturityDate: "2027-01-10", interestRatePct: 3 })).toEqual({
       ok: true,
       openedOn: null,
       maturityDate: null,
       interestRate: null,
+      savingsProduct: null,
+      savingsTier: null,
     });
   });
 

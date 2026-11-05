@@ -92,3 +92,35 @@ describe("기간 진행률", () => {
     expect(termProgress(null, "2026-01-11", "2026-01-06")).toBeNull();
   });
 });
+
+describe("정책형 적금 (비과세 + 정부기여금)", () => {
+  it("비과세면 세금 0, 기여금은 월 기여금 × 가입 개월 수로 더한다", () => {
+    const e = estimateMaturity({
+      balance: 5_000_000n,
+      deposits: [deposit()],
+      annualRate: 0.036,
+      openedOn: "2026-01-10",
+      maturityDate: "2027-01-10",
+      today: "2026-11-03",
+      taxFree: true,
+      monthlyContribution: 30_000,
+    });
+    expect(e.interest).toBe(117_000n);
+    expect(e.tax).toBe(0n);
+    expect(e.contribution).toBe(360_000n);
+    expect(e.afterTax).toBe(6_477_000n);
+  });
+
+  it("월 납입 없는 예금이면 기여금 0", () => {
+    const e = estimateMaturity({
+      balance: 1_000_000n,
+      deposits: [],
+      annualRate: 0.03,
+      openedOn: "2026-01-01",
+      maturityDate: "2027-01-01",
+      today: "2026-11-03",
+      monthlyContribution: 30_000,
+    });
+    expect(e.contribution).toBe(0n);
+  });
+});
