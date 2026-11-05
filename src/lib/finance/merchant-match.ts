@@ -115,6 +115,14 @@ function fixBrandPrefix(name: string, common: readonly string[]): string {
     if (head === brand || !/^[가-힣]/.test(name.slice(brand.length))) continue;
     if (similarity(head, brand) >= 0.85) return brand + name.slice(brand.length);
   }
+  // 첫 글자가 통째로 빠진 경우 ("525문정현대A동점" ← GS25). 짧은 브랜드는 오보정 위험이 커서 4글자 이상만
+  const lead = /^[A-Za-z0-9.]+(?=[가-힣])/.exec(name)?.[0];
+  if (lead) {
+    for (const brand of common) {
+      if (!/^[A-Za-z0-9.]+$/.test(brand) || brand.length < 4 || lead.length !== brand.length - 1) continue;
+      if (similarity(lead, brand.slice(1)) >= 0.85) return brand + name.slice(lead.length);
+    }
+  }
   return name;
 }
 

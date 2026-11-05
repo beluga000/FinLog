@@ -23,6 +23,9 @@ describe("가맹점 이름 보정", () => {
     expect(matchMerchant("GS25역삼점").name).toBe("GS25역삼점");
     expect(matchMerchant("6ㅎ525문정현대A동점").name).toBe("GS25문정현대A동점");
     expect(matchMerchant("6마켓").name).toBe("G마켓");
+    expect(matchMerchant("525문정현대A동점").name).toBe("GS25문정현대A동점"); // 첫 글자 G 가 빠짐
+    expect(matchMerchant("S25역삼점").name).toBe("GS25역삼점");
+    expect(matchMerchant("25시마트").name).toBe("25시마트"); // 두 글자 빠진 건 단정하지 않는다
     expect(matchMerchant("1234마트").name).toBe("1234마트"); // 비슷한 브랜드가 없으면 그대로
   });
 
