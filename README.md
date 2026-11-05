@@ -60,7 +60,7 @@ npm run dev                 # http://localhost:3000
 | 스크립트 | 내용 |
 |---|---|
 | `npm test` | 계산 로직 단위 테스트 (DB 불필요) |
-| `TEST_DATABASE_URL=... DATABASE_URL=... npm run test:db` | DB 통합 테스트 — 공개범위·가구 격리·정기거래(AC-3/4/9), 온보딩(AC-10/11), 홈·쓸 수 있는 돈·확인할 일·결산(AC-13~16, 19), 카드 결제일·부부 계좌 관리(AC-25~26) |
+| `TEST_DATABASE_URL=... DATABASE_URL=... npm run test:db` | DB 통합 테스트 — 공개범위·가구 격리·정기거래(AC-3/4/9), 온보딩(AC-10/11), 홈·쓸 수 있는 돈·확인할 일·결산(AC-13~16, 19), 카드 결제일·부부 계좌 관리(AC-25~26), 보관한 계좌 삭제 |
 | `npm run typecheck` / `npm run lint` / `npm run build` | 정적 검사·빌드 |
 
 DB 테스트는 각자 만든 데이터만 지우므로 로컬 개발 DB로 돌려도 된다 (`TEST_DATABASE_URL=$DATABASE_URL`).
@@ -89,7 +89,10 @@ src/
 ├─ app/api/cron/recurring  정기 거래 생성 (Vercel Cron, Bearer CRON_SECRET)
 ├─ features/<domain>     queries.ts(조회) · actions.ts(Server Actions) · components/
 ├─ lib/finance           순수 계산 함수 + 테스트 (금액 BigInt, 월 복리, 공개범위, 월 경계, 목표 역산,
-│                        쓸 수 있는 돈 spendable · 월간 결산 제안 closing · 카드 문자 파서 card-message)
+│                        쓸 수 있는 돈 spendable · 월간 결산 제안 closing · 카드 문자 파서 card-message,
+│                        결제내역 캡처 card-capture·capture-import·merchant-match · 적금 만기 savings,
+│                        청년도약/미래적금 정책 savings-products · 공휴일 holidays)
+├─ features/ledger/capture  캡처 글자 인식 (tesseract.js, 엔진·언어 파일은 public/ocr — 설치 때 복사)
 ├─ lib/db                Prisma 클라이언트, 요청 단위 가구 컨텍스트
 └─ generated/prisma      Prisma 생성물 (git 제외)
 ```
@@ -106,6 +109,12 @@ src/
   평가액 계좌(투자·연금·부동산·기타자산)는 마지막 잔액 입력이 30일 넘으면 잔액 업데이트로 나온다.
 - **월간 결산**: 저장하지 않고 조회 시점에 계산. 목표 저축 계획값은 지금 목표 설정 기준이다.
 - **문자 원문**: 파싱은 클라이언트에서만. 원문은 URL·DB·로그에 남기지 않는다(공유받기는 POST + 1회용 쿠키).
+- **결제내역 캡처**: 글자 인식은 기기 안에서만(tesseract.js). 엔진·언어 파일도 우리 서버 `/ocr` 에서만 받고,
+  이미지와 인식한 줄은 서버로 보내지 않는다. 서버에는 확인 화면에서 고른 지출 건만 저장된다.
+- **적금 월 납입**: 납입액은 계좌가 아니라 자동이체 규칙에 둔다. 시작일은 내일(또는 가입일) — 시작 잔액에 지난 납입이 이미 들어 있다.
+  청년도약·미래적금 정부기여금은 잔액에 넣지 않고 만기 예상액에 따로 더한다(기여금 이자는 무시). 정책 수치는 `savings-products.ts` 한 곳.
+- **계좌 보관·삭제**: 보관 시 내가 만든 자동이체만 함께 멈출 수 있다(배우자 규칙은 만든 사람만 수정).
+  삭제는 보관한 계좌 중 거래 0건만 — 거래까지 지우면 과거 리포트가 바뀐다. 배우자 자동이체가 걸려 있으면 거부.
 - **숫자 서체**: 숫자·구분자만 고정폭(`FinNum`, unicode-range), ₩·한글은 본문 서체 — 고정폭 서체에서 ₩가 W로 보이는 문제 방지.
 - **Prisma 생성기**: `prisma-client`(소스 생성)를 쓴다. 기존 `prisma-client-js` 는 Node 22가 한글이 들어간 경로에서
   package.json `imports`(`#main-entry-point`)를 해석하지 못해 런타임 오류가 난다.
