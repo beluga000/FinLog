@@ -29,6 +29,8 @@ import {
   type SpendableChange,
 } from "../actions";
 import type { CategoryRow, MerchantSuggestion, RecurringTemplate, TxRow } from "../queries";
+import { readLastAccounts, readRecentCategories, rememberAccount, rememberCategory } from "./last-used";
+import { CaptureImport } from "./capture-import";
 import { PasteMessage } from "./paste-message";
 
 export interface AccountOption {
@@ -37,6 +39,8 @@ export interface AccountOption {
   type: AccountType;
   ownerUserId: string | null;
   defaultVisibility: Visibility;
+  /** 금융사 — 캡처의 카드사로 결제 수단을 고를 때 쓴다 */
+  institution?: string | null;
 }
 
 interface Props {
@@ -56,6 +60,8 @@ interface Props {
   draft?: TxDraft | null;
   /** 문자로 채우기 진입 — 공유받기 원문 또는 iOS 단축어(입력칸 펼침) */
   paste?: { text?: string; expanded?: boolean };
+  /** 결제내역 캡처로 기록 진입 (?add=capture) — 캡처 고르기 단계로 연다 */
+  capture?: boolean;
 }
 
 export interface RecurringRuleEdit {
@@ -114,48 +120,6 @@ function accountFilter(type: TxType, side: "from" | "to"): (t: AccountType) => b
   }
 }
 
-const LAST_ACCOUNT_KEY = "finlog:last-account";
-
-function readLastAccounts(): Record<string, string> {
-  try {
-    return JSON.parse(localStorage.getItem(LAST_ACCOUNT_KEY) ?? "{}");
-  } catch {
-    return {};
-  }
-}
-
-function rememberAccount(key: string, id: string | null) {
-  if (!id) return;
-  try {
-    localStorage.setItem(LAST_ACCOUNT_KEY, JSON.stringify({ ...readLastAccounts(), [key]: id }));
-  } catch {
-    /* 저장 불가 환경 무시 */
-  }
-}
-
-/** 유형별 최근 쓴 카테고리 (최신이 앞) — 간편 입력의 카테고리 버튼 순서와 기본 선택에 쓴다 */
-const RECENT_CATEGORY_KEY = "finlog:recent-categories";
-const RECENT_CATEGORY_MAX = 6;
-
-function readRecentCategories(): Record<string, string[]> {
-  try {
-    return JSON.parse(localStorage.getItem(RECENT_CATEGORY_KEY) ?? "{}");
-  } catch {
-    return {};
-  }
-}
-
-function rememberCategory(type: TxType, id: string | null) {
-  if (!id) return;
-  try {
-    const all = readRecentCategories();
-    const next = [id, ...(all[type] ?? []).filter((c) => c !== id)].slice(0, RECENT_CATEGORY_MAX);
-    localStorage.setItem(RECENT_CATEGORY_KEY, JSON.stringify({ ...all, [type]: next }));
-  } catch {
-    /* 저장 불가 환경 무시 */
-  }
-}
-
 /** 처음부터 보이는 유형 — 나머지(이체·대출상환·잔액보정)는 펼쳐서 고른다 */
 const MAIN_TYPES: TxType[] = ["EXPENSE", "INCOME", "SAVE_INVEST"];
 const CATEGORY_CHIP_COUNT = 8;
@@ -175,12 +139,18 @@ export function TxFormDialog(props: Props) {
   const [pasteUsed, setPasteUsed] = useState(false);
   // '다시 기록' — 편집 중인 거래를 복사해 새 거래 폼으로 바꾼다
   const [copyOf, setCopyOf] = useState<TxRow | null>(null);
+  // 결제내역 캡처로 여러 건 기록 — 같은 창에서 확인 화면으로 바꾼다
+  const [captureMode, setCaptureMode] = useState(false);
+  useEffect(() => {
+    if (open && props.capture) setCaptureMode(true);
+  }, [open, props.capture]);
   // 닫을 때 결과 화면도 초기화 — 다음에 열면 빈 폼부터
   const change = (o: boolean) => {
     if (!o) {
       setSaved(null);
       setPasteUsed(false);
       setCopyOf(null);
+      setCaptureMode(false);
     }
     onOpenChange(o);
   };
@@ -193,12 +163,19 @@ export function TxFormDialog(props: Props) {
       <DialogContent className="max-h-[92dvh] overflow-y-auto sm:max-w-md">
         <DialogHeader>
           <DialogTitle>
-            {saved ? "기록했어요" : mode === "recurring" ? (props.rule ? "정기 거래 수정" : "정기 거래 추가") : initial && !copyOf ? "거래 수정" : "거래 기록"}
+            {saved ? "기록했어요" : captureMode ? "캡처로 기록" : mode === "recurring" ? (props.rule ? "정기 거래 수정" : "정기 거래 추가") : initial && !copyOf ? "거래 수정" : "거래 기록"}
           </DialogTitle>
           <DialogDescription className="sr-only">거래 유형, 금액, 계좌를 입력합니다.</DialogDescription>
         </DialogHeader>
         {!open ? null : saved ? (
           <SavedResult change={saved} onAgain={() => setSaved(null)} onClose={() => change(false)} />
+        ) : captureMode ? (
+          <CaptureImport
+            accounts={props.accounts}
+            categories={props.categories}
+            onBack={() => setCaptureMode(false)}
+            onDone={() => change(false)}
+          />
         ) : (
           <TxForm
             {...props}
@@ -208,6 +185,7 @@ export function TxFormDialog(props: Props) {
             onOpenChange={change}
             onSaved={onSaved}
             onCopy={mode === "tx" ? setCopyOf : undefined}
+            onCapture={mode === "tx" && !initial && !copyOf ? () => setCaptureMode(true) : undefined}
             key={
               copyOf
                 ? `copy:${copyOf.id}`
@@ -267,7 +245,8 @@ function TxForm({
   draft,
   paste,
   onCopy,
-}: Props & { onSaved: (change: SpendableChange) => void; onCopy?: (tx: TxRow) => void }) {
+  onCapture,
+}: Props & { onSaved: (change: SpendableChange) => void; onCopy?: (tx: TxRow) => void; onCapture?: () => void }) {
   const [pending, startTransition] = useTransition();
   // 수정 대상: 거래(initial) 또는 정기 규칙의 템플릿
   const edit = initial ?? (rule ? { ...rule.template, amount: BigInt(rule.template.amount), date: undefined } : null);
@@ -551,7 +530,7 @@ function TxForm({
       </div>
 
       {mode === "tx" && !initial ? (
-        <PasteMessage initialText={paste?.text} expanded={paste?.expanded} onParsed={applyParsed} />
+        <PasteMessage initialText={paste?.text} expanded={paste?.expanded} onParsed={applyParsed} onCapture={onCapture} />
       ) : null}
 
       <Field label="금액" htmlFor="amount">

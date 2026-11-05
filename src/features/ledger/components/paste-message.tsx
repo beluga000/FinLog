@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ClipboardPaste } from "lucide-react";
+import { ClipboardPaste, Images } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { parseCardMessage, type ParsedCardMessage } from "@/lib/finance/card-message";
 import { todayKST } from "@/lib/finance/period";
@@ -15,12 +15,15 @@ export function PasteMessage({
   initialText,
   expanded,
   onParsed,
+  onCapture,
 }: {
   /** Android 공유받기로 넘어온 원문 */
   initialText?: string;
   /** iOS 단축어 진입(?add=paste) — 입력칸을 펼친 채 시작 */
   expanded?: boolean;
   onParsed: (parsed: ParsedCardMessage) => void;
+  /** [결제내역 캡처로 채우기] — 여러 건 확인 화면으로 바꾼다 */
+  onCapture?: () => void;
 }) {
   const [manual, setManual] = useState(!!expanded);
   const [text, setText] = useState("");
@@ -70,6 +73,14 @@ export function PasteMessage({
           <ClipboardPaste /> 문자 붙여넣기
         </Button>
       </div>
+      {onCapture ? (
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="text-sm text-muted-foreground">여러 건은 캡처로</span>
+          <Button type="button" size="sm" variant="outline" onClick={onCapture}>
+            <Images /> 결제내역 캡처로 채우기
+          </Button>
+        </div>
+      ) : null}
       {manual ? (
         <div className="grid gap-2">
           <textarea

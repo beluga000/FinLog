@@ -20,11 +20,12 @@ interface Props {
 /**
  * 데스크톱: 헤더 버튼 / 모바일: 하단 탭바 위 플로팅 버튼.
  * 모바일 수집 진입 (§2-5): ?add=shared — 공유받은 문자로 채운 채 열기, ?add=paste — iOS 단축어용 붙여넣기 단계로 열기,
- * ?add=new — 빈 입력 창 바로 열기 (앱 아이콘 길게 누르기 바로가기)
+ * ?add=new — 빈 입력 창 바로 열기 (앱 아이콘 길게 누르기 바로가기), ?add=capture — 결제내역 캡처 고르기 단계로 열기
  */
 export function QuickAdd({ sharedText, ...props }: Props) {
   const [open, setOpen] = useState(false);
   const [paste, setPaste] = useState<{ text?: string; expanded?: boolean } | undefined>();
+  const [capture, setCapture] = useState(false);
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => setMounted(true), []);
@@ -42,6 +43,9 @@ export function QuickAdd({ sharedText, ...props }: Props) {
     } else if (add === "paste") {
       setPaste({ expanded: true });
       setOpen(true);
+    } else if (add === "capture") {
+      setCapture(true);
+      setOpen(true);
     } else if (add === "new") {
       setOpen(true);
     }
@@ -49,7 +53,10 @@ export function QuickAdd({ sharedText, ...props }: Props) {
 
   const change = (o: boolean) => {
     setOpen(o);
-    if (!o) setPaste(undefined);
+    if (!o) {
+      setPaste(undefined);
+      setCapture(false);
+    }
   };
 
   return (
@@ -70,7 +77,7 @@ export function QuickAdd({ sharedText, ...props }: Props) {
           </button>,
           document.body,
         )}
-      <TxFormDialog open={open} onOpenChange={change} paste={paste} {...props} />
+      <TxFormDialog open={open} onOpenChange={change} paste={paste} capture={capture} {...props} />
     </>
   );
 }

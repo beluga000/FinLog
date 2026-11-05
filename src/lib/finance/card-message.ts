@@ -33,8 +33,25 @@ const ISSUERS: [RegExp, string][] = [
   [/토스/, "토스뱅크"],
 ];
 
+export function detectIssuer(text: string): string | null {
+  return ISSUERS.find(([re]) => re.test(text))?.[1] ?? null;
+}
+
 /** 가맹점이 될 수 없는 줄 — 이름(마스킹)·누적·잔액·카드사 머리글 */
 const NOT_MERCHANT = /누적|잔액|승인|취소|원$|^\[|님$|\*/;
+
+/**
+ * 연도 없는 MM/DD → 날짜. 오늘보다 뒤면 작년 (1월에 보는 12월 내역 등).
+ * 달·일이 범위를 벗어나면 null.
+ */
+export function monthDayToDate(month: number, day: number, today: DateStr): DateStr | null {
+  if (!(month >= 1 && month <= 12 && day >= 1 && day <= 31)) return null;
+  const [ty] = today.split("-").map(Number);
+  const candidate = toDateStr(ty, month, day);
+  // 31일이 없는 달 (11/31 → 12/01 로 넘어감) 은 잘못 읽은 것
+  if (Number(candidate.slice(5, 7)) !== month) return null;
+  return candidate > today ? toDateStr(ty - 1, month, day) : candidate;
+}
 
 export function parseCardMessage(raw: string, today: DateStr): ParsedCardMessage {
   const text = raw.replace(/\[Web발신\]/g, "").replace(/\r/g, "").trim();
@@ -42,7 +59,7 @@ export function parseCardMessage(raw: string, today: DateStr): ParsedCardMessage
   if (!text) return result;
 
   result.kind = /취소/.test(text) ? "cancel" : /승인|결제|사용/.test(text) ? "approval" : "unknown";
-  result.issuer = ISSUERS.find(([re]) => re.test(text))?.[1] ?? null;
+  result.issuer = detectIssuer(text);
 
   // 누적·잔액 금액을 지운 뒤 첫 금액이 결제 금액
   const withoutTotals = text.replace(/(누적|잔액|한도)\s*[:]?\s*-?[\d,]+\s*원/g, "");
@@ -56,12 +73,7 @@ export function parseCardMessage(raw: string, today: DateStr): ParsedCardMessage
   if (dt) {
     const month = Number(dt[1]);
     const day = Number(dt[2]);
-    if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
-      const [ty] = today.split("-").map(Number);
-      // 오늘보다 뒤 날짜면 작년 문자 (1월에 받은 12월 문자 등)
-      const candidate = toDateStr(ty, month, day);
-      result.date = candidate > today ? toDateStr(ty - 1, month, day) : candidate;
-    }
+    result.date = monthDayToDate(month, day, today);
   }
 
   result.merchant = findMerchant(text, dt);

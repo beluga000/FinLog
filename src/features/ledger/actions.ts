@@ -1,11 +1,13 @@
 "use server";
 
+import { createHash } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
 import { computeSpendable, getSpendableSource } from "@/features/dashboard/home";
 import { getGoalsOverview } from "@/features/goals/queries";
 import { requireHousehold, writeAudit, type HouseholdContext } from "@/lib/db/context";
 import { fromDbDate, prisma, toDbDate } from "@/lib/db/prisma";
+import { importKeys } from "@/lib/finance/capture-import";
 import { addDays, getMonthKey, getMonthRange, inRange, todayKST } from "@/lib/finance/period";
 import { lastRunAfterScheduleChange } from "@/lib/finance/recurring";
 import { TX_TYPES_ORDER } from "@/lib/finance/tx-rules";
@@ -93,7 +95,8 @@ export async function deleteTransaction(id: string): Promise<ActionResult> {
   const ctx = await requireHousehold();
   const existing = await findEditable(ctx, id);
   if (!existing) return { ok: false, error: "거래를 찾을 수 없습니다." };
-  await prisma.transaction.update({ where: { id }, data: { deletedAt: new Date() } });
+  // 가져오기 열쇠는 비운다 — 지운 뒤 같은 캡처를 다시 가져오면 다시 기록되게
+  await prisma.transaction.update({ where: { id }, data: { deletedAt: new Date(), importHash: null } });
   done();
   return { ok: true };
 }
@@ -219,7 +222,7 @@ export async function getMerchantSuggestions(type: string): Promise<MerchantSugg
 }
 
 export interface PastedExpenseInfo {
-  /** 같은 금액·±1일 기존 지출 (AC-23) */
+  /** 같은 금액 기존 지출 — 문자 붙여넣기는 ±1일, 캡처는 같은 날 (AC-23, AC-23a) */
   duplicate: { date: string; merchant: string | null; amount: bigint } | null;
   /** 같은 가맹점에 최근 쓴 카테고리 */
   categoryId: string | null;
@@ -232,27 +235,126 @@ export async function inspectPastedExpense(input: {
   merchant: string | null;
 }): Promise<PastedExpenseInfo> {
   const ctx = await requireHousehold();
-  if (!/^\d+$/.test(input.amount) || !/^\d{4}-\d{2}-\d{2}$/.test(input.date)) return { duplicate: null, categoryId: null };
+  return (await inspectExpenses(ctx, [input]))[0];
+}
+
+const BULK_MAX = 50;
+
+/** 캡처로 채운 여러 건 점검 — 건마다 중복 후보와 가맹점별 최근 카테고리 (쿼리 두 번) */
+export async function inspectCapturedExpenses(
+  items: { amount: string; date: string; merchant: string | null }[],
+): Promise<PastedExpenseInfo[]> {
+  const ctx = await requireHousehold();
+  if (!Array.isArray(items) || items.length > BULK_MAX) return [];
+  // 캡처 날짜는 카드 앱에 찍힌 그대로라 같은 날만 본다 — ±1일이면 매일 같은 금액(편의점·커피)이 전날 기록에 걸린다
+  return inspectExpenses(ctx, items, 0);
+}
+
+/**
+ * windowDays: 앞뒤로 볼 날 수 (문자 붙여넣기 1, 캡처 0).
+ * 기존 기록 하나는 한 건에만 맞춘다 — 같은 날 같은 금액이 두 번이면 기록이 하나뿐일 때 한 건만 의심한다.
+ */
+async function inspectExpenses(
+  ctx: HouseholdContext,
+  items: { amount: string; date: string; merchant: string | null }[],
+  windowDays = 1,
+): Promise<PastedExpenseInfo[]> {
+  const valid = (i: { amount: unknown; date: unknown }) =>
+    typeof i.amount === "string" && /^\d{1,13}$/.test(i.amount) && typeof i.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(i.date);
+  const ok = items.filter(valid);
+  if (!ok.length) return items.map(() => ({ duplicate: null, categoryId: null }));
   const visible = { householdId: ctx.householdId, deletedAt: null, type: "EXPENSE" as const, OR: [{ createdByUserId: ctx.userId }, { visibility: { not: "PRIVATE" as const } }] };
-  const [dup, sameMerchant] = await Promise.all([
-    prisma.transaction.findFirst({
+  const dates = ok.map((i) => i.date).sort();
+  const merchants = [...new Set(ok.map((i) => (typeof i.merchant === "string" ? i.merchant.trim() : "")).filter(Boolean))];
+  const [candidates, lastCategories] = await Promise.all([
+    prisma.transaction.findMany({
       where: {
         ...visible,
-        amount: BigInt(input.amount),
-        date: { gte: toDbDate(addDays(input.date, -1)), lte: toDbDate(addDays(input.date, 1)) },
+        amount: { in: [...new Set(ok.map((i) => i.amount))].map(BigInt) },
+        date: { gte: toDbDate(addDays(dates[0], -windowDays)), lte: toDbDate(addDays(dates[dates.length - 1], windowDays)) },
       },
+      orderBy: { date: "asc" },
       select: { date: true, merchant: true, amount: true },
     }),
-    input.merchant
-      ? prisma.transaction.findFirst({
-          where: { ...visible, merchant: input.merchant, categoryId: { not: null } },
+    merchants.length
+      ? prisma.transaction.findMany({
+          where: { ...visible, merchant: { in: merchants }, categoryId: { not: null } },
           orderBy: { date: "desc" },
-          select: { categoryId: true },
+          distinct: ["merchant"],
+          select: { merchant: true, categoryId: true },
         })
-      : null,
+      : [],
   ]);
-  return {
-    duplicate: dup ? { date: fromDbDate(dup.date), merchant: dup.merchant, amount: dup.amount } : null,
-    categoryId: sameMerchant?.categoryId ?? null,
-  };
+  const existing = candidates.map((t) => ({ date: fromDbDate(t.date), merchant: t.merchant, amount: t.amount }));
+  const categoryOf = new Map(lastCategories.map((c) => [c.merchant, c.categoryId]));
+  const used = new Set<number>();
+  return items.map((i) => {
+    if (!valid(i)) return { duplicate: null, categoryId: null };
+    const amount = BigInt(i.amount);
+    const lo = addDays(i.date, -windowDays);
+    const hi = addDays(i.date, windowDays);
+    const merchant = i.merchant?.trim() || null;
+    const fits = (t: (typeof existing)[number], k: number) => !used.has(k) && t.amount === amount && t.date >= lo && t.date <= hi;
+    // 같은 날·같은 가맹점 기록을 먼저 맞춘다
+    let k = existing.findIndex((t, n) => fits(t, n) && t.date === i.date && t.merchant === merchant);
+    if (k < 0) k = existing.findIndex(fits);
+    if (k >= 0) used.add(k);
+    return { duplicate: k >= 0 ? existing[k] : null, categoryId: (merchant && categoryOf.get(merchant)) || null };
+  });
+}
+
+export interface BulkExpenseRow {
+  date: string;
+  amount: string;
+  merchant: string | null;
+  categoryId: string | null;
+  fromAccountId: string | null;
+  memo: string | null;
+}
+
+/**
+ * 캡처로 채운 지출 여러 건을 한 번에 기록 (§2-5 모바일 수집).
+ * 건마다 createTransaction 과 같은 검증(resolveTxInput)을 거치고, 하나라도 틀리면 아무것도 저장하지 않는다.
+ * importHash = sha256(가구|날짜|금액|사용처|계좌|같은 값 순번) — 같은 캡처를 다시 가져오면 이미 있는 건은 건너뛴다.
+ * 서버로 오는 것은 거래 값뿐이다 (이미지·인식 원문 줄은 브라우저에만 있다).
+ */
+export async function createTransactionsBulk(rows: BulkExpenseRow[]): Promise<ActionResult<{ created: number; skipped: number }>> {
+  const ctx = await requireHousehold();
+  if (!Array.isArray(rows) || !rows.length) return { ok: false, error: "기록할 거래가 없습니다." };
+  if (rows.length > BULK_MAX) return { ok: false, error: `한 번에 ${BULK_MAX}건까지 기록할 수 있습니다.` };
+  const resolved = [];
+  for (const [i, raw] of rows.entries()) {
+    const row = (raw && typeof raw === "object" ? raw : {}) as Partial<Record<keyof BulkExpenseRow, unknown>>;
+    const r = await resolveTxInput(ctx, {
+      type: "EXPENSE",
+      date: row.date,
+      amount: row.amount,
+      fromAccountId: row.fromAccountId ?? null,
+      toAccountId: null,
+      categoryId: row.categoryId ?? null,
+      merchant: row.merchant ?? null,
+      memo: row.memo ?? null,
+      visibility: null,
+      isFixed: false,
+    });
+    if (!r.ok) return { ok: false, error: `${i + 1}번째 거래: ${r.error}` };
+    resolved.push(r.data);
+  }
+  const keys = importKeys(
+    ctx.householdId,
+    resolved.map((r) => ({ date: r.date!, amount: r.amount, merchant: r.merchant, accountId: r.fromAccountId })),
+  );
+  const { count } = await prisma.transaction.createMany({
+    data: resolved.map(({ date, ...data }, i) => ({
+      ...data,
+      date: toDbDate(date!),
+      householdId: ctx.householdId,
+      createdByUserId: ctx.userId,
+      paidByUserId: ctx.userId,
+      importHash: createHash("sha256").update(keys[i]).digest("hex"),
+    })),
+    skipDuplicates: true,
+  });
+  done();
+  return { ok: true, data: { created: count, skipped: rows.length - count } };
 }

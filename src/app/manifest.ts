@@ -21,6 +21,7 @@ export default function manifest(): MetadataRoute.Manifest {
     shortcuts: [
       { name: "지출 기록", short_name: "기록", url: "/dashboard?add=new", icons: [{ src: "/icons/192", sizes: "192x192", type: "image/png" }] },
       { name: "카드 문자로 기록", short_name: "문자로", url: "/dashboard?add=paste", icons: [{ src: "/icons/192", sizes: "192x192", type: "image/png" }] },
+      { name: "캡처로 기록", short_name: "캡처로", url: "/dashboard?add=capture", icons: [{ src: "/icons/192", sizes: "192x192", type: "image/png" }] },
       { name: "가계부", url: "/ledger", icons: [{ src: "/icons/192", sizes: "192x192", type: "image/png" }] },
     ],
     // 문자 앱 [공유 → FINLOG]. 원문이 URL·로그에 남지 않게 POST 로 받는다
