@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
 import { mergeCaptureResults, mergeRejected, matchIssuerAccount } from "@/lib/finance/capture-import";
 import type { CaptureResult } from "@/lib/finance/card-capture";
-import { matchMerchant } from "@/lib/finance/merchant-match";
+import { isGenericMerchant, matchMerchant } from "@/lib/finance/merchant-match";
 import { todayKST } from "@/lib/finance/period";
 import { createTransactionsBulk, getMerchantSuggestions, inspectCapturedExpenses, type PastedExpenseInfo } from "../actions";
 import type { CategoryRow, MerchantSuggestion } from "../queries";
@@ -36,6 +36,10 @@ interface Row {
   accountId: string;
   categoryId: string;
   duplicate: PastedExpenseInfo["duplicate"];
+  /** 무엇을 샀는지 — 메모로 저장 */
+  note: string;
+  /** 메모 칸을 펼쳤는지 (간편결제·쇼핑몰은 처음부터 펼친다) */
+  noteOpen: boolean;
 }
 
 type Phase = { kind: "pick" } | { kind: "working"; text: string } | { kind: "review" };
@@ -121,7 +125,9 @@ export function CaptureImport({
     setRows(
       named.map(({ it, name }, k) => {
         const dup = info[k]?.duplicate ?? null;
-        const category = info[k]?.categoryId ?? sugCategory.get(name) ?? null;
+        // 네이버페이·쿠팡처럼 이름만으로 무엇을 샀는지 모르는 곳은 지난번 카테고리를 그대로 쓰지 않는다
+        const generic = isGenericMerchant(name);
+        const category = generic ? null : (info[k]?.categoryId ?? sugCategory.get(name) ?? null);
         return {
           key: k,
           // 취소된 결제·이미 기록한 것 같은 건은 처음엔 빼 둔다
@@ -135,6 +141,8 @@ export function CaptureImport({
           accountId: matchIssuerAccount(it.issuer, payAccounts) ?? fallbackAccount,
           categoryId: category && known.has(category) ? category : "",
           duplicate: dup,
+          note: "",
+          noteOpen: generic,
         };
       }),
     );
@@ -160,7 +168,7 @@ export function CaptureImport({
           categoryId: r.categoryId,
           fromAccountId: r.accountId,
           // 할부도 문자 붙여넣기처럼 결제한 날 전체 금액으로 기록하고, 메모로 남긴다
-          memo: r.installment && r.installment > 1 ? `${r.installment}개월 할부` : null,
+          memo: [r.note.trim(), r.installment && r.installment > 1 ? `${r.installment}개월 할부` : ""].filter(Boolean).join(" · ") || null,
         })),
       );
       if (!result.ok) return setError(result.error);
@@ -308,11 +316,30 @@ export function CaptureImport({
                 maxLength={100}
                 aria-label="사용처"
                 autoComplete="off"
-                onChange={(e) => update(r.key, { merchant: e.target.value })}
+                onChange={(e) => update(r.key, { merchant: e.target.value, noteOpen: r.noteOpen || isGenericMerchant(e.target.value) })}
                 className="h-9"
               />
               {r.merchant !== r.raw ? <span className="text-xs text-muted-foreground">인식: {r.raw}</span> : null}
             </div>
+            {r.noteOpen ? (
+              <Input
+                value={r.note}
+                maxLength={100}
+                aria-label="무엇을 샀나요"
+                placeholder="무엇을 샀나요? 예: 샴푸, 휴지"
+                autoComplete="off"
+                onChange={(e) => update(r.key, { note: e.target.value })}
+                className="h-9"
+              />
+            ) : (
+              <button
+                type="button"
+                onClick={() => update(r.key, { noteOpen: true })}
+                className="justify-self-start text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+              >
+                + 무엇을 샀는지 메모
+              </button>
+            )}
             <div className="grid grid-cols-2 gap-2">
               <NativeSelect
                 value={r.categoryId}

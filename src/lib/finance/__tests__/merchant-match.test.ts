@@ -1,5 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { cleanMerchant, matchMerchant, similarity } from "../merchant-match";
+import { cleanMerchant, isGenericMerchant, matchMerchant, similarity } from "../merchant-match";
+
+describe("무엇을 샀는지 알 수 없는 사용처", () => {
+  it("간편결제·결제대행·종합 쇼핑몰", () => {
+    for (const n of ["네이버페이", "쿠팡", "쿠팡(주)", "쿠팡페이주식회사", "쿠팡 페이 주식회사", "카카오페이", "G마켓", "11번가", "토스페이먼츠", "ＳＳＧ.ＣＯＭ"]) {
+      expect(isGenericMerchant(n), n).toBe(true);
+    }
+  });
+  it("가게 이름은 아니다", () => {
+    for (const n of ["GS25문정현대A동점", "스타벅스 강남역점", "쿠팡이츠 아님 맘스터치", "네이버페이 - 안다르", "", null]) {
+      expect(isGenericMerchant(n), String(n)).toBe(false);
+    }
+  });
+});
 
 describe("가맹점 이름 보정", () => {
   it("인식 찌꺼기를 걷어낸다", () => {

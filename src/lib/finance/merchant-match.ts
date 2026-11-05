@@ -73,6 +73,26 @@ export function cleanMerchant(raw: string): string {
 /** 간편결제·결제대행사가 '대행사 - 가게' 로 붙이는 앞부분 */
 const PG_PREFIX = /^(네이버파이낸셜|카카오페이|토스페이먼츠|비바리퍼블리카|나이스(페이먼츠)?|NICE|KG\s*이니시스|이니시스|KCP|NHN\s*KCP|다날|페이코|NHN\s*페이코)\s*(\(\s*주\s*\)|㈜)?\s*[-–]\s*(?=\S)/i;
 
+/**
+ * 간편결제·결제대행·종합 쇼핑몰처럼 이름만으로는 무엇을 샀는지 알 수 없는 사용처.
+ * 캡처 확인 화면에서 "무엇을 샀나요?" 칸을 펼치고, 지난번 카테고리를 그대로 쓰지 않는다.
+ */
+const GENERIC_MERCHANT = new RegExp(
+  "^(" +
+    [
+      "네이버\\s*(페이|파이낸셜|쇼핑|스마트스토어)", "N\\s*PAY", "카카오\\s*(페이|쇼핑|선물하기)", "토스\\s*(페이|페이먼츠)?", "비바리퍼블리카",
+      "페이코", "PAYCO", "쿠팡\\s*(페이)?", "쿠팡\\s*이츠", "G\\s*마켓", "지마켓", "옥션", "11\\s*번가", "SSG(\\.COM)?", "위메프", "티몬",
+      "알리\\s*익스프레스", "ALIEXPRESS", "테무", "TEMU", "스마트스토어", "롯데\\s*ON", "KG\\s*이니시스", "이니시스", "NICE\\s*(페이먼츠)?",
+      "나이스\\s*(페이먼츠)?", "다날", "(NHN\\s*)?KCP", "PAYPAL", "페이팔", "AMAZON(\\.COM)?", "아마존",
+    ].join("|") +
+    ")\\s*(주식회사|\\(\\s*주\\s*\\)|㈜|코리아|KOREA)?$",
+  "i",
+);
+
+export function isGenericMerchant(name: string | null | undefined): boolean {
+  return !!name && GENERIC_MERCHANT.test(halfWidth(name).trim());
+}
+
 export interface MerchantMatch {
   /** 보정한 이름 (확신이 없으면 정리만 한 인식 결과) */
   name: string;

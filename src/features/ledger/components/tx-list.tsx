@@ -84,6 +84,8 @@ export function TxList({
                             {tx.recurringRuleId ? <Repeat className="size-3" aria-label="정기 거래" /> : null}
                             {tx.visibility === "PRIVATE" ? <Lock className="size-3" aria-label="비공개" /> : null}
                             {tx.visibility === "SUMMARY_ONLY" ? <EyeOff className="size-3" aria-label="합계만 공개" /> : null}
+                            {/* 메모(무엇을 샀는지)를 결제 수단보다 앞에 — "네이버페이"만으로는 알 수 없는 내용 */}
+                            {tx.memo ? <span className="truncate text-foreground/80">{tx.memo} ·</span> : null}
                             <span className="truncate">{flowText(tx)}</span>
                             {isCouple && partner ? <span className="shrink-0 rounded bg-muted px-1">{partnerName}</span> : null}
                           </div>
