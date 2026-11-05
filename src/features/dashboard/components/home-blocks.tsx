@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { cn } from "cn";
+import { HiddenMoney } from "@/components/common/hidden-money";
 import { Money } from "@/components/common/money";
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { GoalPace, GoalProgressBar } from "@/features/goals/components/goal-status";
@@ -72,7 +73,8 @@ export function PrimaryGoalCard({ goals, today }: { goals: GoalView[]; today: Da
       </CardHeader>
       <CardContent className="grid gap-3">
         <div className="flex flex-wrap items-baseline gap-x-2">
-          <Money value={primary.current} className="text-2xl font-bold" />
+          {/* 지금 모인 돈은 가려 두고 눌러야 보인다 — 목표 금액·진척률은 그대로 */}
+          <HiddenMoney value={Number(primary.current)} label="지금 모인 돈" className="text-2xl font-bold" />
           <span className="text-sm text-muted-foreground">
             / <Money value={primary.targetAmount} compact />
           </span>

@@ -14,7 +14,7 @@ export const metadata = { title: "목표" };
 
 export default async function GoalsPage() {
   const ctx = await requireHousehold();
-  const { goals, capacity, totalDemand, accounts } = await getGoalsOverview(ctx, {
+  const { goals, capacity, totalDemand, accounts, netWorth } = await getGoalsOverview(ctx, {
     today: todayKST(),
     monthStartDay: ctx.household.monthStartDay,
   });
@@ -22,7 +22,7 @@ export default async function GoalsPage() {
 
   return (
     <div className="grid gap-5">
-      <PageHeader title="목표" description="우선순위가 높은 목표부터 저축 가능액을 배분해요." actions={<NewGoalButton accounts={accounts} />} />
+      <PageHeader title="목표" description="우선순위가 높은 목표부터 저축 가능액을 배분해요." actions={<NewGoalButton accounts={accounts} netWorth={netWorth} />} />
 
       <Card size="sm" data-hero="">
         <CardContent className="grid gap-3 sm:grid-cols-3">

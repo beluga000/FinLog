@@ -4,9 +4,8 @@ import { useState, useTransition } from "react";
 import { ArrowDown, ArrowUp } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import type { AccountType } from "@/lib/finance/types";
 import { applyGoalAlternative, deleteGoal, moveGoalPriority, setGoalCommit, setGoalStatus } from "../actions";
-import { GoalFormDialog, type GoalFormValue } from "./goal-form";
+import { GoalFormDialog, type GoalAccount, type GoalFormValue } from "./goal-form";
 
 function useAction() {
   const [pending, start] = useTransition();
@@ -79,9 +78,11 @@ export function ApplyAlternativeButton({
 export function GoalMenu({
   goal,
   accounts,
+  netWorth,
 }: {
   goal: GoalFormValue & { id: string; status: "ACTIVE" | "ACHIEVED" | "PAUSED" };
-  accounts: { id: string; name: string; type: AccountType }[];
+  accounts: GoalAccount[];
+  netWorth?: number;
 }) {
   const { pending, run } = useAction();
   const [editing, setEditing] = useState(false);
@@ -111,7 +112,7 @@ export function GoalMenu({
       ) : (
         <Button variant="ghost" className="text-destructive" onClick={() => setConfirmDelete(true)}>삭제</Button>
       )}
-      <GoalFormDialog open={editing} onOpenChange={setEditing} accounts={accounts} initial={goal} />
+      <GoalFormDialog open={editing} onOpenChange={setEditing} accounts={accounts} netWorth={netWorth} initial={goal} />
     </div>
   );
 }

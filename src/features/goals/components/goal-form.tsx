@@ -3,14 +3,18 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
+import { cn } from "cn";
 import { AmountInput } from "@/components/common/amount-input";
 import { Field } from "@/components/common/field";
+import { Money } from "@/components/common/money";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { NativeSelect } from "@/components/ui/native-select";
-import { addDays, todayKST } from "@/lib/finance/period";
+import { GOAL_TEMPLATES, GOAL_TEMPLATE_KEYS, type GoalTemplate } from "@/features/household/onboarding-schema";
+import { addDays, monthsBetween, todayKST } from "@/lib/finance/period";
 import { MODEL_ALLOCATIONS, portfolioMetrics, RISK_PROFILE_LABEL, RISK_PROFILES } from "@/lib/finance/portfolio";
+import { calculateRequiredInvestment } from "@/lib/finance/projection";
 import { ACCOUNT_TYPE_LABEL } from "@/lib/labels";
 import type { AccountType } from "@/lib/finance/types";
 import { createGoal, updateGoal } from "../actions";
@@ -26,52 +30,113 @@ export interface GoalFormValue {
   monthlyCommit: number | null;
 }
 
+export interface GoalAccount {
+  id: string;
+  name: string;
+  type: AccountType;
+  /** 현재 잔액 (원) — 없으면 잔액을 보여 주지 않는다 */
+  balance?: number;
+}
+
+/** 위험 성향별 모델 배분 기대수익률 + 무엇에 넣는지 한 줄 */
+const RATE_HINT: Record<(typeof RISK_PROFILES)[number], string> = {
+  STABLE: "예적금 위주",
+  STABLE_SEEKING: "예적금 + 채권",
+  NEUTRAL: "주식·채권 반반",
+  ACTIVE: "주식 위주",
+  AGGRESSIVE: "주식 대부분",
+};
 const PRESETS = RISK_PROFILES.map((p) => ({
+  key: p,
   label: RISK_PROFILE_LABEL[p],
+  hint: RATE_HINT[p],
   rate: Math.round(portfolioMetrics(MODEL_ALLOCATIONS[p]).expectedReturn * 1000) / 1000,
 }));
 
+const YEAR_CHIPS = [1, 3, 5, 10, 20];
+
 function yearsFromToday(years: number) {
-  const t = todayKST();
-  const [y, m, d] = t.split("-").map(Number);
+  const [y, m, d] = todayKST().split("-").map(Number);
   return `${y + years}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+}
+
+function durationLabel(months: number) {
+  const y = Math.floor(months / 12);
+  const m = months % 12;
+  if (!y) return `${m}개월`;
+  return m ? `${y}년 ${m}개월` : `${y}년`;
 }
 
 export function GoalFormDialog({
   open,
   onOpenChange,
   accounts,
+  netWorth,
   initial,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  accounts: { id: string; name: string; type: AccountType }[];
+  accounts: GoalAccount[];
+  /** 연결 계좌가 없을 때 진척 기준이 되는 순자산 */
+  netWorth?: number;
   initial?: GoalFormValue;
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[92dvh] overflow-y-auto sm:max-w-md">
-        <DialogHeader>
+      <DialogContent className="max-h-[92dvh] gap-0 overflow-y-auto p-0 sm:max-w-md">
+        <DialogHeader className="px-5 pt-5 pb-3">
           <DialogTitle>{initial?.id ? "목표 수정" : "새 목표"}</DialogTitle>
-          <DialogDescription>목표 금액과 날짜를 정하면 매달 얼마가 필요한지 계산해 드려요.</DialogDescription>
+          <DialogDescription>얼마를, 언제까지 모을지 정하면 매달 모을 금액을 바로 계산해요.</DialogDescription>
         </DialogHeader>
-        {open ? <GoalForm accounts={accounts} initial={initial} onDone={() => onOpenChange(false)} /> : null}
+        {open ? <GoalForm accounts={accounts} netWorth={netWorth} initial={initial} onDone={() => onOpenChange(false)} /> : null}
       </DialogContent>
     </Dialog>
   );
 }
 
+/** 단계 제목 — 입력을 "무엇을 · 언제까지 · 어떻게" 세 묶음으로 나눈다 */
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section className="grid gap-3 border-t px-5 py-4">
+      <h3 className="text-xs font-semibold tracking-wide text-muted-foreground">{title}</h3>
+      {children}
+    </section>
+  );
+}
+
+function Chip({ selected, onClick, children, className }: { selected: boolean; onClick: () => void; children: React.ReactNode; className?: string }) {
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={selected}
+      onClick={onClick}
+      className={cn(
+        "rounded-full border px-3 py-1 text-xs transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-none",
+        selected ? "border-brand bg-brand-soft font-semibold text-brand" : "text-muted-foreground hover:bg-muted",
+        className,
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
 function GoalForm({
   accounts,
+  netWorth,
   initial,
   onDone,
 }: {
-  accounts: { id: string; name: string; type: AccountType }[];
+  accounts: GoalAccount[];
+  netWorth?: number;
   initial?: GoalFormValue;
   onDone: () => void;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
+  const today = todayKST();
+  const [template, setTemplate] = useState<GoalTemplate | null>(null);
   const [name, setName] = useState(initial?.name ?? "");
   const [target, setTarget] = useState(initial ? String(initial.targetAmount) : "");
   const [isReal, setIsReal] = useState(initial?.targetIsReal ?? true);
@@ -85,9 +150,32 @@ function GoalForm({
 
   const expectedReturn = rateMode === "custom" ? Number(customRate) / 100 : Number(rateMode);
   const assetAccounts = accounts.filter((a) => a.type !== "CREDIT_CARD" && a.type !== "LOAN");
+  const preset = PRESETS.find((p) => String(p.rate) === rateMode);
+
+  // 미리보기 — 서버(getGoalsOverview)와 같은 계산: 연결 계좌 합계, 없으면 순자산
+  const linkedAccounts = assetAccounts.filter((a) => linked.includes(a.id));
+  const knowsBalance = linkedAccounts.length ? linkedAccounts.every((a) => a.balance !== undefined) : netWorth !== undefined;
+  const current = linkedAccounts.length ? linkedAccounts.reduce((s, a) => s + (a.balance ?? 0), 0) : Math.max(0, netWorth ?? 0);
+  const targetNum = Number(target || 0);
+  const months = monthsBetween(today, date);
+  const ready = targetNum > 0 && months > 0 && Number.isFinite(expectedReturn) && knowsBalance;
+  const required = ready
+    ? calculateRequiredInvestment({ target: targetNum, pv: current, months, annualReturn: expectedReturn, targetIsReal: isReal })
+    : null;
+  const commitNum = Number(commit || 0);
+
+  function pickTemplate(key: GoalTemplate) {
+    const tpl = GOAL_TEMPLATES[key];
+    setTemplate(key);
+    setName(tpl.name);
+    if (tpl.amount) setTarget(tpl.amount);
+    setDate(yearsFromToday(tpl.years));
+  }
 
   function submit() {
     setError(null);
+    if (!name.trim()) return setError("목표 이름을 적어 주세요.");
+    if (!targetNum) return setError("목표 금액을 적어 주세요.");
     if (!Number.isFinite(expectedReturn)) return setError("기대수익률을 확인하세요.");
     const payload = {
       name,
@@ -109,90 +197,204 @@ function GoalForm({
 
   return (
     <form
-      className="grid gap-4"
+      className="grid"
       onSubmit={(e) => {
         e.preventDefault();
         submit();
       }}
     >
-      <Field label="목표 이름" htmlFor="goal-name">
-        <Input id="goal-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="예: 내 집 마련, 비상금, 은퇴자금" className="h-9" maxLength={30} />
-      </Field>
-      <Field label="목표 금액" htmlFor="goal-target">
-        <AmountInput id="goal-target" value={target} onChange={setTarget} quickAdd={[10_000_000, 100_000_000]} />
-      </Field>
-      <label className="flex items-start gap-2 text-sm">
-        <input type="checkbox" checked={isReal} onChange={(e) => setIsReal(e.target.checked)} className="mt-0.5 size-4" />
-        <span>
-          오늘 돈 가치 기준
-          <span className="block text-xs text-muted-foreground">물가상승(연 2.5%)을 반영해 목표 시점 금액을 자동으로 키워요</span>
-        </span>
-      </label>
-      <Field label="목표일" htmlFor="goal-date">
-        <Input id="goal-date" type="date" min={addDays(todayKST(), 1)} value={date} onChange={(e) => setDate(e.target.value)} className="h-9" />
-        <div className="flex flex-wrap gap-1.5">
-          {[1, 3, 5, 10, 20].map((y) => (
-            <button key={y} type="button" onClick={() => setDate(yearsFromToday(y))} className="rounded-full border px-2.5 py-0.5 text-xs text-muted-foreground hover:bg-muted">
-              {y}년 후
-            </button>
-          ))}
-        </div>
-      </Field>
-      <Field label="기대수익률 (연)" htmlFor="goal-rate" hint="자산군 모델 배분 기준 참고값이에요. 투자 권유가 아닙니다.">
-        <NativeSelect id="goal-rate" value={rateMode} onChange={(e) => setRateMode(e.target.value)}>
-          {PRESETS.map((p) => (
-            <option key={p.label} value={String(p.rate)}>
-              {p.label} · {(p.rate * 100).toFixed(1)}%
-            </option>
-          ))}
-          <option value="custom">직접 입력</option>
-        </NativeSelect>
-        {rateMode === "custom" ? (
-          <div className="relative">
-            <Input type="number" step="0.1" min={-10} max={20} value={customRate} onChange={(e) => setCustomRate(e.target.value)} className="h-9 pr-8" />
-            <span className="absolute top-1/2 right-3 -translate-y-1/2 text-sm text-muted-foreground">%</span>
-          </div>
-        ) : null}
-      </Field>
-      <Field label="연결 계좌" hint="선택한 계좌 잔액 합계를 진척도로 써요. 없으면 순자산 기준.">
-        {assetAccounts.length ? (
-          <div className="grid max-h-36 gap-1.5 overflow-y-auto rounded-lg border p-2">
-            {assetAccounts.map((a) => (
-              <label key={a.id} className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  className="size-4"
-                  checked={linked.includes(a.id)}
-                  onChange={(e) => setLinked((cur) => (e.target.checked ? [...cur, a.id] : cur.filter((id) => id !== a.id)))}
-                />
-                {a.name}
-                <span className="text-xs text-muted-foreground">{ACCOUNT_TYPE_LABEL[a.type]}</span>
-              </label>
+      <Section title="무엇을 모을까요">
+        {!initial?.id ? (
+          <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="자주 쓰는 목표">
+            {GOAL_TEMPLATE_KEYS.map((key) => (
+              <Chip key={key} selected={template === key} onClick={() => pickTemplate(key)}>
+                {GOAL_TEMPLATES[key].label}
+              </Chip>
             ))}
           </div>
-        ) : (
-          <p className="text-xs text-muted-foreground">등록된 자산 계좌가 없어요.</p>
-        )}
-      </Field>
-      <Field label="월 납입 확정액 (선택)" htmlFor="goal-commit" hint="비워두면 저축 가능액을 우선순위대로 자동 배분해요.">
-        <AmountInput id="goal-commit" value={commit} onChange={setCommit} />
-      </Field>
-      {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
-      <DialogFooter>
+        ) : null}
+        <Field label="목표 이름" htmlFor="goal-name">
+          <Input id="goal-name" value={name} onChange={(e) => setName(e.target.value)} placeholder="예: 내 집 마련, 차 바꾸기" className="h-10" maxLength={30} />
+        </Field>
+        <Field label="목표 금액" htmlFor="goal-target">
+          <AmountInput id="goal-target" value={target} onChange={setTarget} quickAdd={[1_000_000, 10_000_000, 100_000_000]} />
+        </Field>
+        <label className="flex items-start gap-2.5 text-sm">
+          <Checkbox checked={isReal} onChange={(e) => setIsReal(e.target.checked)} className="mt-0.5" />
+          <span className="grid gap-0.5">
+            <span>오늘 돈 가치로 정하기</span>
+            <span className="text-xs text-muted-foreground">
+              {isReal && required && required.nominalTarget > targetNum ? (
+                <>
+                  물가가 연 2.5%씩 오르면 목표일엔 <Money value={required.nominalTarget} compact />이 필요해서, 그만큼 모으도록 계산해요.
+                </>
+              ) : (
+                "물가가 오르는 만큼 목표 시점 금액을 키워서 계산해요."
+              )}
+            </span>
+          </span>
+        </label>
+      </Section>
+
+      <Section title="언제까지">
+        <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="기간">
+          {YEAR_CHIPS.map((y) => (
+            <Chip key={y} selected={date === yearsFromToday(y)} onClick={() => setDate(yearsFromToday(y))}>
+              {y}년 후
+            </Chip>
+          ))}
+        </div>
+        <Field label="목표일" htmlFor="goal-date">
+          <div className="flex items-center gap-3">
+            <Input id="goal-date" type="date" min={addDays(today, 1)} value={date} onChange={(e) => setDate(e.target.value)} className="h-10 flex-1" />
+            {months > 0 ? <span className="shrink-0 text-sm text-muted-foreground tabular">{durationLabel(months)} 뒤</span> : null}
+          </div>
+        </Field>
+      </Section>
+
+      <Section title="어떻게 모을까요">
+        <Field label="모으는 계좌" hint={linked.length ? "고른 계좌의 잔액 합계가 지금 모인 돈이에요." : "고르지 않으면 순자산 전체를 지금 모인 돈으로 봐요."}>
+          {assetAccounts.length ? (
+            <div className="grid max-h-44 divide-y overflow-y-auto rounded-lg border">
+              {assetAccounts.map((a) => (
+                <label key={a.id} className="flex cursor-pointer items-center gap-2.5 px-3 py-2 text-sm hover:bg-muted/50">
+                  <Checkbox
+                    checked={linked.includes(a.id)}
+                    onChange={(e) => setLinked((cur) => (e.target.checked ? [...cur, a.id] : cur.filter((id) => id !== a.id)))}
+                  />
+                  <span className="min-w-0 flex-1 truncate">
+                    {a.name} <span className="text-xs text-muted-foreground">{ACCOUNT_TYPE_LABEL[a.type]}</span>
+                  </span>
+                  {a.balance !== undefined ? <Money value={a.balance} compact className="shrink-0 text-xs text-muted-foreground" /> : null}
+                </label>
+              ))}
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">등록된 자산 계좌가 없어요. 자산 화면에서 통장·예적금·투자 계좌를 먼저 등록하세요.</p>
+          )}
+        </Field>
+
+        <Field label="기대수익률 (연)" hint={`${preset ? `${preset.hint} 배분 기준이에요. ` : ""}참고용 계산이며 투자 권유가 아니에요.`}>
+          <div className="grid grid-cols-3 gap-1.5" role="radiogroup" aria-label="기대수익률">
+            {PRESETS.map((p) => (
+              <Chip key={p.key} selected={rateMode === String(p.rate)} onClick={() => setRateMode(String(p.rate))} className="grid rounded-lg px-2 py-1.5">
+                <span>{p.label}</span>
+                <span className="tabular">{(p.rate * 100).toFixed(1)}%</span>
+              </Chip>
+            ))}
+            <Chip selected={rateMode === "custom"} onClick={() => setRateMode("custom")} className="grid rounded-lg px-2 py-1.5">
+              <span>직접 입력</span>
+              <span className="tabular">{rateMode === "custom" ? `${customRate || 0}%` : "—"}</span>
+            </Chip>
+          </div>
+          {rateMode === "custom" ? (
+            <div className="relative">
+              <Input
+                aria-label="기대수익률 직접 입력"
+                type="number"
+                inputMode="decimal"
+                step="0.1"
+                min={-10}
+                max={20}
+                value={customRate}
+                onChange={(e) => setCustomRate(e.target.value)}
+                className="h-10 pr-8"
+              />
+              <span className="absolute top-1/2 right-3 -translate-y-1/2 text-sm text-muted-foreground">%</span>
+            </div>
+          ) : null}
+        </Field>
+
+        <Field label="매달 넣을 금액 (선택)" htmlFor="goal-commit" hint="비워 두면 매달 저축할 수 있는 돈을 우선순위 순으로 나눠 넣어요.">
+          <AmountInput id="goal-commit" value={commit} onChange={setCommit} />
+          {required && !required.alreadyAchievable && !commit ? (
+            <button
+              type="button"
+              onClick={() => setCommit(String(required.monthly))}
+              className="justify-self-start text-xs font-medium text-brand underline-offset-2 hover:underline"
+            >
+              필요한 금액(<Money value={required.monthly} />)에 맞추기
+            </button>
+          ) : null}
+        </Field>
+      </Section>
+
+      {/* 계산 결과 — 스크롤해도 저장 버튼과 함께 보인다 */}
+      <div className="sticky bottom-0 grid gap-3 border-t bg-popover px-5 pt-3 pb-[max(1.25rem,env(safe-area-inset-bottom))]">
+        <GoalPreview current={current} linkedCount={linkedAccounts.length} months={months} required={required} commit={commitNum} />
+        {error ? (
+          <p role="alert" className="text-sm text-destructive">
+            {error}
+          </p>
+        ) : null}
         <Button type="submit" size="lg" disabled={pending}>
-          {pending ? "저장 중…" : "저장"}
+          {pending ? "저장 중…" : initial?.id ? "저장" : "목표 만들기"}
         </Button>
-      </DialogFooter>
+      </div>
     </form>
   );
 }
 
-export function NewGoalButton({ accounts }: { accounts: { id: string; name: string; type: AccountType }[] }) {
+function GoalPreview({
+  current,
+  linkedCount,
+  months,
+  required,
+  commit,
+}: {
+  current: number;
+  linkedCount: number;
+  months: number;
+  required: ReturnType<typeof calculateRequiredInvestment> | null;
+  commit: number;
+}) {
+  if (!required) {
+    return <p className="text-sm text-muted-foreground">목표 금액과 목표일을 정하면 매달 모을 금액이 여기 나와요.</p>;
+  }
+  const basis = linkedCount ? `고른 계좌 ${linkedCount}개` : "순자산";
+  if (required.alreadyAchievable) {
+    return (
+      <div className="grid gap-0.5">
+        <p className="text-sm font-semibold text-brand">지금 모인 돈만 굴려도 목표일까지 닿아요</p>
+        <p className="text-xs text-muted-foreground">
+          {basis} <Money value={current} compact /> 기준
+        </p>
+      </div>
+    );
+  }
+  const short = commit > 0 && commit < required.monthly;
+  return (
+    <div className="grid gap-1">
+      <p className="text-xs text-muted-foreground">
+        {durationLabel(months)} 동안 매달
+      </p>
+      <p className="flex flex-wrap items-baseline gap-x-2">
+        <Money value={required.monthly} className="text-2xl font-bold tabular" />
+        <span className="text-sm text-muted-foreground">모으면 돼요</span>
+      </p>
+      <p className="text-xs text-muted-foreground">
+        지금 모인 돈 <Money value={current} compact /> ({basis}) 기준
+        {commit > 0 ? (
+          short ? (
+            <span className="text-warning">
+              {" "}
+              · 매달 <Money value={commit} compact />이면 <Money value={required.monthly - commit} compact /> 모자라요
+            </span>
+          ) : (
+            <span className="text-brand"> · 매달 넣을 금액으로 충분해요</span>
+          )
+        ) : null}
+      </p>
+    </div>
+  );
+}
+
+export function NewGoalButton({ accounts, netWorth }: { accounts: GoalAccount[]; netWorth?: number }) {
   const [open, setOpen] = useState(false);
   return (
     <>
       <Button onClick={() => setOpen(true)}>새 목표</Button>
-      <GoalFormDialog open={open} onOpenChange={setOpen} accounts={accounts} />
+      <GoalFormDialog open={open} onOpenChange={setOpen} accounts={accounts} netWorth={netWorth} />
     </>
   );
 }

@@ -139,6 +139,7 @@ export async function getGoalsOverview(ctx: Ctx, opts: { today: DateStr; monthSt
   });
 
   const totalDemand = base.reduce((s, b) => s + b.demand, 0);
-  const accounts = overview.accounts.map(({ id, name, type }) => ({ id, name, type }));
+  // 목표 입력 창에서 "지금 모인 돈" 을 바로 보여 주려고 잔액도 넘긴다
+  const accounts = overview.accounts.map(({ id, name, type, balance }) => ({ id, name, type, balance: Number(balance) }));
   return { goals: views, capacity, totalDemand, accounts, netWorth };
 }

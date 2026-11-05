@@ -18,7 +18,7 @@ export default async function GoalDetailPage({ params }: { params: Promise<{ id:
   const { id } = await params;
   const ctx = await requireHousehold();
   const today = todayKST();
-  const { goals, accounts, capacity } = await getGoalsOverview(ctx, { today, monthStartDay: ctx.household.monthStartDay });
+  const { goals, accounts, capacity, netWorth } = await getGoalsOverview(ctx, { today, monthStartDay: ctx.household.monthStartDay });
   const goal = goals.find((g) => g.id === id);
   if (!goal) notFound();
 
@@ -107,6 +107,7 @@ export default async function GoalDetailPage({ params }: { params: Promise<{ id:
           status: goal.status,
         }}
         accounts={accounts}
+        netWorth={netWorth}
       />
       <p className="text-xs text-muted-foreground">투자 권유가 아닌 참고용 시뮬레이션이며, 과거 수익률이 미래 수익을 보장하지 않습니다.</p>
     </div>

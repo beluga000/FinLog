@@ -53,7 +53,7 @@ export function AmountInput({
               className="rounded-full border px-2.5 py-0.5 text-xs text-muted-foreground hover:bg-muted"
               onClick={() => onChange(String((value && value !== "-" ? BigInt(value) : 0n) + BigInt(n)))}
             >
-              +{n >= 10000 ? `${n / 10000}만` : fmt.format(n)}
+              +{n >= 100_000_000 && n % 100_000_000 === 0 ? `${n / 100_000_000}억` : n >= 10000 ? `${n / 10000}만` : fmt.format(n)}
             </button>
           ))}
         </div>
