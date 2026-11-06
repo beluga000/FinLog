@@ -19,12 +19,16 @@ export function MonthCalendar({
   today,
   selected,
   hrefFor,
+  onSelect,
 }: {
   range: { start: DateStr; end: DateStr };
   daily: Map<DateStr, { income: bigint; expense: bigint }>;
   today: DateStr;
   selected?: DateStr;
-  hrefFor: (date: DateStr | null) => string;
+  /** 날짜를 링크로 (서버에서 다시 그림) */
+  hrefFor?: (date: DateStr | null) => string;
+  /** 날짜를 화면 안에서 바로 고름 (서버를 다시 거치지 않음) — 있으면 hrefFor 대신 쓴다 */
+  onSelect?: (date: DateStr | null) => void;
 }) {
   const days: (DateStr | null)[] = Array.from({ length: weekday(range.start) }, () => null);
   for (let d = range.start; d < range.end; d = addDays(d, 1)) days.push(d);
@@ -45,10 +49,10 @@ export function MonthCalendar({
           const holiday = holidayName(d);
           const red = holiday !== null || weekday(d) === 0;
           return (
-            <Link
+            <DayCell
               key={d}
-              href={hrefFor(isSel ? null : d)}
-              scroll={false}
+              href={onSelect ? undefined : hrefFor?.(isSel ? null : d)}
+              onClick={onSelect ? () => onSelect(isSel ? null : d) : undefined}
               aria-label={`${d}${holiday ? ` ${holiday}` : ""}${v?.expense ? ` 지출 ${v.expense}원` : ""}`}
               title={holiday ?? undefined}
               aria-current={isSel ? "date" : undefined}
@@ -81,10 +85,20 @@ export function MonthCalendar({
                   +{formatCompactKRW(v.income).replace("원", "")}
                 </span>
               ) : null}
-            </Link>
+            </DayCell>
           );
         })}
       </div>
     </div>
   );
+}
+
+/** 링크(href) 또는 버튼(onClick) — 같은 모양 */
+function DayCell({
+  href,
+  onClick,
+  ...props
+}: { href?: string; onClick?: () => void } & Omit<React.ComponentProps<"button">, "onClick">) {
+  if (href) return <Link href={href} scroll={false} {...(props as Omit<React.ComponentProps<typeof Link>, "href">)} />;
+  return <button type="button" onClick={onClick} {...props} />;
 }

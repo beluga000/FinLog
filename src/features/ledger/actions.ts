@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { cookies } from "next/headers";
 import { computeSpendable, getSpendableSource } from "@/features/dashboard/home";
-import { getGoalsOverview } from "@/features/goals/queries";
+import { getSpendableGoals } from "@/features/goals/queries";
 import { requireHousehold, writeAudit, type HouseholdContext } from "@/lib/db/context";
 import { fromDbDate, prisma, toDbDate } from "@/lib/db/prisma";
 import { importKeys } from "@/lib/finance/capture-import";
@@ -14,7 +14,7 @@ import { TX_TYPES_ORDER } from "@/lib/finance/tx-rules";
 import type { TxType } from "@/lib/finance/types";
 import { txAccess } from "@/lib/finance/visibility";
 import { recurringInputSchema, type ActionResult } from "./schema";
-import { materializeRecurring, resolveTxInput } from "./service";
+import { materializeRecurring, prefetchTxLookup, resolveTxInput } from "./service";
 import { SHARED_TEXT_COOKIE } from "./shared-text";
 import { queryMerchantSuggestions, type MerchantSuggestion, type RecurringTemplate } from "./queries";
 
@@ -51,7 +51,8 @@ async function spendableChange(ctx: HouseholdContext, txId: string, date: string
   const today = todayKST();
   const { monthStartDay } = ctx.household;
   if (!inRange(date, getMonthRange(getMonthKey(today, monthStartDay), monthStartDay))) return null;
-  const { goals } = await getGoalsOverview(ctx, { today, monthStartDay });
+  // 목표 화면 전체(저축 여력·배분·평가) 대신 목표별 월 저축액만 계산한다
+  const goals = await getSpendableGoals(ctx, { today, monthStartDay });
   const source = await getSpendableSource(ctx, "us", { today, monthStartDay, goals });
   const before = computeSpendable(source, { excludeTxId: txId });
   const after = computeSpendable(source);
@@ -322,9 +323,13 @@ export async function createTransactionsBulk(rows: BulkExpenseRow[]): Promise<Ac
   const ctx = await requireHousehold();
   if (!Array.isArray(rows) || !rows.length) return { ok: false, error: "기록할 거래가 없습니다." };
   if (rows.length > BULK_MAX) return { ok: false, error: `한 번에 ${BULK_MAX}건까지 기록할 수 있습니다.` };
+  const parsedRows = rows.map((raw) => (raw && typeof raw === "object" ? raw : {}) as Partial<Record<keyof BulkExpenseRow, unknown>>);
+  // 계좌·카테고리는 한 번에 읽어 두고 건별 검증은 메모리에서 (최대 50건 × 2번 조회 → 2번)
+  const ids = (key: "fromAccountId" | "categoryId") =>
+    [...new Set(parsedRows.map((r) => r[key]).filter((v): v is string => typeof v === "string" && v.length > 0))];
+  const lookup = await prefetchTxLookup(ctx, ids("fromAccountId"), ids("categoryId"));
   const resolved = [];
-  for (const [i, raw] of rows.entries()) {
-    const row = (raw && typeof raw === "object" ? raw : {}) as Partial<Record<keyof BulkExpenseRow, unknown>>;
+  for (const [i, row] of parsedRows.entries()) {
     const r = await resolveTxInput(ctx, {
       type: "EXPENSE",
       date: row.date,
@@ -336,7 +341,7 @@ export async function createTransactionsBulk(rows: BulkExpenseRow[]): Promise<Ac
       memo: row.memo ?? null,
       visibility: null,
       isFixed: false,
-    });
+    }, { lookup });
     if (!r.ok) return { ok: false, error: `${i + 1}번째 거래: ${r.error}` };
     resolved.push(r.data);
   }

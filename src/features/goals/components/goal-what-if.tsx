@@ -15,7 +15,8 @@ import { formatMonthLabel, lastDayOfMonth, toDateStr } from "@/lib/finance/perio
 import { inflate, toMonthlyRate } from "@/lib/finance/projection";
 import type { DateStr } from "@/lib/finance/types";
 import { applyGoalPlan } from "../actions";
-import { GoalProjectionChart, type GoalChartPoint } from "./goal-chart";
+import { GoalProjectionChart } from "@/components/charts/lazy-charts";
+import type { GoalChartPoint } from "./goal-chart";
 
 const INFLATION = 0.025;
 

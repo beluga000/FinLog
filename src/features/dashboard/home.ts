@@ -2,6 +2,7 @@ import "server-only";
 import {
   getAccountFlows,
   getAccounts,
+  getLatestTransactions,
   getReviewTransactions,
   getScopedTransactions,
   type RecurringTemplate,
@@ -52,7 +53,7 @@ export interface SpendableSource {
 export async function getSpendableSource(
   ctx: Ctx,
   scope: ViewScope,
-  opts: { today: DateStr; monthStartDay: number; goals: GoalView[]; month?: MonthKey },
+  opts: { today: DateStr; monthStartDay: number; goals: GoalView[] | SpendableGoal[]; month?: MonthKey },
 ): Promise<SpendableSource> {
   const range = getMonthRange(opts.month ?? getMonthKey(opts.today, opts.monthStartDay), opts.monthStartDay);
   const [rules, txs] = await Promise.all([
@@ -83,7 +84,7 @@ export async function getSpendableSource(
         toAccountId: t.toAccountId,
       })),
     txs: txs.filter(visible).map(({ id, type, amount, recurringRuleId }) => ({ id, type, amount, recurringRuleId })),
-    goals: toSpendableGoals(opts.goals),
+    goals: opts.goals.some((g) => "evaluation" in g) ? toSpendableGoals(opts.goals as GoalView[]) : (opts.goals as SpendableGoal[]),
     range,
     today: opts.today,
     // 나/배우자 뷰는 가구 공동 목표 저축을 차감하지 않는다
@@ -229,8 +230,7 @@ export async function getReviewItems(ctx: Ctx, opts: { today: DateStr }): Promis
 }
 
 /** 최근 기록 — 오늘 기준 60일 안에서 최신 n건 */
-export async function getRecentTransactions(ctx: Ctx, scope: ViewScope, opts: { today: DateStr; limit: number }) {
-  const { items } = await getScopedTransactions(ctx, { start: addDays(opts.today, -60), end: addDays(opts.today, 1) }, scope);
-  return items.slice(0, opts.limit);
+export function getRecentTransactions(ctx: Ctx, scope: ViewScope, opts: { today: DateStr; limit: number }) {
+  return getLatestTransactions(ctx, scope, { since: addDays(opts.today, -60), until: addDays(opts.today, 1), limit: opts.limit });
 }
 

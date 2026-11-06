@@ -38,8 +38,14 @@ export function scheduledDateFor(y: number, m: number, rule: Pick<RecurringSched
 /** (from, to] 구간에서 발생해야 하는 날짜 목록. from = 마지막 실행일(없으면 null). */
 export function dueDates(rule: RecurringSchedule, lastRunOn: DateStr | null, today: DateStr): DateStr[] {
   const result: DateStr[] = [];
-  const [sy, sm] = rule.startDate.split("-").map(Number);
+  let [sy, sm] = rule.startDate.split("-").map(Number);
   const [ty, tm] = today.split("-").map(Number);
+  // 이미 실행한 달은 다시 훑지 않는다 — 영업일 보정(최대 ±2일)으로 달이 넘어갈 수 있어 마지막 실행 전달부터
+  if (lastRunOn) {
+    const [ly, lm] = lastRunOn.split("-").map(Number);
+    const [py, pm] = lm === 1 ? [ly - 1, 12] : [ly, lm - 1];
+    if (py > sy || (py === sy && pm > sm)) [sy, sm] = [py, pm];
+  }
   // 영업일 보정으로 다음 달 초로 밀릴 수 있어 한 달 더 확인
   for (let y = sy, m = sm; y < ty || (y === ty && m <= tm + 1); m === 12 ? ((y += 1), (m = 1)) : (m += 1)) {
     const date = scheduledDateFor(y, m, rule);

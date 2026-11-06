@@ -4,7 +4,7 @@ import { getSavingCapacity } from "@/features/dashboard/queries";
 import { getAccountFlows, getAccounts, type RecurringTemplate } from "@/features/ledger/queries";
 import type { HouseholdContext } from "@/lib/db/context";
 import { fromDbDate, prisma, toDbDate } from "@/lib/db/prisma";
-import { computeBalances, summarizeNetWorth } from "@/lib/finance/balance";
+import { balanceSeries, summarizeNetWorth } from "@/lib/finance/balance";
 import {
   allocateByPriority,
   claimsByAccount,
@@ -18,6 +18,7 @@ import {
 } from "@/lib/finance/goals";
 import { calculateRequiredInvestment } from "@/lib/finance/projection";
 import { addMonthsExact, monthsBetween, todayKST } from "@/lib/finance/period";
+import type { SpendableGoal } from "@/lib/finance/spendable";
 import type { DateStr } from "@/lib/finance/types";
 
 type Ctx = Pick<HouseholdContext, "householdId" | "userId">;
@@ -71,11 +72,11 @@ export interface GoalView {
   evaluation: GoalEvaluation;
 }
 
-export async function getGoalsOverview(ctx: Ctx, opts: { today: DateStr; monthStartDay: number }) {
-  const [goals, overview, capacity] = await Promise.all([
+/** 목표별 지금 모인 돈·필요 납입액 — 목표 화면과 "쓸 수 있는 돈" 이 같이 쓰는 바탕 */
+async function goalBases(ctx: Ctx, opts: { today: DateStr; monthStartDay: number }) {
+  const [goals, overview] = await Promise.all([
     prisma.assetGoal.findMany({ where: { householdId: ctx.householdId }, orderBy: [{ priority: "asc" }, { createdAt: "asc" }] }),
     getAccountOverview(ctx, "us", { today: opts.today, monthStartDay: opts.monthStartDay, trendMonths: 1 }),
-    getSavingCapacity(ctx, opts),
   ]);
   const balanceById = new Map(overview.accounts.map((a) => [a.id, a]));
   const netWorth = Number(overview.netWorth.netWorth);
@@ -111,9 +112,28 @@ export async function getGoalsOverview(ctx: Ctx, opts: { today: DateStr; monthSt
       expectedReturn,
       target,
       commit,
+      required,
       demand: g.status === "ACTIVE" ? commit ?? required.monthly : 0,
     };
   });
+  return { base, overview, netWorth };
+}
+
+/**
+ * "쓸 수 있는 돈" 계산용 목표 저축만 — toSpendableGoals(getGoalsOverview().goals) 와 같은 값.
+ * 거래 저장 직후처럼 저축 여력·배분·평가가 필요 없을 때 가볍게 쓴다.
+ */
+export async function getSpendableGoals(ctx: Ctx, opts: { today: DateStr; monthStartDay: number }): Promise<SpendableGoal[]> {
+  const { base } = await goalBases(ctx, opts);
+  return base.map((b) => ({
+    status: b.g.status,
+    monthly: BigInt(Math.round(b.commit ?? b.required.monthly)),
+    linkedAccountIds: b.linked.map((a) => a.id),
+  }));
+}
+
+export async function getGoalsOverview(ctx: Ctx, opts: { today: DateStr; monthStartDay: number }) {
+  const [{ base, overview, netWorth }, capacity] = await Promise.all([goalBases(ctx, opts), getSavingCapacity(ctx, opts)]);
 
   const allocation = allocateByPriority(
     base.map((b) => ({ id: b.g.id, priority: b.g.priority, demand: b.demand })),
@@ -195,26 +215,30 @@ export interface GoalClaims {
 
 /* ───────── 기준 잔액 ───────── */
 
-/** 보이는 계좌의 날짜별 잔액 — getGoalsOverview 와 같은 기준(보관 계좌 제외) */
-async function balanceBook(ctx: Ctx, until: DateStr) {
-  const accounts = await getAccounts(ctx, "us");
+type Basis = (linkedIds: string[]) => number;
+
+/**
+ * 보이는 계좌의 날짜별 기준 잔액 — getGoalsOverview 와 같은 기준(보관 계좌 제외).
+ * dates 순서대로 "연결 계좌(보이는 것) 합계, 없으면 순자산" 계산기를 돌려준다. 거래는 한 번만 훑는다.
+ * fresh: 서버 액션에서 변경 전후를 읽을 때 요청 캐시를 건너뛴다.
+ */
+async function balanceBook(ctx: Ctx, dates: DateStr[], opts: { fresh?: boolean } = {}): Promise<Basis[]> {
+  const accounts = await getAccounts(ctx, "us", { fresh: opts.fresh });
   const ids = accounts.map((a) => a.id);
   const visible = new Set(ids);
-  const { snapshots, flows } = await getAccountFlows(ctx, ids, until);
-  /** date 시점 기준 잔액 계산기 — 연결 계좌(보이는 것) 합계, 없으면 순자산 */
-  return (date: DateStr) => {
-    const balances = computeBalances(ids, snapshots, flows, date);
+  const until = dates.reduce((max, d) => (d > max ? d : max), dates[0]);
+  const { snapshots, flows } = await getAccountFlows(ctx, ids, until, { fresh: opts.fresh });
+  return balanceSeries(ids, snapshots, flows, dates).map((balances) => {
     const netWorth = Number(summarizeNetWorth(accounts, balances).netWorth);
     return (linkedIds: string[]) => {
       const linked = linkedIds.filter((id) => visible.has(id));
       return linked.length ? linked.reduce((s, id) => s + Number(balances.get(id) ?? 0n), 0) : netWorth;
     };
-  };
+  });
 }
 
-async function basisToday(ctx: Ctx) {
-  const today = todayKST();
-  return (await balanceBook(ctx, today))(today);
+async function basisToday(ctx: Ctx, opts: { fresh?: boolean } = {}) {
+  return (await balanceBook(ctx, [todayKST()], opts))[0];
 }
 
 const currentOf = (g: { startAmount: bigint; baseBalance: bigint }, basis: number) =>
@@ -243,10 +267,11 @@ export async function linkedGoalsOf(ctx: Ctx, accountId: string) {
 export async function keepGoalsSteady(ctx: Ctx, accountId: string, change: () => Promise<void>) {
   const goals = await prisma.assetGoal.findMany({ where: { householdId: ctx.householdId, linkedAccountIds: { has: accountId } } });
   if (!goals.length) return change();
-  const before = await basisToday(ctx);
+  // 변경 전후를 모두 DB 에서 새로 읽는다 (요청 캐시에 변경 전 값이 남지 않게)
+  const before = await basisToday(ctx, { fresh: true });
   const currents = goals.map((g) => currentOf(g, before(g.linkedAccountIds)));
   await change();
-  const after = await basisToday(ctx);
+  const after = await basisToday(ctx, { fresh: true });
   const today = toDbDate(todayKST());
   await prisma.$transaction(
     goals.map((g, i) =>
@@ -284,31 +309,33 @@ export async function getGoalHistory(
 ): Promise<GoalHistoryPoint[]> {
   const from = goal.baseSetOn ?? goal.createdOn;
   if (from >= today) return [];
-  const book = await balanceBook(ctx, today);
-  const current = (date: DateStr) =>
-    goalCurrent({ startAmount: goal.startAmount, baseBalance: goal.baseBalance }, book(date)(goal.linkedAccountIds));
-  const start = current(from);
+  // 한 달 간격 날짜(최대 120개월) + 오늘 — 잔액은 한 번에 계산한다
+  const n = Math.min(monthsBetween(from, today), 120);
+  const dates: DateStr[] = [];
+  for (let i = 0; i <= n; i++) {
+    const date = addMonthsExact(from, i);
+    if (date > today) break;
+    dates.push(date);
+  }
+  const monthly = dates.length;
+  if (dates[monthly - 1] < today) dates.push(today);
+  const actual = (await balanceBook(ctx, dates)).map((basis) =>
+    goalCurrent({ startAmount: goal.startAmount, baseBalance: goal.baseBalance }, basis(goal.linkedAccountIds)),
+  );
+
   const plan = goalPlanPath({
-    start,
+    start: actual[0],
     months: monthsBetween(from, goal.targetDate),
     target: goal.targetAmount,
     targetIsReal: goal.targetIsReal,
     expectedReturn: goal.expectedReturn,
     inflation: DEFAULT_INFLATION,
   });
-  const n = Math.min(monthsBetween(from, today), 120);
-  const points: GoalHistoryPoint[] = [];
-  for (let i = 0; i <= n; i++) {
-    const date = addMonthsExact(from, i);
-    if (date > today) break;
-    points.push({ date, actual: i === 0 ? start : current(date), plan: plan(i) });
-  }
-  const last = points[points.length - 1];
-  if (last.date < today) {
-    const frac = points.length - 1 + (Date.parse(today) - Date.parse(last.date)) / (30.44 * 864e5);
-    points.push({ date: today, actual: current(today), plan: plan(frac) });
-  }
-  return points;
+  return dates.map((date, i) => {
+    // 오늘 점은 마지막 달 점에서 지난 날만큼 계획선을 더 간다
+    const m = i < monthly ? i : monthly - 1 + (Date.parse(today) - Date.parse(dates[monthly - 1])) / (30.44 * 864e5);
+    return { date, actual: actual[i], plan: plan(m) };
+  });
 }
 
 /* ───────── 자동이체 등록 기본값 ───────── */

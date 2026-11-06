@@ -3,7 +3,7 @@ import { Money } from "@/components/common/money";
 import { MonthNav } from "@/components/common/month-nav";
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getAccountOverview } from "@/features/accounts/queries";
-import { CashflowTrendChart, NetWorthChart } from "@/features/dashboard/components/charts";
+import { CashflowTrendChart, NetWorthChart } from "@/components/charts/lazy-charts";
 import { BucketCompare, DeltaLine, IncomeFlowBar, MetricCard } from "@/features/dashboard/components/widgets";
 import { getMonthlySeries } from "@/features/dashboard/queries";
 import { getGoalsOverview } from "@/features/goals/queries";

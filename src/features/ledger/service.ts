@@ -3,7 +3,7 @@ import { prisma, fromDbDate, toDbDate } from "@/lib/db/prisma";
 import { dueDates } from "@/lib/finance/recurring";
 import { defaultVisibilityFor, validateTxShape } from "@/lib/finance/tx-rules";
 import { canSeeAccount } from "@/lib/finance/visibility";
-import type { Visibility } from "@/lib/finance/types";
+import type { AccountType, TxType, Visibility } from "@/lib/finance/types";
 import type { RecurringTemplate } from "./queries";
 import { txInputSchema, type TxInput } from "./schema";
 
@@ -25,10 +25,30 @@ export type ResolvedTx = {
  * 거래 입력 검증: 스키마 → 계좌·카테고리가 내 가구 소속이고 내가 볼 수 있는지 → 유형 규칙.
  * 반환된 데이터만 DB에 쓴다.
  */
+const lookupAccountSelect = { id: true, type: true, ownerUserId: true, defaultVisibility: true, isArchived: true } as const;
+
+/** 여러 건을 한 번에 검증할 때 — 계좌·카테고리를 미리 한 번에 읽어 둔다 (건마다 조회하지 않게) */
+export async function prefetchTxLookup(ctx: Ctx, accountIds: string[], categoryIds: string[]): Promise<TxLookup> {
+  const [accounts, categories] = await Promise.all([
+    accountIds.length
+      ? prisma.account.findMany({ where: { id: { in: accountIds }, householdId: ctx.householdId }, select: lookupAccountSelect })
+      : Promise.resolve([]),
+    categoryIds.length
+      ? prisma.category.findMany({ where: { id: { in: categoryIds }, householdId: ctx.householdId }, select: { id: true, txType: true } })
+      : Promise.resolve([]),
+  ]);
+  return { accounts: new Map(accounts.map((a) => [a.id, a])), categories: new Map(categories.map((c) => [c.id, c])) };
+}
+
+export interface TxLookup {
+  accounts: Map<string, { id: string; type: AccountType; ownerUserId: string | null; defaultVisibility: Visibility; isArchived: boolean }>;
+  categories: Map<string, { txType: TxType }>;
+}
+
 export async function resolveTxInput(
   ctx: Ctx,
   raw: unknown,
-  opts: { omitDate?: boolean } = {},
+  opts: { omitDate?: boolean; lookup?: TxLookup } = {},
 ): Promise<{ ok: true; data: ResolvedTx & { date?: string } } | { ok: false; error: string }> {
   const schema = opts.omitDate ? txInputSchema.omit({ date: true }) : txInputSchema;
   const parsed = schema.safeParse(raw);
@@ -36,11 +56,16 @@ export async function resolveTxInput(
   const input = parsed.data as ReturnType<typeof txInputSchema.parse>;
 
   const accountIds = [input.fromAccountId, input.toAccountId].filter((v): v is string => !!v);
-  const accounts = await prisma.account.findMany({
-    where: { id: { in: accountIds }, householdId: ctx.householdId },
-    select: { id: true, type: true, ownerUserId: true, defaultVisibility: true, isArchived: true },
-  });
-  const byId = new Map(accounts.map((a) => [a.id, a]));
+  const byId = opts.lookup
+    ? opts.lookup.accounts
+    : new Map(
+        (
+          await prisma.account.findMany({
+            where: { id: { in: accountIds }, householdId: ctx.householdId },
+            select: lookupAccountSelect,
+          })
+        ).map((a) => [a.id, a]),
+      );
   for (const id of accountIds) {
     const acc = byId.get(id);
     if (!acc || !canSeeAccount(acc, ctx.userId, "us")) return { ok: false, error: "계좌를 찾을 수 없습니다." };
@@ -49,10 +74,12 @@ export async function resolveTxInput(
   const to = input.toAccountId ? byId.get(input.toAccountId)! : null;
 
   if (input.categoryId) {
-    const cat = await prisma.category.findFirst({
-      where: { id: input.categoryId, householdId: ctx.householdId },
-      select: { txType: true },
-    });
+    const cat = opts.lookup
+      ? opts.lookup.categories.get(input.categoryId) ?? null
+      : await prisma.category.findFirst({
+          where: { id: input.categoryId, householdId: ctx.householdId },
+          select: { txType: true },
+        });
     if (!cat) return { ok: false, error: "카테고리를 찾을 수 없습니다." };
     if (cat.txType !== input.type) return { ok: false, error: "거래 유형과 카테고리가 맞지 않습니다." };
   }

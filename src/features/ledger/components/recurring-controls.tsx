@@ -20,7 +20,8 @@ import type { DateStr, TxType } from "@/lib/finance/types";
 import { deleteRecurringRule, setRecurringRuleActive } from "../actions";
 import type { CategoryRow } from "../queries";
 import type { RecurringGroup, RuleSchedule } from "../recurring-view";
-import { TxFormDialog, type AccountOption, type RecurringRuleEdit, type TxDraft } from "./tx-form";
+import type { AccountOption, RecurringRuleEdit, TxDraft } from "./tx-form";
+import { LazyTxFormDialog } from "./tx-form-lazy";
 
 interface FormEnv {
   accounts: AccountOption[];
@@ -63,7 +64,7 @@ export function NewRecurringButton({
       <Button onClick={() => setOpen(true)} variant={variant} size={size}>
         <Plus /> {label}
       </Button>
-      <TxFormDialog open={open} onOpenChange={setOpen} mode="recurring" defaultType={defaultType} draft={draft} {...env} />
+      <LazyTxFormDialog open={open} onOpenChange={setOpen} mode="recurring" defaultType={defaultType} draft={draft} {...env} />
     </>
   );
 }
@@ -173,7 +174,7 @@ export function RecurringList({
         </p>
       ) : null}
 
-      <TxFormDialog
+      <LazyTxFormDialog
         open={editOpen}
         onOpenChange={setEditOpen}
         mode="recurring"

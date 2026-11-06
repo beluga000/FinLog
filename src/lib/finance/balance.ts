@@ -74,6 +74,50 @@ export function computeBalances(
   return result;
 }
 
+/**
+ * 여러 날짜의 잔액을 한 번에 — 날짜마다 computeBalances 를 다시 돌리면 (날짜 수 × 거래 수)지만,
+ * 스냅샷·거래를 날짜순으로 한 번만 훑으며 누적한다. 결과는 dates 와 같은 순서이고
+ * 각 날짜의 값은 computeBalances(accountIds, snapshots, txs, date) 와 같다.
+ */
+export function balanceSeries(
+  accountIds: string[],
+  snapshots: BalanceSnapshot[],
+  txs: FlowTx[],
+  dates: DateStr[],
+): Map<string, bigint>[] {
+  const tracked = new Set(accountIds);
+  const bal = new Map<string, bigint>();
+  for (const id of accountIds) bal.set(id, 0n);
+
+  // 같은 날은 거래 → 스냅샷 순: 스냅샷은 그날 마감 잔액이라 그날까지의 거래를 덮어쓴다
+  const snaps = snapshots.filter((s) => tracked.has(s.accountId)).sort((a, b) => (a.asOf < b.asOf ? -1 : a.asOf > b.asOf ? 1 : 0));
+  const flows = txs.filter((t) => (t.toAccountId && tracked.has(t.toAccountId)) || (t.fromAccountId && tracked.has(t.fromAccountId)));
+  flows.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+
+  const order = dates.map((d, i) => ({ d, i })).sort((a, b) => (a.d < b.d ? -1 : a.d > b.d ? 1 : 0));
+  const out: Map<string, bigint>[] = new Array(dates.length);
+  let fi = 0;
+  let si = 0;
+  for (const { d, i } of order) {
+    while (fi < flows.length || si < snaps.length) {
+      const f = flows[fi];
+      const s = snaps[si];
+      const fDue = f !== undefined && f.date <= d;
+      const sDue = s !== undefined && s.asOf <= d;
+      if (fDue && (!sDue || f.date <= s.asOf)) {
+        if (f.toAccountId && tracked.has(f.toAccountId)) bal.set(f.toAccountId, bal.get(f.toAccountId)! + f.amount);
+        if (f.fromAccountId && tracked.has(f.fromAccountId)) bal.set(f.fromAccountId, bal.get(f.fromAccountId)! - f.amount);
+        fi++;
+      } else if (sDue) {
+        bal.set(s.accountId, s.balance);
+        si++;
+      } else break;
+    }
+    out[i] = new Map(bal);
+  }
+  return out;
+}
+
 export interface NetWorth {
   assets: bigint;
   liabilities: bigint;

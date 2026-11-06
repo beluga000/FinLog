@@ -6,7 +6,8 @@ import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { consumeSharedText } from "../actions";
 import type { CategoryRow } from "../queries";
-import { TxFormDialog, type AccountOption } from "./tx-form";
+import type { AccountOption } from "./tx-form";
+import { LazyTxFormDialog, preloadTxForm, usePreloadTxFormWhenIdle } from "./tx-form-lazy";
 
 interface Props {
   accounts: AccountOption[];
@@ -29,6 +30,7 @@ export function QuickAdd({ sharedText, ...props }: Props) {
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => setMounted(true), []);
+  usePreloadTxFormWhenIdle();
 
   useEffect(() => {
     const url = new URL(window.location.href);
@@ -61,7 +63,7 @@ export function QuickAdd({ sharedText, ...props }: Props) {
 
   return (
     <>
-      <Button onClick={() => setOpen(true)} className="hidden md:inline-flex" size="lg">
+      <Button onClick={() => setOpen(true)} onPointerEnter={preloadTxForm} className="hidden md:inline-flex" size="lg">
         <Plus /> 기록하기
       </Button>
       {/* 헤더의 backdrop-blur 가 fixed 의 기준 상자가 되므로 body 로 포털해야 화면 기준으로 뜬다 */}
@@ -71,13 +73,14 @@ export function QuickAdd({ sharedText, ...props }: Props) {
             type="button"
             aria-label="거래 기록하기"
             onClick={() => setOpen(true)}
+            onTouchStart={preloadTxForm}
             className="fixed right-4 bottom-[calc(4.5rem+env(safe-area-inset-bottom))] z-40 flex size-14 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg active:scale-95 md:hidden"
           >
             <Plus className="size-6" />
           </button>,
           document.body,
         )}
-      <TxFormDialog open={open} onOpenChange={change} paste={paste} capture={capture} {...props} />
+      <LazyTxFormDialog open={open} onOpenChange={change} paste={paste} capture={capture} {...props} />
     </>
   );
 }

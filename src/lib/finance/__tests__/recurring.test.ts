@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { lastRunAfterScheduleChange, nextDueDate, type RecurringSchedule } from "../recurring";
+import { dueDates, lastRunAfterScheduleChange, nextDueDate, type RecurringSchedule } from "../recurring";
 
 const rule = (r: Partial<RecurringSchedule>): RecurringSchedule => ({
   dayOfMonth: 25,
@@ -44,5 +44,17 @@ describe("lastRunAfterScheduleChange", () => {
 
   it("주말 보정으로 다음 달로 밀린 회차는 원래 달 회차로 본다 (10월 말일분이 11/2 생성)", () => {
     expect(lastRunAfterScheduleChange({ dayOfMonth: 0, businessDayAdjust: "NEXT" }, { dayOfMonth: 25, businessDayAdjust: "NONE" }, "2026-11-02")).toBe("2026-11-02");
+  });
+});
+
+describe("dueDates — 마지막 실행 전달부터만 훑어도 결과가 같다", () => {
+  it("말일·주말 보정(앞/뒤)·연말을 넘는 경우", () => {
+    const today = "2026-11-06";
+    for (const dayOfMonth of [0, 1, 2, 15, 30, 31])
+      for (const businessDayAdjust of ["NONE", "PREV", "NEXT"] as const) {
+        const r = { dayOfMonth, businessDayAdjust, startDate: "2021-01-01", endDate: null };
+        const all = dueDates(r, null, today);
+        for (const last of all) expect(dueDates(r, last, today)).toEqual(all.filter((d) => d > last));
+      }
   });
 });

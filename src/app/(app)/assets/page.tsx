@@ -8,7 +8,7 @@ import { AccountMenu, DeleteArchivedAccountButton, NewAccountButton, RestoreAcco
 import { getAccountOverview } from "@/features/accounts/queries";
 import { defaultSourceAccount, ownerChoiceOf, PAYMENT_SOURCE_TYPES } from "@/features/accounts/rules";
 import { getAccounts } from "@/features/ledger/queries";
-import { NetWorthChart } from "@/features/dashboard/components/charts";
+import { NetWorthChart } from "@/components/charts/lazy-charts";
 import { requireHousehold } from "@/lib/db/context";
 import { isLiability } from "@/lib/finance/balance";
 import { isLoanRepayment, LOAN_REPAYMENT_LABEL, loanPlan } from "@/lib/finance/loan";

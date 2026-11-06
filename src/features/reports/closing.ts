@@ -5,7 +5,7 @@ import { DEFAULT_INFLATION, type GoalView } from "@/features/goals/queries";
 import { getAccountFlows, getAccounts, getCategories, getScopedTransactions } from "@/features/ledger/queries";
 import type { HouseholdContext } from "@/lib/db/context";
 import { prisma, toDbDate } from "@/lib/db/prisma";
-import { computeBalances, summarizeNetWorth } from "@/lib/finance/balance";
+import { balanceSeries, summarizeNetWorth } from "@/lib/finance/balance";
 import {
   describeAheadChange,
   findFrequentMerchant,
@@ -76,9 +76,13 @@ export async function getMonthlyClosing(
     const ids = accounts.map((a) => a.id);
     const { snapshots, flows } = await getAccountFlows(ctx, ids, today);
     const trackingStart = snapshots.reduce<DateStr | null>((m, s) => (m === null || s.asOf < m ? s.asOf : m), null);
+    const monthEnd = addDays(range.end, -1);
+    const prevEnd = addDays(getMonthRange(before, monthStartDay).end, -1);
+    // 두 날짜 잔액을 한 번에 계산해 둔다
+    const [endBalances, prevBalances] = balanceSeries(ids, snapshots, flows, [monthEnd, prevEnd]);
     const aheadAt = (asOf: DateStr, extra = 0) => {
       if (trackingStart === null || asOf < trackingStart) return undefined;
-      const balances = computeBalances(ids, snapshots, flows, asOf);
+      const balances = asOf === monthEnd ? endBalances : prevBalances;
       const basis = primary.usesNetWorth
         ? Number(summarizeNetWorth(accounts, balances).netWorth)
         : primary.linkedAccountIds.reduce((s, id) => s + Number(balances.get(id) ?? 0n), 0);
@@ -95,9 +99,8 @@ export async function getMonthlyClosing(
         inflation: DEFAULT_INFLATION,
       }).aheadMonths;
     };
-    const monthEnd = addDays(range.end, -1);
     const ahead = aheadAt(monthEnd);
-    const prevAhead = aheadAt(addDays(getMonthRange(before, monthStartDay).end, -1));
+    const prevAhead = aheadAt(prevEnd);
     pace = ahead === undefined ? null : describeAheadChange(ahead, prevAhead ?? null);
     if (surplusGoal && surplusAmount > 0n && typeof ahead === "number") {
       const moved = aheadAt(monthEnd, Number(surplusAmount));

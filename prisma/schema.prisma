@@ -3,14 +3,14 @@
 
 // prisma-client: 소스(TS)로 생성 — Node 22가 한글 경로에서 package "imports"(#main-entry-point)를 못 찾는 문제 회피
 generator client {
-  provider = "prisma-client"
-  output   = "../src/generated/prisma"
+  provider   = "prisma-client"
+  output     = "../src/generated/prisma"
   // Rust 쿼리 엔진 없이 드라이버 어댑터(pg)로 접속 — Vercel 번들에 엔진 바이너리가 빠지는 문제 회피
   engineType = "client"
 }
 
 datasource db {
-  provider = "postgresql"
+  provider  = "postgresql"
   url       = env("DATABASE_URL") // 앱 쿼리: Neon pooled(-pooler)
   directUrl = env("DATABASE_URL_UNPOOLED") // 마이그레이션: direct (PgBouncer 경유 시 prepared statement 오류)
 }
@@ -244,6 +244,11 @@ model Transaction {
   @@unique([recurringRuleId, date])
   @@index([householdId, date])
   @@index([householdId, categoryId, date])
+  /// 확인할 일(needsReview) — 확인할 거래가 없을 때도 전체 이력을 훑지 않게
+  @@index([householdId, needsReview, date])
+  /// 계좌별 흐름 — 계좌 삭제 시 참조 검사, 계좌 단위 조회
+  @@index([fromAccountId, date])
+  @@index([toAccountId, date])
 }
 
 model RecurringRule {
@@ -260,6 +265,8 @@ model RecurringRule {
   isActive          Boolean           @default(true)
   household         Household         @relation(fields: [householdId], references: [id], onDelete: Cascade)
   transactions      Transaction[]
+
+  @@index([householdId])
 }
 
 model Budget {

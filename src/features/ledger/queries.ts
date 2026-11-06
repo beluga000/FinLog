@@ -1,4 +1,5 @@
 import "server-only";
+import { cache } from "react";
 import type { Prisma } from "@/generated/prisma/client";
 import { fromDbDate, prisma, toDbDate } from "@/lib/db/prisma";
 import type { HouseholdContext } from "@/lib/db/context";
@@ -16,12 +17,23 @@ export interface CategoryRow {
   icon: string | null;
 }
 
-export async function getCategories(ctx: Ctx): Promise<CategoryRow[]> {
-  return prisma.category.findMany({
-    where: { householdId: ctx.householdId },
-    orderBy: [{ parentId: { sort: "asc", nulls: "first" } }, { sortOrder: "asc" }, { name: "asc" }],
-    select: { id: true, name: true, parentId: true, txType: true, bucket: true, icon: true },
-  });
+/*
+ * 요청 단위 캐시 (React cache) — 한 화면을 그리는 동안 레이아웃·페이지·하위 조회가 같은 데이터를 여러 번 읽지 않게 한다.
+ * 키는 원시값만 쓴다. 결과는 읽기 전용으로 다룬다(정렬·push 금지).
+ * 서버 액션에서 "쓰기 전에 읽고 쓰기 뒤에 다시 읽는" 곳은 { fresh: true } 로 캐시를 건너뛴다.
+ */
+
+const loadCategories = cache(
+  (householdId: string): Promise<CategoryRow[]> =>
+    prisma.category.findMany({
+      where: { householdId },
+      orderBy: [{ parentId: { sort: "asc", nulls: "first" } }, { sortOrder: "asc" }, { name: "asc" }],
+      select: { id: true, name: true, parentId: true, txType: true, bucket: true, icon: true },
+    }),
+);
+
+export function getCategories(ctx: Ctx): Promise<CategoryRow[]> {
+  return loadCategories(ctx.householdId);
 }
 
 export interface AccountRow {
@@ -68,16 +80,25 @@ const accountSelect = {
   depositLoan: true,
 } satisfies Prisma.AccountSelect;
 
-/** 뷰 스코프에서 보이는 계좌 */
-export async function getAccounts(ctx: Ctx, scope: ViewScope = "us", opts: { includeArchived?: boolean } = {}) {
-  const accounts = await prisma.account.findMany({
-    where: { householdId: ctx.householdId, ...(opts.includeArchived ? {} : { isArchived: false }) },
+/** 가구의 모든 계좌 (보관 포함) — 보관 여부·스코프는 메모리에서 거른다 */
+const queryHouseholdAccounts = (householdId: string) =>
+  prisma.account.findMany({
+    where: { householdId },
     orderBy: [{ type: "asc" }, { createdAt: "asc" }],
     select: accountSelect,
   });
+const loadHouseholdAccounts = cache(queryHouseholdAccounts);
+
+/** 뷰 스코프에서 보이는 계좌 */
+export async function getAccounts(
+  ctx: Ctx,
+  scope: ViewScope = "us",
+  opts: { includeArchived?: boolean; fresh?: boolean } = {},
+): Promise<AccountRow[]> {
+  const accounts = await (opts.fresh ? queryHouseholdAccounts : loadHouseholdAccounts)(ctx.householdId);
   // Date·Decimal 은 클라이언트 컴포넌트로 넘길 수 있게 문자열·숫자로 바꾼다
   return accounts
-    .filter((a) => canSeeAccount(a, ctx.userId, scope))
+    .filter((a) => (opts.includeArchived || !a.isArchived) && canSeeAccount(a, ctx.userId, scope))
     .map(
       (a): AccountRow => ({
         ...a,
@@ -140,22 +161,52 @@ function toRow(t: TxWithRel): TxRow {
  * 공개범위가 적용된 거래 조회. 반환값의 summarized 는 합계 계산 전용이며 화면 목록에 쓰면 안 된다.
  * PRIVATE 은 DB 단계에서부터 걸러 배우자 데이터가 메모리에도 올라오지 않게 한다.
  */
-export async function getScopedTransactions(
+export function getScopedTransactions(
   ctx: Ctx,
   range: { start: DateStr; end: DateStr },
   scope: ViewScope,
 ): Promise<{ items: TxRow[]; summarized: SummaryTx[] }> {
+  // 같은 기간을 홈(이번 달 저축·합계)·결산에서 여러 번 읽으므로 요청 단위로 한 번만
+  return loadScopedTransactions(ctx.householdId, ctx.userId, range.start, range.end, scope);
+}
+
+const loadScopedTransactions = cache(
+  async (householdId: string, userId: string, start: DateStr, end: DateStr, scope: ViewScope) => {
+    const rows = await prisma.transaction.findMany({
+      where: {
+        householdId,
+        deletedAt: null,
+        date: { gte: toDbDate(start), lt: toDbDate(end) },
+        OR: [{ createdByUserId: userId }, { visibility: { not: "PRIVATE" } }],
+      },
+      orderBy: [{ date: "desc" }, { createdAt: "desc" }],
+      include: txInclude,
+    });
+    return scopeTransactions(rows.map(toRow), userId, scope);
+  },
+);
+
+/**
+ * 최근 기록 n건 — 기간 전체가 아니라 필요한 만큼만 읽는다.
+ * 배우자의 '합계만 공개' 거래는 목록에서 빠지므로 여유 있게 읽고 거른다.
+ */
+export async function getLatestTransactions(
+  ctx: Ctx,
+  scope: ViewScope,
+  opts: { since: DateStr; until: DateStr; limit: number },
+): Promise<TxRow[]> {
   const rows = await prisma.transaction.findMany({
     where: {
       householdId: ctx.householdId,
       deletedAt: null,
-      date: { gte: toDbDate(range.start), lt: toDbDate(range.end) },
+      date: { gte: toDbDate(opts.since), lt: toDbDate(opts.until) },
       OR: [{ createdByUserId: ctx.userId }, { visibility: { not: "PRIVATE" } }],
     },
     orderBy: [{ date: "desc" }, { createdAt: "desc" }],
+    take: opts.limit * 4,
     include: txInclude,
   });
-  return scopeTransactions(rows.map(toRow), ctx.userId, scope);
+  return scopeTransactions(rows.map(toRow), ctx.userId, scope).items.slice(0, opts.limit);
 }
 
 /** 편집용 단건 조회 — 다른 가구 / 볼 수 없는 거래는 null (AC-9) */
@@ -184,27 +235,45 @@ export async function getReviewTransactions(ctx: Ctx, limit: number): Promise<Tx
   return rows.filter((t) => txAccess(t, ctx.userId, "us") === "full").map(toRow);
 }
 
-/** 잔액 계산용 흐름 — 보이는 계좌에 닿는 모든 거래 (계좌 잔액은 계좌의 사실이므로 거래 공개범위와 무관) */
-export async function getAccountFlows(ctx: Ctx, accountIds: string[], until: DateStr) {
-  if (!accountIds.length) return { snapshots: [], flows: [] };
+/** 가구 전체 잔액 재료 — 모든 계좌의 스냅샷과 계좌에 닿는 거래 흐름 (날짜순) */
+async function queryHouseholdFlows(householdId: string, until: DateStr) {
   const [snapshots, flows] = await Promise.all([
     prisma.accountSnapshot.findMany({
-      where: { accountId: { in: accountIds }, asOf: { lte: toDbDate(until) } },
+      where: { account: { householdId }, asOf: { lte: toDbDate(until) } },
       select: { accountId: true, asOf: true, balance: true },
+      orderBy: { asOf: "asc" },
     }),
     prisma.transaction.findMany({
       where: {
-        householdId: ctx.householdId,
+        householdId,
         deletedAt: null,
         date: { lte: toDbDate(until) },
-        OR: [{ fromAccountId: { in: accountIds } }, { toAccountId: { in: accountIds } }],
+        OR: [{ fromAccountId: { not: null } }, { toAccountId: { not: null } }],
       },
       select: { date: true, amount: true, fromAccountId: true, toAccountId: true },
+      orderBy: { date: "asc" },
     }),
   ]);
   return {
     snapshots: snapshots.map((s) => ({ ...s, asOf: fromDbDate(s.asOf) })),
     flows: flows.map((f) => ({ ...f, date: fromDbDate(f.date) })),
+  };
+}
+const loadHouseholdFlows = cache(queryHouseholdFlows);
+
+/**
+ * 잔액 계산용 흐름 — 보이는 계좌에 닿는 모든 거래 (계좌 잔액은 계좌의 사실이므로 거래 공개범위와 무관).
+ * 한 요청에서 홈·목표·결산이 각자 부르므로 가구 전체를 한 번 읽어 두고 계좌별로 거른다. 결과는 날짜순.
+ */
+export async function getAccountFlows(ctx: Ctx, accountIds: string[], until: DateStr, opts: { fresh?: boolean } = {}) {
+  if (!accountIds.length) return { snapshots: [], flows: [] };
+  const all = await (opts.fresh ? queryHouseholdFlows : loadHouseholdFlows)(ctx.householdId, until);
+  const ids = new Set(accountIds);
+  return {
+    snapshots: all.snapshots.filter((s) => ids.has(s.accountId)),
+    flows: all.flows.filter(
+      (f) => (f.fromAccountId !== null && ids.has(f.fromAccountId)) || (f.toAccountId !== null && ids.has(f.toAccountId)),
+    ),
   };
 }
 

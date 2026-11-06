@@ -14,31 +14,40 @@ export const getViewer = cache(async () => {
   const userId = session?.user?.id;
   if (!userId) redirect("/login");
 
-  const found = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { id: true, name: true, email: true, approvedAt: true, sessionVersion: true, palette: true },
-  });
+  // 사용자 확인과 가구 조회는 둘 다 세션의 userId 만 있으면 되므로 동시에 보낸다 (모든 페이지의 첫 왕복)
+  const [found, membership] = await Promise.all([
+    prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, name: true, email: true, approvedAt: true, sessionVersion: true, palette: true },
+    }),
+    prisma.householdMember.findFirst({
+      where: { userId, leftAt: null },
+      select: {
+        id: true,
+        householdId: true,
+        role: true,
+        household: {
+          select: {
+            id: true,
+            name: true,
+            monthStartDay: true,
+            emergencyMonths: true,
+            members: {
+              where: { leftAt: null },
+              orderBy: { joinedAt: "asc" },
+              select: { userId: true, role: true, user: { select: { id: true, name: true, email: true } } },
+            },
+          },
+        },
+      },
+    }),
+  ]);
   if (!found) redirect("/login");
   // "모든 기기에서 로그아웃" 이후 남아 있는 예전 로그인 → 다시 로그인
   if (session.user.sessionVersion !== found.sessionVersion) redirect("/login?error=revoked");
   // 승인 전이거나 승인이 취소된 사용자는 세션이 남아 있어도 들어오지 못한다
   if (!found.approvedAt) redirect("/login?error=pending");
   const user = { id: found.id, name: found.name, email: found.email, palette: found.palette };
-
-  const membership = await prisma.householdMember.findFirst({
-    where: { userId, leftAt: null },
-    include: {
-      household: {
-        include: {
-          members: {
-            where: { leftAt: null },
-            orderBy: { joinedAt: "asc" },
-            include: { user: { select: { id: true, name: true, email: true } } },
-          },
-        },
-      },
-    },
-  });
   return { user, membership };
 });
 

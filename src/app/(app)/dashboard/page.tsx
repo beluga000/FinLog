@@ -1,6 +1,8 @@
 import Link from "next/link";
+import { Suspense } from "react";
 import { Money } from "@/components/common/money";
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Skeleton } from "@/components/ui/skeleton";
 import { PrimaryGoalCard, SavingCard, SpendableCard } from "@/features/dashboard/components/home-blocks";
 import { ReviewList } from "@/features/dashboard/components/review-list";
 import {
@@ -17,7 +19,8 @@ import { getAccounts, getCategories, getScopedTransactions } from "@/features/le
 import { materializeRecurring } from "@/features/ledger/service";
 import { requireHousehold } from "@/lib/db/context";
 import { getMonthKey, getMonthRange, todayKST } from "@/lib/finance/period";
-import { parseViewScope } from "@/lib/finance/visibility";
+import type { DateStr } from "@/lib/finance/types";
+import { parseViewScope, type ViewScope } from "@/lib/finance/visibility";
 import { SCOPE_LABEL } from "@/lib/labels";
 
 export const metadata = { title: "홈" };
@@ -33,16 +36,13 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
 
   await materializeRecurring(ctx.householdId, today);
 
+  // 확인할 일·최근 기록은 아래 Suspense 에서 따로 그려, 목표·쓸 수 있는 돈이 먼저 보이게 한다
   const goalsP = getGoalsOverview(ctx, { today, monthStartDay }).then((o) => o.goals);
-  const [goals, source, saving, review, recent, current, accounts, categories] = await Promise.all([
+  const [goals, source, saving, current] = await Promise.all([
     goalsP,
     goalsP.then((goals) => getSpendableSource(ctx, scope, { today, monthStartDay, goals })),
     getMonthSaving(ctx, scope, range),
-    getReviewItems(ctx, { today }),
-    getRecentTransactions(ctx, scope, { today, limit: 5 }),
     getScopedTransactions(ctx, range, scope),
-    getAccounts(ctx, "us"),
-    getCategories(ctx),
   ]);
   const spendable = computeSpendable(source);
   const summaryOnlyTotal = current.summarized.reduce((s, t) => (t.type === "EXPENSE" ? s + t.amount : s), 0n);
@@ -89,13 +89,9 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
           <SavingCard actual={saving} target={spendable.plannedSaving} />
         </div>
         <div className="min-w-0 empty:hidden lg:col-start-2 lg:row-start-3">
-          <ReviewList
-            items={review}
-            accounts={accounts}
-            categories={categories}
-            viewerId={ctx.userId}
-            isCouple={ctx.isCouple}
-          />
+          <Suspense fallback={null}>
+            <ReviewSection ctx={ctx} today={today} />
+          </Suspense>
         </div>
         <div className="min-w-0 lg:col-start-1 lg:row-span-3 lg:row-start-2">
           <Card>
@@ -108,18 +104,41 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
               </CardAction>
             </CardHeader>
             <CardContent>
-              <TxList
-                items={recent}
-                accounts={accounts}
-                categories={categories}
-                viewerId={ctx.userId}
-                isCouple={ctx.isCouple}
-                partnerName={partnerName}
-              />
+              <Suspense fallback={<RecentSkeleton />}>
+                <RecentSection ctx={ctx} scope={scope} today={today} partnerName={partnerName} />
+              </Suspense>
             </CardContent>
           </Card>
         </div>
       </div>
+    </div>
+  );
+}
+
+type Ctx = Awaited<ReturnType<typeof requireHousehold>>;
+
+async function ReviewSection({ ctx, today }: { ctx: Ctx; today: DateStr }) {
+  const [review, accounts, categories] = await Promise.all([getReviewItems(ctx, { today }), getAccounts(ctx, "us"), getCategories(ctx)]);
+  return <ReviewList items={review} accounts={accounts} categories={categories} viewerId={ctx.userId} isCouple={ctx.isCouple} />;
+}
+
+async function RecentSection({ ctx, scope, today, partnerName }: { ctx: Ctx; scope: ViewScope; today: DateStr; partnerName: string }) {
+  const [recent, accounts, categories] = await Promise.all([
+    getRecentTransactions(ctx, scope, { today, limit: 5 }),
+    getAccounts(ctx, "us"),
+    getCategories(ctx),
+  ]);
+  return (
+    <TxList items={recent} accounts={accounts} categories={categories} viewerId={ctx.userId} isCouple={ctx.isCouple} partnerName={partnerName} />
+  );
+}
+
+function RecentSkeleton() {
+  return (
+    <div className="grid gap-2" aria-hidden>
+      {[0, 1, 2].map((i) => (
+        <Skeleton key={i} className="h-12 w-full" />
+      ))}
     </div>
   );
 }

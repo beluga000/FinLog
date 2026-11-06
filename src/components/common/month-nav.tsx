@@ -1,4 +1,7 @@
+"use client";
+
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
 import { formatMonthLabel, getMonthRange, shiftMonth } from "@/lib/finance/period";
@@ -10,15 +13,23 @@ export function MonthNav({
   monthStartDay,
   basePath,
   params,
+  keepFromUrl,
 }: {
   month: MonthKey;
   monthStartDay: number;
   basePath: string;
   params?: Record<string, string | undefined>;
+  /** 화면 안에서 바뀌는 필터(주소만 바뀜)도 달을 옮길 때 유지 — 지금 주소에서 읽는다 */
+  keepFromUrl?: string[];
 }) {
+  const search = useSearchParams();
   const href = (m: MonthKey) => {
     const q = new URLSearchParams();
     for (const [k, v] of Object.entries(params ?? {})) if (v) q.set(k, v);
+    for (const k of keepFromUrl ?? []) {
+      const v = search.get(k);
+      if (v) q.set(k, v);
+    }
     q.set("month", m);
     return `${basePath}?${q.toString()}`;
   };

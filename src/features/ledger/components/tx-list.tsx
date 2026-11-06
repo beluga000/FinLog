@@ -6,7 +6,8 @@ import { cn } from "cn";
 import { Money } from "@/components/common/money";
 import { TX_TYPE_META } from "@/lib/finance/tx-rules";
 import type { CategoryRow, TxRow } from "../queries";
-import { TxFormDialog, type AccountOption } from "./tx-form";
+import type { AccountOption } from "./tx-form";
+import { LazyTxFormDialog } from "./tx-form-lazy";
 
 const WEEKDAY = ["일", "월", "화", "수", "목", "금", "토"];
 
@@ -100,7 +101,7 @@ export function TxList({
           );
         })}
       </div>
-      <TxFormDialog
+      <LazyTxFormDialog
         open={!!editing}
         onOpenChange={(o) => !o && setEditing(null)}
         initial={editing}

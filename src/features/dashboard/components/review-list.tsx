@@ -6,9 +6,10 @@ import { Money } from "@/components/common/money";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { BalanceForm } from "@/features/accounts/components/account-dialogs";
+import { BalanceForm } from "@/features/accounts/components/balance-form";
 import { confirmTransaction } from "@/features/ledger/actions";
-import { TxFormDialog, type AccountOption, type TxDraft } from "@/features/ledger/components/tx-form";
+import type { AccountOption, TxDraft } from "@/features/ledger/components/tx-form";
+import { LazyTxFormDialog } from "@/features/ledger/components/tx-form-lazy";
 import { todayKST } from "@/lib/finance/period";
 import type { CategoryRow, TxRow } from "@/features/ledger/queries";
 import type { ReviewItem } from "../home";
@@ -143,7 +144,7 @@ export function ReviewList({
         </ul>
       </CardContent>
 
-      <TxFormDialog
+      <LazyTxFormDialog
         open={editing !== null}
         onOpenChange={(o) => !o && setEditing(null)}
         initial={editing}
@@ -152,7 +153,7 @@ export function ReviewList({
         viewerId={viewerId}
         isCouple={isCouple}
       />
-      <TxFormDialog
+      <LazyTxFormDialog
         open={draft !== null}
         onOpenChange={(o) => !o && setDraft(null)}
         draft={draft}

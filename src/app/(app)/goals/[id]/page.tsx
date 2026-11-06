@@ -5,7 +5,7 @@ import { Money } from "@/components/common/money";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { GoalAlternativesCard } from "@/features/goals/components/goal-alternatives";
 import { AutoSaveButton } from "@/features/goals/components/goal-autosave";
-import { GoalHistoryChart } from "@/features/goals/components/goal-history";
+import { GoalHistoryChart } from "@/components/charts/lazy-charts";
 import { GoalProgressDetail } from "@/features/goals/components/goal-progress";
 import { CommitButton, GoalMenu } from "@/features/goals/components/goal-controls";
 import { GoalPace } from "@/features/goals/components/goal-status";
