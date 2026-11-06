@@ -33,11 +33,17 @@ for arg in "$@"; do
   esac
 done
 
-bold() { printf '\n\033[1m▶ %s\033[0m\n' "$*"; }
-ok() { printf '  \033[32m✔\033[0m %s\n' "$*"; }
-warn() { printf '  \033[33m!\033[0m %s\n' "$*"; }
+# 터미널일 때만 색을 쓴다 (Claude Code 의 ! 실행 등에서는 색 코드가 글자로 찍힌다)
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+  B=$'\033[1m' G=$'\033[32m' Y=$'\033[33m' R=$'\033[31m' N=$'\033[0m'
+else
+  B='' G='' Y='' R='' N=''
+fi
+bold() { printf '\n%s▶ %s%s\n' "$B" "$*" "$N"; }
+ok() { printf '  %s✔%s %s\n' "$G" "$N" "$*"; }
+warn() { printf '  %s!%s %s\n' "$Y" "$N" "$*"; }
 fail() {
-  printf '\n\033[31m✖ %s\033[0m\n' "$*" >&2
+  printf '\n%s✖ %s%s\n' "$R" "$*" "$N" >&2
   exit 1
 }
 # 접속 주소의 아이디·비밀번호 가리기
