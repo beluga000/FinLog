@@ -5,8 +5,10 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { amountStr, type ActionResult } from "@/features/ledger/schema";
 import { getAccounts } from "@/features/ledger/queries";
+import { getGoalBasis } from "@/features/goals/queries";
 import { requireHousehold } from "@/lib/db/context";
 import { prisma, toDbDate } from "@/lib/db/prisma";
+import { clampStartAmount, MILESTONES, reachedMilestone } from "@/lib/finance/goals";
 import { todayKST } from "@/lib/finance/period";
 
 const goalSchema = z.object({
@@ -17,7 +19,22 @@ const goalSchema = z.object({
   expectedReturn: z.number().min(-0.1).max(0.2),
   linkedAccountIds: z.array(z.string()).max(20),
   monthlyCommit: amountStr.nullable(),
+  /** 기존 잔액 중 이 목표 몫 — 0 허용 */
+  startAmount: z.string().regex(/^\d+$/, "이미 모은 돈은 숫자만 입력하세요."),
 });
+
+/** 시작 금액과 그때의 기준 잔액 — 저장할 때마다 다시 잡는다 (수정 창은 지금 모인 돈을 시작 금액으로 채워 보낸다) */
+async function startOf(ctx: { householdId: string; userId: string }, linkedIds: string[], startAmount: string | number, target: number) {
+  const basis = await getGoalBasis(ctx, linkedIds);
+  const start = clampStartAmount(Number(startAmount), basis);
+  return {
+    startAmount: BigInt(Math.round(start)),
+    baseBalance: BigInt(Math.round(basis)),
+    baseSetOn: toDbDate(todayKST()),
+    // 이미 넘어 있는 단계는 알리지 않는다 (시작부터 60%면 "절반 왔어요"가 뜨지 않게)
+    milestoneSeen: target > 0 ? reachedMilestone(start / target) : 0,
+  };
+}
 
 async function validLinked(ctx: { householdId: string; userId: string }, ids: string[]) {
   const visible = new Set((await getAccounts(ctx, "us")).map((a) => a.id));
@@ -31,6 +48,7 @@ export async function createGoal(raw: unknown): Promise<ActionResult<{ id: strin
   const d = parsed.data;
   if (d.targetDate <= todayKST()) return { ok: false, error: "목표일은 오늘 이후여야 합니다." };
   const max = await prisma.assetGoal.aggregate({ where: { householdId: ctx.householdId }, _max: { priority: true } });
+  const linkedAccountIds = await validLinked(ctx, d.linkedAccountIds);
   const goal = await prisma.assetGoal.create({
     data: {
       householdId: ctx.householdId,
@@ -39,7 +57,8 @@ export async function createGoal(raw: unknown): Promise<ActionResult<{ id: strin
       targetIsReal: d.targetIsReal,
       targetDate: toDbDate(d.targetDate),
       expectedReturn: d.expectedReturn,
-      linkedAccountIds: await validLinked(ctx, d.linkedAccountIds),
+      linkedAccountIds,
+      ...(await startOf(ctx, linkedAccountIds, d.startAmount, Number(d.targetAmount))),
       monthlyCommit: d.monthlyCommit ? BigInt(d.monthlyCommit) : null,
       priority: (max._max.priority ?? 0) + 1,
     },
@@ -58,6 +77,7 @@ export async function updateGoal(id: string, raw: unknown): Promise<ActionResult
   const parsed = goalSchema.safeParse(raw);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "입력값을 확인하세요." };
   const d = parsed.data;
+  const linkedAccountIds = await validLinked(ctx, d.linkedAccountIds);
   await prisma.assetGoal.update({
     where: { id },
     data: {
@@ -66,7 +86,8 @@ export async function updateGoal(id: string, raw: unknown): Promise<ActionResult
       targetIsReal: d.targetIsReal,
       targetDate: toDbDate(d.targetDate),
       expectedReturn: d.expectedReturn,
-      linkedAccountIds: await validLinked(ctx, d.linkedAccountIds),
+      linkedAccountIds,
+      ...(await startOf(ctx, linkedAccountIds, d.startAmount, Number(d.targetAmount))),
       monthlyCommit: d.monthlyCommit ? BigInt(d.monthlyCommit) : null,
     },
   });
@@ -170,4 +191,28 @@ export async function deleteGoal(id: string) {
   await prisma.assetGoal.delete({ where: { id } });
   revalidatePath("/", "layout");
   redirect("/goals");
+}
+
+/** 목표 상세에서 "이미 모은 돈"만 바로 고친다 — 오늘 잔액을 기준으로 다시 센다 */
+export async function setGoalStartAmount(id: string, amount: string): Promise<ActionResult<{ startAmount: number }>> {
+  const ctx = await requireHousehold();
+  const goal = await findGoal(ctx.householdId, id);
+  if (!goal) return { ok: false, error: "목표를 찾을 수 없습니다." };
+  if (!/^\d+$/.test(amount)) return { ok: false, error: "금액은 숫자만 입력하세요." };
+  const linkedAccountIds = await validLinked(ctx, goal.linkedAccountIds);
+  const data = await startOf(ctx, linkedAccountIds, amount, Number(goal.targetAmount));
+  await prisma.assetGoal.update({ where: { id }, data: { ...data, milestoneSeen: Math.max(goal.milestoneSeen, data.milestoneSeen) } });
+  revalidatePath("/", "layout");
+  return { ok: true, data: { startAmount: Number(data.startAmount) } };
+}
+
+/** 홈 진행률 알림을 닫는다 — 그 단계까지 본 것으로 기록 */
+export async function dismissGoalMilestone(id: string, milestone: number): Promise<ActionResult> {
+  const ctx = await requireHousehold();
+  const goal = await findGoal(ctx.householdId, id);
+  if (!goal) return { ok: false, error: "목표를 찾을 수 없습니다." };
+  if (!(MILESTONES as readonly number[]).includes(milestone)) return { ok: false, error: "단계를 확인하세요." };
+  await prisma.assetGoal.update({ where: { id }, data: { milestoneSeen: Math.max(goal.milestoneSeen, milestone) } });
+  revalidatePath("/", "layout");
+  return { ok: true };
 }

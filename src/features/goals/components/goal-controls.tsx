@@ -5,6 +5,7 @@ import { ArrowDown, ArrowUp } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { applyGoalAlternative, deleteGoal, moveGoalPriority, setGoalCommit, setGoalStatus } from "../actions";
+import type { GoalClaims } from "../queries";
 import { GoalFormDialog, type GoalAccount, type GoalFormValue } from "./goal-form";
 
 function useAction() {
@@ -79,10 +80,12 @@ export function GoalMenu({
   goal,
   accounts,
   netWorth,
+  claims,
 }: {
   goal: GoalFormValue & { id: string; status: "ACTIVE" | "ACHIEVED" | "PAUSED" };
   accounts: GoalAccount[];
   netWorth?: number;
+  claims?: GoalClaims;
 }) {
   const { pending, run } = useAction();
   const [editing, setEditing] = useState(false);
@@ -112,7 +115,7 @@ export function GoalMenu({
       ) : (
         <Button variant="ghost" className="text-destructive" onClick={() => setConfirmDelete(true)}>삭제</Button>
       )}
-      <GoalFormDialog open={editing} onOpenChange={setEditing} accounts={accounts} netWorth={netWorth} initial={goal} />
+      <GoalFormDialog open={editing} onOpenChange={setEditing} accounts={accounts} netWorth={netWorth} claims={claims} initial={goal} />
     </div>
   );
 }

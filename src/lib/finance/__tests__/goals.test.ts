@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { allocateByPriority, evaluateGoal, simulatePriorityRaise } from "../goals";
+import {
+  allocateByPriority,
+  claimsByAccount,
+  clampStartAmount,
+  evaluateGoal,
+  goalCurrent,
+  goalPlanPath,
+  newMilestone,
+  reachedMilestone,
+  simulatePriorityRaise,
+} from "../goals";
 
 const base = {
   target: 1_200_000,
@@ -110,5 +120,84 @@ describe("simulatePriorityRaise (대안 (d))", () => {
       shortfall: 100,
       displaced: [{ id: "emergency", loss: 500 }],
     });
+  });
+});
+
+describe("goalCurrent — 기존 잔액을 목표 진척으로 통째로 치지 않는다", () => {
+  it("시작 금액 0: 3천만 원 계좌를 골라도 처음엔 0원, 늘어난 만큼만 모인 돈", () => {
+    const g = { startAmount: 0, baseBalance: 30_000_000 };
+    expect(goalCurrent(g, 30_000_000)).toBe(0);
+    expect(goalCurrent(g, 35_000_000)).toBe(5_000_000);
+  });
+  it("시작 금액 1천만 원: 그 뒤 증감을 더한다", () => {
+    const g = { startAmount: 10_000_000, baseBalance: 30_000_000 };
+    expect(goalCurrent(g, 32_000_000)).toBe(12_000_000);
+    expect(goalCurrent(g, 25_000_000)).toBe(5_000_000);
+  });
+  it("잔액이 기준보다 많이 줄면 0원에서 멈춘다", () => {
+    expect(goalCurrent({ startAmount: 1_000_000, baseBalance: 30_000_000 }, 20_000_000)).toBe(0);
+  });
+  it("기존 목표(둘 다 0)는 잔액 전체 — 예전 계산과 같다", () => {
+    expect(goalCurrent({ startAmount: 0, baseBalance: 0 }, 30_000_000)).toBe(30_000_000);
+  });
+  it("시작 금액은 0 ~ 지금 잔액 사이로 맞춘다", () => {
+    expect(clampStartAmount(40_000_000, 30_000_000)).toBe(30_000_000);
+    expect(clampStartAmount(-5, 30_000_000)).toBe(0);
+    expect(clampStartAmount(1_000_000, -2_000_000)).toBe(0);
+  });
+});
+
+describe("진행률 알림 단계", () => {
+  it("넘은 가장 높은 단계", () => {
+    expect(reachedMilestone(0.24)).toBe(0);
+    expect(reachedMilestone(0.25)).toBe(25);
+    expect(reachedMilestone(0.502)).toBe(50);
+    expect(reachedMilestone(1.3)).toBe(100);
+  });
+  it("이미 본 단계는 다시 알리지 않는다", () => {
+    expect(newMilestone(0.55, 0)).toBe(50);
+    expect(newMilestone(0.55, 50)).toBeNull();
+    expect(newMilestone(0.8, 50)).toBe(75);
+    expect(newMilestone(0.1, 0)).toBeNull();
+  });
+});
+
+describe("goalPlanPath — 계획선", () => {
+  it("수익률 0: 시작 금액에서 목표 금액까지 매달 같은 금액", () => {
+    const plan = goalPlanPath({ start: 20_000_000, months: 36, target: 50_000_000, targetIsReal: false, expectedReturn: 0 });
+    expect(plan(0)).toBe(20_000_000);
+    expect(plan(12)).toBeCloseTo(30_000_000, -2);
+    expect(plan(36)).toBeGreaterThanOrEqual(50_000_000);
+  });
+  it("이미 닿는 목표면 납입 없이 시작 금액만 굴린다", () => {
+    const plan = goalPlanPath({ start: 60_000_000, months: 12, target: 50_000_000, targetIsReal: false, expectedReturn: 0 });
+    expect(plan(12)).toBe(60_000_000);
+  });
+});
+
+describe("claimsByAccount — 다른 목표가 쓰는 돈", () => {
+  const balances = new Map([
+    ["sav", 30_000_000],
+    ["chk", 10_000_000],
+  ]);
+  it("계좌 하나짜리 목표는 모인 돈 전부를 그 계좌에", () => {
+    const m = claimsByAccount([{ id: "g1", name: "결혼 자금", current: 10_000_000, linkedAccountIds: ["sav"] }], balances);
+    expect(m.get("sav")).toEqual([{ goalId: "g1", name: "결혼 자금", amount: 10_000_000 }]);
+    expect(m.has("chk")).toBe(false);
+  });
+  it("계좌 여러 개면 잔액 비율로 나눈다", () => {
+    const m = claimsByAccount([{ id: "g1", name: "여행", current: 4_000_000, linkedAccountIds: ["sav", "chk"] }], balances);
+    expect(m.get("sav")?.[0].amount).toBe(3_000_000);
+    expect(m.get("chk")?.[0].amount).toBe(1_000_000);
+  });
+  it("모인 돈이 0이거나 보이지 않는 계좌는 건너뛴다", () => {
+    const m = claimsByAccount(
+      [
+        { id: "g1", name: "a", current: 0, linkedAccountIds: ["sav"] },
+        { id: "g2", name: "b", current: 1_000_000, linkedAccountIds: ["gone"] },
+      ],
+      balances,
+    );
+    expect(m.size).toBe(0);
   });
 });

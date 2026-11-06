@@ -12,12 +12,14 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { GOAL_TEMPLATES, GOAL_TEMPLATE_KEYS, type GoalTemplate } from "@/features/household/onboarding-schema";
+import { clampStartAmount } from "@/lib/finance/goals";
 import { addDays, monthsBetween, todayKST } from "@/lib/finance/period";
 import { MODEL_ALLOCATIONS, portfolioMetrics, RISK_PROFILE_LABEL, RISK_PROFILES } from "@/lib/finance/portfolio";
 import { calculateRequiredInvestment } from "@/lib/finance/projection";
 import { ACCOUNT_TYPE_LABEL } from "@/lib/labels";
 import type { AccountType } from "@/lib/finance/types";
 import { createGoal, updateGoal } from "../actions";
+import type { GoalClaims } from "../queries";
 
 export interface GoalFormValue {
   id?: string;
@@ -28,6 +30,8 @@ export interface GoalFormValue {
   expectedReturn: number;
   linkedAccountIds: string[];
   monthlyCommit: number | null;
+  /** 수정할 때 지금 모인 돈 — 시작 금액 칸을 이 값으로 채운다 */
+  current?: number;
 }
 
 export interface GoalAccount {
@@ -55,6 +59,13 @@ const PRESETS = RISK_PROFILES.map((p) => ({
 
 const YEAR_CHIPS = [1, 3, 5, 10, 20];
 
+/** 이름 뒤 주격 조사 — 받침 있으면 "이", 없으면 "가" */
+function subj(name: string) {
+  const c = name.charCodeAt(name.length - 1);
+  if (c < 0xac00 || c > 0xd7a3) return `${name}이(가)`;
+  return (c - 0xac00) % 28 ? `${name}이` : `${name}가`;
+}
+
 function yearsFromToday(years: number) {
   const [y, m, d] = todayKST().split("-").map(Number);
   return `${y + years}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
@@ -72,6 +83,7 @@ export function GoalFormDialog({
   onOpenChange,
   accounts,
   netWorth,
+  claims,
   initial,
 }: {
   open: boolean;
@@ -79,6 +91,8 @@ export function GoalFormDialog({
   accounts: GoalAccount[];
   /** 연결 계좌가 없을 때 진척 기준이 되는 순자산 */
   netWorth?: number;
+  /** 다른 목표가 계좌·순자산에서 이미 쓰는 돈 */
+  claims?: GoalClaims;
   initial?: GoalFormValue;
 }) {
   return (
@@ -88,7 +102,7 @@ export function GoalFormDialog({
           <DialogTitle>{initial?.id ? "목표 수정" : "새 목표"}</DialogTitle>
           <DialogDescription>얼마를, 언제까지 모을지 정하면 매달 모을 금액을 바로 계산해요.</DialogDescription>
         </DialogHeader>
-        {open ? <GoalForm accounts={accounts} netWorth={netWorth} initial={initial} onDone={() => onOpenChange(false)} /> : null}
+        {open ? <GoalForm accounts={accounts} netWorth={netWorth} claims={claims} initial={initial} onDone={() => onOpenChange(false)} /> : null}
       </DialogContent>
     </Dialog>
   );
@@ -125,11 +139,13 @@ function Chip({ selected, onClick, children, className }: { selected: boolean; o
 function GoalForm({
   accounts,
   netWorth,
+  claims,
   initial,
   onDone,
 }: {
   accounts: GoalAccount[];
   netWorth?: number;
+  claims?: GoalClaims;
   initial?: GoalFormValue;
   onDone: () => void;
 }) {
@@ -146,16 +162,30 @@ function GoalForm({
   const [customRate, setCustomRate] = useState(String(((initial?.expectedReturn ?? 0.05) * 100).toFixed(1)));
   const [linked, setLinked] = useState<string[]>(initial?.linkedAccountIds ?? []);
   const [commit, setCommit] = useState(initial?.monthlyCommit ? String(initial.monthlyCommit) : "");
+  // 새 목표는 0원부터 — 계좌에 원래 있던 돈을 통째로 목표 진척으로 치지 않는다
+  const [startInput, setStartInput] = useState(initial?.id ? String(Math.round(initial.current ?? 0)) : "0");
   const [error, setError] = useState<string | null>(null);
 
   const expectedReturn = rateMode === "custom" ? Number(customRate) / 100 : Number(rateMode);
   const assetAccounts = accounts.filter((a) => a.type !== "CREDIT_CARD" && a.type !== "LOAN");
   const preset = PRESETS.find((p) => String(p.rate) === rateMode);
 
-  // 미리보기 — 서버(getGoalsOverview)와 같은 계산: 연결 계좌 합계, 없으면 순자산
+  // 미리보기 — 서버(createGoal/updateGoal)와 같은 기준: 연결 계좌 합계, 없으면 순자산 중 시작 금액만큼이 지금 모인 돈
   const linkedAccounts = assetAccounts.filter((a) => linked.includes(a.id));
   const knowsBalance = linkedAccounts.length ? linkedAccounts.every((a) => a.balance !== undefined) : netWorth !== undefined;
-  const current = linkedAccounts.length ? linkedAccounts.reduce((s, a) => s + (a.balance ?? 0), 0) : Math.max(0, netWorth ?? 0);
+  const basis = linkedAccounts.length ? linkedAccounts.reduce((s, a) => s + (a.balance ?? 0), 0) : (netWorth ?? 0);
+  const startNum = Number(startInput || 0);
+  const current = clampStartAmount(startNum, basis);
+  const startOver = knowsBalance && startNum > current;
+  // 다른 목표가 이미 쓰는 돈을 뺀 남은 잔액 — 같은 돈이 두 목표에 잡히지 않게
+  const othersOn = (accountId: string) => (claims?.byAccount[accountId] ?? []).filter((c) => c.goalId !== initial?.id);
+  const remainingOf = (a: GoalAccount) => Math.max(0, (a.balance ?? 0) - othersOn(a.id).reduce((s, c) => s + c.amount, 0));
+  const othersAll = (claims?.all ?? []).filter((c) => c.goalId !== initial?.id).reduce((s, c) => s + c.amount, 0);
+  const available = linkedAccounts.length
+    ? linkedAccounts.reduce((s, a) => s + remainingOf(a), 0)
+    : Math.max(0, (netWorth ?? 0) - othersAll);
+  const shared = available < Math.max(0, basis);
+  const overlap = knowsBalance && shared && current > available;
   const targetNum = Number(target || 0);
   const months = monthsBetween(today, date);
   const ready = targetNum > 0 && months > 0 && Number.isFinite(expectedReturn) && knowsBalance;
@@ -185,6 +215,7 @@ function GoalForm({
       expectedReturn,
       linkedAccountIds: linked,
       monthlyCommit: commit || null,
+      startAmount: String(current),
     };
     start(async () => {
       const r = initial?.id ? await updateGoal(initial.id, payload) : await createGoal(payload);
@@ -253,7 +284,7 @@ function GoalForm({
       </Section>
 
       <Section title="어떻게 모을까요">
-        <Field label="모으는 계좌" hint={linked.length ? "고른 계좌의 잔액 합계가 지금 모인 돈이에요." : "고르지 않으면 순자산 전체를 지금 모인 돈으로 봐요."}>
+        <Field label="모으는 계좌" hint={linked.length ? "고른 계좌 잔액이 늘어난 만큼 이 목표에 쌓여요." : "고르지 않으면 순자산이 늘어난 만큼 이 목표에 쌓여요."}>
           {assetAccounts.length ? (
             <div className="grid max-h-44 divide-y overflow-y-auto rounded-lg border">
               {assetAccounts.map((a) => (
@@ -262,16 +293,73 @@ function GoalForm({
                     checked={linked.includes(a.id)}
                     onChange={(e) => setLinked((cur) => (e.target.checked ? [...cur, a.id] : cur.filter((id) => id !== a.id)))}
                   />
-                  <span className="min-w-0 flex-1 truncate">
-                    {a.name} <span className="text-xs text-muted-foreground">{ACCOUNT_TYPE_LABEL[a.type]}</span>
+                  <span className="grid min-w-0 flex-1">
+                    <span className="truncate">
+                      {a.name} <span className="text-xs text-muted-foreground">{ACCOUNT_TYPE_LABEL[a.type]}</span>
+                    </span>
+                    <ClaimLine claims={othersOn(a.id)} />
                   </span>
-                  {a.balance !== undefined ? <Money value={a.balance} compact className="shrink-0 text-xs text-muted-foreground" /> : null}
+                  {a.balance !== undefined ? (
+                    othersOn(a.id).length ? (
+                      <span className="grid shrink-0 text-right text-xs leading-tight tabular">
+                        <span>
+                          남은 <Money value={remainingOf(a)} compact />
+                        </span>
+                        <span className="text-muted-foreground">
+                          / <Money value={a.balance} compact />
+                        </span>
+                      </span>
+                    ) : (
+                      <Money value={a.balance} compact className="shrink-0 text-xs text-muted-foreground" />
+                    )
+                  ) : null}
                 </label>
               ))}
             </div>
           ) : (
             <p className="text-xs text-muted-foreground">등록된 자산 계좌가 없어요. 자산 화면에서 통장·예적금·투자 계좌를 먼저 등록하세요.</p>
           )}
+        </Field>
+
+        <Field
+          label="이미 모은 돈"
+          htmlFor="goal-start"
+          hint={
+            knowsBalance ? (
+              <>
+                {linkedAccounts.length ? "고른 계좌" : "순자산"} <Money value={Math.max(0, basis)} compact /> 중 이 목표 몫만 적어요.
+                {shared ? (
+                  <>
+                    {" "}
+                    다른 목표 몫을 빼면 <Money value={available} compact /> 남아요.
+                  </>
+                ) : (
+                  " 다른 데 쓸 돈이면 0원으로 두세요."
+                )}
+              </>
+            ) : (
+              "기존 잔액 중 이 목표 몫만 적어요."
+            )
+          }
+        >
+          <AmountInput id="goal-start" value={startInput} onChange={setStartInput} />
+          <div className="flex flex-wrap gap-1.5" role="radiogroup" aria-label="이미 모은 돈 빠른 선택">
+            <Chip selected={startNum === 0} onClick={() => setStartInput("0")}>
+              0원부터
+            </Chip>
+            {knowsBalance && available > 0 ? (
+              <Chip selected={startNum > 0 && startNum === Math.round(available)} onClick={() => setStartInput(String(Math.round(available)))}>
+                {shared ? "남은 잔액 전부" : "잔액 전부"} (<Money value={available} compact />)
+              </Chip>
+            ) : null}
+          </div>
+          {startOver ? (
+            <p className="text-xs text-warning">
+              잔액보다 많아서 <Money value={current} compact />으로 맞춰 저장해요.
+            </p>
+          ) : overlap ? (
+            <p className="text-xs text-warning">다른 목표 몫과 겹쳐요. 겹친 만큼은 같은 돈이 두 목표에 함께 잡혀요.</p>
+          ) : null}
         </Field>
 
         <Field label="기대수익률 (연)" hint={`${preset ? `${preset.hint} 배분 기준이에요. ` : ""}참고용 계산이며 투자 권유가 아니에요.`}>
@@ -321,7 +409,7 @@ function GoalForm({
 
       {/* 계산 결과 — 스크롤해도 저장 버튼과 함께 보인다 */}
       <div className="sticky bottom-0 grid gap-3 border-t bg-popover px-5 pt-3 pb-[max(1.25rem,env(safe-area-inset-bottom))]">
-        <GoalPreview current={current} linkedCount={linkedAccounts.length} months={months} required={required} commit={commitNum} />
+        <GoalPreview current={current} months={months} required={required} commit={commitNum} />
         {error ? (
           <p role="alert" className="text-sm text-destructive">
             {error}
@@ -337,13 +425,11 @@ function GoalForm({
 
 function GoalPreview({
   current,
-  linkedCount,
   months,
   required,
   commit,
 }: {
   current: number;
-  linkedCount: number;
   months: number;
   required: ReturnType<typeof calculateRequiredInvestment> | null;
   commit: number;
@@ -351,13 +437,12 @@ function GoalPreview({
   if (!required) {
     return <p className="text-sm text-muted-foreground">목표 금액과 목표일을 정하면 매달 모을 금액이 여기 나와요.</p>;
   }
-  const basis = linkedCount ? `고른 계좌 ${linkedCount}개` : "순자산";
   if (required.alreadyAchievable) {
     return (
       <div className="grid gap-0.5">
         <p className="text-sm font-semibold text-brand">지금 모인 돈만 굴려도 목표일까지 닿아요</p>
         <p className="text-xs text-muted-foreground">
-          {basis} <Money value={current} compact /> 기준
+          이미 모은 돈 <Money value={current} compact /> 기준
         </p>
       </div>
     );
@@ -373,7 +458,7 @@ function GoalPreview({
         <span className="text-sm text-muted-foreground">모으면 돼요</span>
       </p>
       <p className="text-xs text-muted-foreground">
-        지금 모인 돈 <Money value={current} compact /> ({basis}) 기준
+        이미 모은 돈 <Money value={current} compact /> 기준
         {commit > 0 ? (
           short ? (
             <span className="text-warning">
@@ -389,12 +474,24 @@ function GoalPreview({
   );
 }
 
-export function NewGoalButton({ accounts, netWorth }: { accounts: GoalAccount[]; netWorth?: number }) {
+/** 계좌 아래 한 줄 — 다른 목표가 이 계좌에서 쓰는 돈 */
+function ClaimLine({ claims }: { claims: { name: string; amount: number }[] }) {
+  if (!claims.length) return null;
+  const total = claims.reduce((s, c) => s + c.amount, 0);
+  const who = claims.length === 1 ? subj(claims[0].name) : `${claims[0].name} 외 ${claims.length - 1}개 목표가`;
+  return (
+    <span className="truncate text-xs text-warning">
+      {who} <Money value={total} compact /> 쓰는 중
+    </span>
+  );
+}
+
+export function NewGoalButton({ accounts, netWorth, claims }: { accounts: GoalAccount[]; netWorth?: number; claims?: GoalClaims }) {
   const [open, setOpen] = useState(false);
   return (
     <>
       <Button onClick={() => setOpen(true)}>새 목표</Button>
-      <GoalFormDialog open={open} onOpenChange={setOpen} accounts={accounts} netWorth={netWorth} />
+      <GoalFormDialog open={open} onOpenChange={setOpen} accounts={accounts} netWorth={netWorth} claims={claims} />
     </>
   );
 }

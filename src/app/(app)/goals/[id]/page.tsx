@@ -4,10 +4,13 @@ import { ChevronLeft } from "lucide-react";
 import { Money } from "@/components/common/money";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { GoalAlternativesCard } from "@/features/goals/components/goal-alternatives";
+import { AutoSaveButton } from "@/features/goals/components/goal-autosave";
+import { GoalHistoryChart } from "@/features/goals/components/goal-history";
+import { GoalProgressDetail } from "@/features/goals/components/goal-progress";
 import { CommitButton, GoalMenu } from "@/features/goals/components/goal-controls";
-import { GoalPace, GoalProgressBar } from "@/features/goals/components/goal-status";
+import { GoalPace } from "@/features/goals/components/goal-status";
 import { GoalWhatIf } from "@/features/goals/components/goal-what-if";
-import { getGoalsOverview } from "@/features/goals/queries";
+import { getAutoSaveSetup, getGoalHistory, getGoalsOverview } from "@/features/goals/queries";
 import { requireHousehold } from "@/lib/db/context";
 import { formatPercent } from "@/lib/finance/money";
 import { todayKST } from "@/lib/finance/period";
@@ -18,9 +21,10 @@ export default async function GoalDetailPage({ params }: { params: Promise<{ id:
   const { id } = await params;
   const ctx = await requireHousehold();
   const today = todayKST();
-  const { goals, accounts, capacity, netWorth } = await getGoalsOverview(ctx, { today, monthStartDay: ctx.household.monthStartDay });
+  const { goals, accounts, capacity, netWorth, claims } = await getGoalsOverview(ctx, { today, monthStartDay: ctx.household.monthStartDay });
   const goal = goals.find((g) => g.id === id);
   if (!goal) notFound();
+  const [history, autoSave] = await Promise.all([getGoalHistory(ctx, goal, today), getAutoSaveSetup(ctx, goal.linkedAccountIds)]);
 
   const e = goal.evaluation;
 
@@ -40,7 +44,21 @@ export default async function GoalDetailPage({ params }: { params: Promise<{ id:
         <div className="text-3xl font-black tabular">
           <Money value={goal.current} /> <span className="text-base font-medium text-muted-foreground">/ <Money value={goal.targetAmount} /></span>
         </div>
-        <GoalProgressBar goal={goal} />
+        <GoalProgressDetail
+          goal={{
+            id: goal.id,
+            name: goal.name,
+            targetAmount: goal.targetAmount,
+            current: goal.current,
+            startAmount: goal.startAmount,
+            growth: goal.growth,
+            since: goal.baseSetOn ?? goal.createdOn,
+            legacy: goal.legacy,
+            basis: goal.baseBalance + goal.growth,
+            basisLabel: goal.usesNetWorth ? "순자산" : goal.linkedAccountNames.join(", "),
+            editable: goal.status !== "ACHIEVED",
+          }}
+        />
         <div className="flex flex-wrap justify-between gap-2 text-sm">
           <GoalPace goal={goal} className="font-medium" />
           <span className="text-muted-foreground">진척 {formatPercent(e.progress, 0)}</span>
@@ -70,8 +88,20 @@ export default async function GoalDetailPage({ params }: { params: Promise<{ id:
               {goal.shortfall > 0 ? <> · 우선순위에 밀려 <Money value={goal.shortfall} /> 부족</> : null}
             </div>
             {goal.status === "ACTIVE" && !e.required.alreadyAchievable ? (
-              <div>
+              <div className="flex flex-wrap gap-2">
                 <CommitButton id={goal.id} monthly={e.required.monthly} committed={goal.contributionSource === "commit"} />
+                <AutoSaveButton
+                  goal={{
+                    id: goal.id,
+                    name: goal.name,
+                    targetDate: goal.targetDate,
+                    linkedAccountIds: goal.linkedAccountIds,
+                    committed: goal.contributionSource === "commit",
+                  }}
+                  accounts={accounts}
+                  setup={autoSave}
+                  monthly={goal.monthlyCommit ?? e.required.monthly}
+                />
               </div>
             ) : null}
           </CardContent>
@@ -79,6 +109,22 @@ export default async function GoalDetailPage({ params }: { params: Promise<{ id:
 
         <GoalAlternativesCard goal={goal} today={today} capacity={capacity.capacity} />
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>계획과 실제</CardTitle>
+          <CardDescription>
+            {(goal.baseSetOn ?? goal.createdOn).replaceAll("-", ".")}부터 계획대로 모였는지
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {history.length >= 2 ? (
+            <GoalHistoryChart points={history} />
+          ) : (
+            <p className="text-sm text-muted-foreground">목표를 정한 지 얼마 안 됐어요. 다음 달부터 계획과 실제를 비교해 보여 드려요.</p>
+          )}
+        </CardContent>
+      </Card>
 
       <GoalWhatIf
         today={today}
@@ -104,10 +150,12 @@ export default async function GoalDetailPage({ params }: { params: Promise<{ id:
           expectedReturn: goal.expectedReturn,
           linkedAccountIds: goal.linkedAccountIds,
           monthlyCommit: goal.monthlyCommit,
+          current: goal.current,
           status: goal.status,
         }}
         accounts={accounts}
         netWorth={netWorth}
+        claims={claims}
       />
       <p className="text-xs text-muted-foreground">투자 권유가 아닌 참고용 시뮬레이션이며, 과거 수익률이 미래 수익을 보장하지 않습니다.</p>
     </div>

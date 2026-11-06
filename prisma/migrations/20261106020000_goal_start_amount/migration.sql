@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "AssetGoal" ADD COLUMN     "startAmount" BIGINT NOT NULL DEFAULT 0,
+ADD COLUMN     "baseBalance" BIGINT NOT NULL DEFAULT 0;

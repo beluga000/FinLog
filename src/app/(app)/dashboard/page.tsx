@@ -10,6 +10,7 @@ import {
   getReviewItems,
   getSpendableSource,
 } from "@/features/dashboard/home";
+import { GoalMilestoneCard } from "@/features/goals/components/goal-milestone";
 import { getGoalsOverview } from "@/features/goals/queries";
 import { TxList } from "@/features/ledger/components/tx-list";
 import { getAccounts, getCategories, getScopedTransactions } from "@/features/ledger/queries";
@@ -48,6 +49,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   const scopeLabel = scope === "partner" ? ctx.partner?.name ?? "배우자" : SCOPE_LABEL[scope];
   const partnerName = ctx.partner?.name ?? "배우자";
   const ledgerHref = scope === "us" ? "/ledger" : `/ledger?scope=${scope}`;
+  // 진행률 알림은 우선순위가 가장 높은 목표 하나만
+  const milestoneGoal = goals.find((g) => g.milestone !== null) ?? null;
 
   return (
     <div className="grid gap-4">
@@ -64,7 +67,19 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
 
       {/* 모바일은 DOM 순서대로 1단, 데스크톱은 왼쪽(목표·최근 기록) / 오른쪽(쓸 수 있는 돈·저축·확인할 일) */}
       <div className="grid gap-4 lg:grid-cols-2 lg:grid-rows-[auto_auto_auto_1fr] lg:items-start">
-        <div className="min-w-0 lg:col-start-1 lg:row-start-1">
+        <div className="grid min-w-0 gap-4 lg:col-start-1 lg:row-start-1">
+          {milestoneGoal ? (
+            <GoalMilestoneCard
+              goal={{
+                id: milestoneGoal.id,
+                name: milestoneGoal.name,
+                milestone: milestoneGoal.milestone!,
+                progress: milestoneGoal.evaluation.progress,
+                aheadMonths: milestoneGoal.evaluation.aheadMonths,
+                alreadyAchievable: milestoneGoal.evaluation.required.alreadyAchievable,
+              }}
+            />
+          ) : null}
           <PrimaryGoalCard goals={goals} today={today} />
         </div>
         <div className="min-w-0 lg:col-start-2 lg:row-start-1">

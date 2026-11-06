@@ -14,7 +14,7 @@ import {
   type ClosingExpense,
   type ClosingSuggestion,
 } from "@/lib/finance/closing";
-import { evaluateGoal } from "@/lib/finance/goals";
+import { evaluateGoal, goalCurrent } from "@/lib/finance/goals";
 import { addDays, getMonthKey, getMonthRange, shiftMonth } from "@/lib/finance/period";
 import { buildCategoryIndex, UNCATEGORIZED } from "@/lib/finance/stats";
 import type { DateStr, MonthKey } from "@/lib/finance/types";
@@ -79,11 +79,11 @@ export async function getMonthlyClosing(
     const aheadAt = (asOf: DateStr, extra = 0) => {
       if (trackingStart === null || asOf < trackingStart) return undefined;
       const balances = computeBalances(ids, snapshots, flows, asOf);
-      const current =
-        extra +
-        (primary.usesNetWorth
-          ? Math.max(0, Number(summarizeNetWorth(accounts, balances).netWorth))
-          : primary.linkedAccountIds.reduce((s, id) => s + Number(balances.get(id) ?? 0n), 0));
+      const basis = primary.usesNetWorth
+        ? Number(summarizeNetWorth(accounts, balances).netWorth)
+        : primary.linkedAccountIds.reduce((s, id) => s + Number(balances.get(id) ?? 0n), 0);
+      // 목표 화면과 같은 기준 — 시작 금액 + 기준일 뒤 잔액 변화
+      const current = extra + goalCurrent({ startAmount: primary.startAmount, baseBalance: primary.baseBalance }, basis);
       return evaluateGoal({
         target: primary.targetAmount,
         targetIsReal: primary.targetIsReal,

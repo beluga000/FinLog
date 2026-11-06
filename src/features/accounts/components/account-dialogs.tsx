@@ -6,6 +6,7 @@ import { MoreHorizontal, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { AmountInput } from "@/components/common/amount-input";
 import { Field } from "@/components/common/field";
+import { Money } from "@/components/common/money";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -666,7 +667,7 @@ export function BalanceForm({ id, type, current, onDone }: { id: string; type: A
 /** 보관 확인 — 이 계좌로 오가는 자동이체가 있으면 함께 멈출지 묻는다 */
 function ArchiveForm({ id, name, onDone }: { id: string; name: string; onDone: () => void }) {
   const [pending, start] = useTransition();
-  const [impact, setImpact] = useState<{ mine: number; others: number } | null>(null);
+  const [impact, setImpact] = useState<{ mine: number; others: number; goals: { name: string; current: number }[] } | null>(null);
   const [stop, setStop] = useState(true);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
@@ -686,6 +687,17 @@ function ArchiveForm({ id, name, onDone }: { id: string; name: string; onDone: (
         {name} 계좌를 순자산과 계좌 목록에서 빼요. 거래 기록은 그대로 남고, 자산 화면 맨 아래 &lsquo;보관한 계좌&rsquo;에서 언제든 되돌릴 수 있어요.
       </p>
       {impact === null && !error ? <p className="text-sm text-muted-foreground">자동이체 확인 중…</p> : null}
+      {impact && impact.goals.length ? (
+        <p className="rounded-lg bg-brand-soft px-3 py-2 text-sm">
+          이 계좌는 {impact.goals.map((g) => g.name).join(", ")} 목표에 연결돼 있어요. 보관해도 목표에 모인{" "}
+          {impact.goals.length === 1 ? (
+            <Money value={impact.goals[0].current} className="font-semibold" />
+          ) : (
+            "돈"
+          )}
+          은 그대로 남고, 앞으로 이 계좌 잔액 변화만 빠져요.
+        </p>
+      ) : null}
       {impact && impact.mine > 0 ? (
         <label className="flex items-start gap-2 rounded-lg border p-3 text-sm">
           <input type="checkbox" checked={stop} onChange={(e) => setStop(e.target.checked)} className="mt-0.5 size-4" />
@@ -764,7 +776,7 @@ export function DeleteArchivedAccountButton({ id, name }: { id: string; name: st
 
 function DeleteAccountForm({ id, onDone }: { id: string; onDone: () => void }) {
   const [pending, start] = useTransition();
-  const [impact, setImpact] = useState<{ transactions: number; myRules: number; otherRules: number } | null>(null);
+  const [impact, setImpact] = useState<{ transactions: number; myRules: number; otherRules: number; goals: string[] } | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     let alive = true;
@@ -792,7 +804,8 @@ function DeleteAccountForm({ id, onDone }: { id: string; onDone: () => void }) {
       {impact && !blocked ? (
         <p className="text-sm">
           거래 기록이 없는 계좌라 삭제할 수 있어요.
-          {impact.myRules > 0 ? ` 연결된 자동이체 ${impact.myRules}건도 함께 삭제돼요.` : ""} 삭제하면 되돌릴 수 없어요.
+          {impact.myRules > 0 ? ` 연결된 자동이체 ${impact.myRules}건도 함께 삭제돼요.` : ""}
+          {impact.goals.length ? ` ${impact.goals.join(", ")} 목표에서 연결이 풀리지만 목표에 모인 돈은 그대로예요.` : ""} 삭제하면 되돌릴 수 없어요.
         </p>
       ) : null}
       {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}

@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
+import { keepGoalsSteady, linkedGoalsOf } from "@/features/goals/queries";
 import type { RecurringTemplate } from "@/features/ledger/queries";
 import { amountStr, type ActionResult } from "@/features/ledger/schema";
 import { requireHousehold, writeAudit, type HouseholdContext } from "@/lib/db/context";
@@ -320,13 +321,15 @@ async function activeRulesOf(householdId: string, accountId: string) {
 }
 
 /** 보관 전 확인: 같이 멈출 자동이체 수 (내 것 / 배우자 것 — 배우자 규칙은 만든 사람만 바꿀 수 있다) */
-export async function getArchiveImpact(id: string): Promise<ActionResult<{ mine: number; others: number }>> {
+export async function getArchiveImpact(
+  id: string,
+): Promise<ActionResult<{ mine: number; others: number; goals: { name: string; current: number }[] }>> {
   const ctx = await requireHousehold();
   const account = await findManageable(ctx, id);
   if (!account) return { ok: false, error: NOT_FOUND };
-  const rules = await activeRulesOf(ctx.householdId, id);
+  const [rules, goals] = await Promise.all([activeRulesOf(ctx.householdId, id), linkedGoalsOf(ctx, id)]);
   const mine = rules.filter((r) => r.createdByUserId === ctx.userId).length;
-  return { ok: true, data: { mine, others: rules.length - mine } };
+  return { ok: true, data: { mine, others: rules.length - mine, goals: goals.map(({ name, current }) => ({ name, current })) } };
 }
 
 export async function setAccountArchived(
@@ -342,10 +345,13 @@ export async function setAccountArchived(
     isArchived && opts.stopRecurring
       ? (await activeRulesOf(ctx.householdId, id)).filter((r) => r.createdByUserId === ctx.userId).map((r) => r.id)
       : [];
-  await prisma.$transaction([
-    prisma.account.update({ where: { id }, data: { isArchived } }),
-    prisma.recurringRule.updateMany({ where: { id: { in: stopIds } }, data: { isActive: false } }),
-  ]);
+  // 보관하면 잔액 계산에서 빠지고 복원하면 돌아온다 — 연결된 목표의 모인 돈은 그 직전 금액으로 유지
+  await keepGoalsSteady(ctx, id, async () => {
+    await prisma.$transaction([
+      prisma.account.update({ where: { id }, data: { isArchived } }),
+      prisma.recurringRule.updateMany({ where: { id: { in: stopIds } }, data: { isActive: false } }),
+    ]);
+  });
   await writeAudit(ctx, isArchived ? "ACCOUNT_ARCHIVE" : "ACCOUNT_RESTORE", "Account", id, stopIds.length ? { stoppedRules: stopIds } : undefined);
   revalidatePath("/", "layout");
   return { ok: true, data: { stopped: stopIds.length } };
@@ -370,13 +376,17 @@ function liveTxCount(householdId: string, accountId: string) {
 /** 삭제 전 확인: 거래가 남아 있거나 배우자 자동이체가 걸려 있으면 지울 수 없다 */
 export async function getDeleteImpact(
   id: string,
-): Promise<ActionResult<{ transactions: number; myRules: number; otherRules: number }>> {
+): Promise<ActionResult<{ transactions: number; myRules: number; otherRules: number; goals: string[] }>> {
   const ctx = await requireHousehold();
   const account = await findManageable(ctx, id);
   if (!account) return { ok: false, error: NOT_FOUND };
-  const [transactions, rules] = await Promise.all([liveTxCount(ctx.householdId, id), rulesOf(ctx.householdId, id)]);
+  const [transactions, rules, goals] = await Promise.all([
+    liveTxCount(ctx.householdId, id),
+    rulesOf(ctx.householdId, id),
+    prisma.assetGoal.findMany({ where: { householdId: ctx.householdId, linkedAccountIds: { has: id } }, select: { name: true } }),
+  ]);
   const myRules = rules.filter((r) => r.createdByUserId === ctx.userId).length;
-  return { ok: true, data: { transactions, myRules, otherRules: rules.length - myRules } };
+  return { ok: true, data: { transactions, myRules, otherRules: rules.length - myRules, goals: goals.map((g) => g.name) } };
 }
 
 /**

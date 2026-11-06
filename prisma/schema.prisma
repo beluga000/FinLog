@@ -338,6 +338,14 @@ model AssetGoal {
   planId           String?
   linkedAccountIds String[]
   monthlyCommit    BigInt?
+  /// 목표를 만들(수정할) 때 기존 잔액 중 이 목표 몫으로 넣은 금액
+  startAmount      BigInt         @default(0)
+  /// 그때의 기준 잔액(연결 계좌 합계, 없으면 순자산). 모인 돈 = startAmount + (지금 잔액 - baseBalance)
+  baseBalance      BigInt         @default(0)
+  /// 기준을 잡은 날(목표 생성·이미 모은 돈 수정·연결 계좌 보관/복원). null = 예전 방식(잔액 전체를 모인 돈으로 셈)
+  baseSetOn        DateTime?      @db.Date
+  /// 홈에서 이미 보고 닫은 진행률 알림 (0·25·50·75·100)
+  milestoneSeen    Int            @default(0)
   status           GoalStatus     @default(ACTIVE)
   createdAt        DateTime       @default(now())
   household        Household      @relation(fields: [householdId], references: [id], onDelete: Cascade)

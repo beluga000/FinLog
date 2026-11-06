@@ -2,6 +2,8 @@ import { monthsBetween } from "./period";
 import {
   calculateMonthsToGoal,
   calculateRequiredInvestment,
+  futureValue,
+  toMonthlyRate,
   suggestAlternatives,
   type Alternatives,
   type RequiredResult,
@@ -9,6 +11,89 @@ import {
 import type { DateStr } from "./types";
 
 /** 목표 진척·역산·대안 평가 (PROD.MD §4-6) */
+
+/**
+ * 목표에 모인 돈. 계좌에 원래 있던 돈을 통째로 목표 진척으로 치지 않도록,
+ * 목표를 만들 때 정한 시작 금액에 그 뒤로 늘어난(줄어든) 잔액만 더한다.
+ * basis = 지금 기준 잔액(연결 계좌 합계, 없으면 순자산).
+ */
+export function goalCurrent(g: { startAmount: number; baseBalance: number }, basis: number): number {
+  return Math.max(0, g.startAmount + basis - g.baseBalance);
+}
+
+/** 목표 저장 시 시작 금액 — 0 이상, 지금 기준 잔액(음수면 0)을 넘지 않게 */
+export function clampStartAmount(start: number, basis: number): number {
+  return Math.min(Math.max(0, start), Math.max(0, basis));
+}
+
+/** 진행률 알림 단계 */
+export const MILESTONES = [25, 50, 75, 100] as const;
+
+/** 지금 진척률로 넘은 가장 높은 단계 (0 = 아직 25% 전) */
+export function reachedMilestone(progress: number): number {
+  const pct = progress * 100;
+  return MILESTONES.reduce<number>((top, m) => (pct >= m - 1e-9 ? m : top), 0);
+}
+
+/** 아직 보지 않은 새 단계 — 없으면 null */
+export function newMilestone(progress: number, seen: number): number | null {
+  const reached = reachedMilestone(progress);
+  return reached > seen ? reached : null;
+}
+
+/**
+ * 계획선 — 기준일에 모인 돈(start)에서 출발해 목표일(months 뒤)에 목표 금액에 닿도록 매달 같은 금액을 넣는 경로.
+ * 반환 함수는 기준일로부터 m개월 뒤 계획 금액.
+ */
+export function goalPlanPath(p: {
+  start: number;
+  months: number;
+  target: number;
+  targetIsReal: boolean;
+  expectedReturn: number;
+  inflation?: number;
+}): (m: number) => number {
+  const required = calculateRequiredInvestment({
+    target: p.target,
+    pv: p.start,
+    months: p.months,
+    annualReturn: p.expectedReturn,
+    targetIsReal: p.targetIsReal,
+    inflation: p.inflation,
+  });
+  const r = toMonthlyRate(p.expectedReturn);
+  const pmt = required.alreadyAchievable ? 0 : required.monthly;
+  return (m) => Math.round(futureValue(p.start, pmt, r, Math.max(0, m)));
+}
+
+export interface GoalClaim {
+  goalId: string;
+  name: string;
+  amount: number;
+}
+
+/**
+ * 계좌별로 다른 목표가 이미 쓰는 돈. 목표 하나가 계좌 여러 개를 고르면 모인 돈을 잔액 비율로 나눠 계좌마다 얹는다.
+ * 달성한 목표도 돈이 계좌에 남아 있으므로 함께 센다.
+ */
+export function claimsByAccount(
+  goals: { id: string; name: string; current: number; linkedAccountIds: string[] }[],
+  balances: Map<string, number>,
+): Map<string, GoalClaim[]> {
+  const out = new Map<string, GoalClaim[]>();
+  for (const g of goals) {
+    const ids = g.linkedAccountIds.filter((id) => balances.has(id));
+    if (!ids.length || g.current <= 0) continue;
+    const positive = ids.map((id) => Math.max(0, balances.get(id)!));
+    const sum = positive.reduce((s, b) => s + b, 0);
+    ids.forEach((id, i) => {
+      const amount = Math.round(sum > 0 ? (g.current * positive[i]) / sum : g.current / ids.length);
+      if (amount <= 0) return;
+      out.set(id, [...(out.get(id) ?? []), { goalId: g.id, name: g.name, amount }]);
+    });
+  }
+  return out;
+}
 
 export interface GoalInput {
   target: number;
