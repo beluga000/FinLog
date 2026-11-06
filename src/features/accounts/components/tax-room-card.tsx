@@ -93,7 +93,7 @@ export function TaxRoomCard({ room, showOwner, viewerId }: { room: TaxRoom; show
         <CardDescription>12월 31일까지 {room.daysLeft}일 · 올해 가계부에 기록한 납입 기준</CardDescription>
       </CardHeader>
       <CardContent className="grid gap-5">
-        <div className="grid gap-5 md:grid-cols-2">
+        <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-1">
           {room.rows.map((r) => (
             <section key={r.ownerUserId ?? "none"} className="grid content-start gap-4" aria-label={`${r.ownerLabel} 절세 한도`}>
               {showOwner ? <h3 className="text-sm font-semibold">{r.ownerLabel}</h3> : null}

@@ -24,7 +24,7 @@ export function SalaryBandPicker({ value, thresholdLabel }: { value: SalaryBand 
             role="radio"
             aria-checked={value === o.v}
             disabled={pending}
-            className="seg-item px-2 py-0.5"
+            className="seg-item px-2 py-0.5 whitespace-nowrap"
             onClick={() =>
               start(async () => {
                 const r = await setSalaryBand(o.v);
