@@ -11,6 +11,7 @@ import { isLiability } from "@/lib/finance/balance";
 import { addDays, todayKST } from "@/lib/finance/period";
 import { loanPlan } from "@/lib/finance/loan";
 import { isSavingsProduct, SAVINGS_PRODUCTS } from "@/lib/finance/savings-products";
+import { isSalaryBand } from "@/lib/finance/tax-accounts";
 import { canSeeAccount } from "@/lib/finance/visibility";
 import { normalizeBilling, normalizeLoan, normalizeSavings, normalizeTaxWrapper, OWNER_CHOICES, PAYMENT_SOURCE_TYPES, resolveOwner, visibilityError } from "./rules";
 
@@ -519,4 +520,13 @@ export async function setAccountVisibility(id: string, raw: unknown): Promise<Ac
   await writeAudit(ctx, "ACCOUNT_VISIBILITY", "Account", id, { visibility, applyToExisting, updated });
   revalidatePath("/", "layout");
   return { ok: true, data: { updated } };
+}
+
+/** 내 총급여 구간 — 연금 세액공제율 계산용 (UNDER 기준 이하 · OVER 초과 · null 모름). 본인 것만 바꾼다 */
+export async function setSalaryBand(band: unknown): Promise<ActionResult> {
+  const ctx = await requireHousehold();
+  if (band !== null && !isSalaryBand(band)) return { ok: false, error: "구간을 확인하세요." };
+  await prisma.user.update({ where: { id: ctx.userId }, data: { salaryBand: band } });
+  revalidatePath("/", "layout");
+  return { ok: true };
 }

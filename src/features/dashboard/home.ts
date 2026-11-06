@@ -10,11 +10,13 @@ import {
   type TxRow,
 } from "@/features/ledger/queries";
 import { getBalanceForecast } from "@/features/accounts/forecast";
+import { getTaxRoom } from "@/features/accounts/tax";
 import type { GoalView } from "@/features/goals/queries";
 import type { HouseholdContext } from "@/lib/db/context";
 import { fromDbDate, prisma, toDbDate } from "@/lib/db/prisma";
 import { computeBalances } from "@/lib/finance/balance";
 import { bigOutflowsBefore, pickTransferSource, roundUpToManwon } from "@/lib/finance/forecast";
+import { isTaxDeadlineWindow, refundForBand } from "@/lib/finance/tax-accounts";
 import { upcomingCardDue } from "@/lib/finance/card-billing";
 import { summarizePlanned, upcomingPlanned, type PlannedSummary } from "@/lib/finance/month-progress";
 import { isBalanceStale, recentPayday, RECONCILE_BUNDLE_MIN } from "@/lib/finance/reconcile";
@@ -161,6 +163,18 @@ export type ReviewItem =
       account: { id: string; name: string; type: AccountType; balance: bigint };
     }
   | {
+      /** 12월 — 내 연금 세액공제 한도가 남았을 때 (12월 1~7일, 20~31일) */
+      kind: "taxDeadline";
+      key: string;
+      /** 12월 31일 */
+      date: DateStr;
+      /** 남은 공제 한도 */
+      room: number;
+      /** 채우면 돌려받는 세액 [낮은, 높은] — 구간을 알면 한 숫자 */
+      refund: [number, number];
+      refundOne: number | null;
+    }
+  | {
       /** 통장 잔액 예보에서 2주 안에 0 아래로 내려가는 통장 */
       kind: "shortfall";
       key: string;
@@ -286,12 +300,13 @@ async function getPaydayToReconcile(ctx: Ctx, today: DateStr): Promise<DateStr |
  * 월급날 직후이거나 낡은 계좌가 2개 이상이면 계좌별 줄 대신 "잔액 한 번에 맞추기" 한 줄을 카드 다음에 둔다.
  */
 export async function getReviewItems(ctx: Ctx, opts: { today: DateStr }): Promise<ReviewItem[]> {
-  const [cards, pending, stale, payday, shortfalls] = await Promise.all([
+  const [cards, pending, stale, payday, shortfalls, tax] = await Promise.all([
     getCardDueItems(ctx, opts),
     getReviewTransactions(ctx, REVIEW_LIMIT),
     getStaleBalanceAccounts(ctx, opts),
     getPaydayToReconcile(ctx, opts.today),
     getShortfallItems(ctx, opts),
+    getTaxDeadlineItems(ctx, opts),
   ]);
   const bundle = payday !== null || stale.length >= RECONCILE_BUNDLE_MIN;
   const rest: ReviewItem[] = [
@@ -304,8 +319,30 @@ export async function getReviewItems(ctx: Ctx, opts: { today: DateStr }): Promis
     ? [{ kind: "reconcile", key: "reconcile", date: payday ?? stale[0]?.last ?? null, stale: stale.length, payday }]
     : [];
   // 기한이 있는 것(카드 결제·잔액 부족)을 날짜순으로 맨 앞에
-  const dated = [...cards, ...shortfalls].sort((x, y) => x.date.localeCompare(y.date));
+  const dated = [...cards, ...shortfalls, ...tax].sort((x, y) => x.date.localeCompare(y.date));
   return [...dated, ...reconcile, ...rest].slice(0, REVIEW_LIMIT);
+}
+
+type TaxDeadlineItem = Extract<ReviewItem, { kind: "taxDeadline" }>;
+
+/** 연말 연금 세액공제 — 내 명의 연금 계좌의 남은 한도만 (배우자 한도는 배우자 홈에서) */
+async function getTaxDeadlineItems(ctx: Ctx, opts: { today: DateStr }): Promise<TaxDeadlineItem[]> {
+  if (!isTaxDeadlineWindow(opts.today)) return [];
+  // 이름표는 쓰지 않으므로 최소 문맥으로 부른다
+  const room = await getTaxRoom({ ...ctx, user: { name: null }, partner: null }, opts);
+  const mine = room?.rows.find((r) => r.ownerUserId === ctx.userId)?.pension;
+  if (!room || !mine || mine.room <= 0) return [];
+  const band = room.rows.find((r) => r.ownerUserId === ctx.userId)?.salaryBand ?? null;
+  return [
+    {
+      kind: "taxDeadline",
+      key: `tax:${room.year}`,
+      date: `${room.year}-12-31`,
+      room: mine.room,
+      refund: mine.roomRefund,
+      refundOne: refundForBand(mine.roomRefund, band),
+    },
+  ];
 }
 
 /** 잔액 부족은 이만큼 앞까지만 알린다 — 한 달 뒤 부족은 그 사이 월급·기록으로 바뀌기 쉽다 */

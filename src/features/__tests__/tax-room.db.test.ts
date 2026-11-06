@@ -6,6 +6,7 @@ process.env.DATABASE_URL = process.env.TEST_DATABASE_URL;
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getTaxRoom } from "@/features/accounts/tax";
+import { getReviewItems } from "@/features/dashboard/home";
 import { createHouseholdWithDefaults } from "@/features/household/setup";
 import { prisma, toDbDate } from "@/lib/db/prisma";
 
@@ -87,5 +88,27 @@ describe("getTaxRoom", () => {
 
   it("세제 혜택 계좌가 없으면 null", async () => {
     expect(await getTaxRoom({ householdId: "none", userId: A, user: { id: A, name: "x" }, partner: null, isCouple: false } as never, { today })).toBeNull();
+  });
+});
+
+describe("총급여 구간 · 12월 연금 공제 알림", () => {
+  it("구간은 명의자 것을 쓴다", async () => {
+    await prisma.user.update({ where: { id: A }, data: { salaryBand: "UNDER" } });
+    const room = await getTaxRoom(ctxOf(B, A) as never, { today });
+    expect(room?.rows.map((r) => [r.ownerLabel, r.salaryBand])).toEqual([
+      ["지영", null],
+      ["민수", "UNDER"],
+    ]);
+  });
+
+  it("12월 첫 주·마지막 열흘에 내 남은 한도만, 구간이 있으면 한 숫자", async () => {
+    const ctx = { householdId: hid, userId: A };
+    expect((await getReviewItems(ctx, { today: "2026-12-10" })).some((i) => i.kind === "taxDeadline")).toBe(false);
+    const items = await getReviewItems(ctx, { today: "2026-12-20" });
+    expect(items.find((i) => i.kind === "taxDeadline")).toMatchObject({
+      date: "2026-12-31",
+      room: 5_400_000,
+      refundOne: Math.round(5_400_000 * 0.165),
+    });
   });
 });

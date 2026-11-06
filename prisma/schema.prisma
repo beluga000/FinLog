@@ -96,6 +96,8 @@ model User {
   sessionVersion  Int               @default(0)
   /// 화면 테마: forest(숲) | sea(바다) | dusk(저녁). 사용자별 — 배우자와 따로 고른다
   palette         String            @default("forest")
+  /// 총급여 구간 — 연금 세액공제율 계산용 (UNDER = 기준 이하 · OVER = 초과, null = 모름). 기준액은 src/lib/finance/tax-accounts.ts
+  salaryBand      String?
   memberships     HouseholdMember[]
   riskAssessments RiskAssessment[]
 }

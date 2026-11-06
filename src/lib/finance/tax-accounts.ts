@@ -51,8 +51,9 @@ export const TAX_YEAR_RULES: TaxYearRule[] = [
     creditRateLow: 0.132,
     highRateMaxSalary: 55_000_000,
     isaAnnualCap: 20_000_000,
-    // 2023년 귀속부터 적용된 소득세법 제59조의3 기준. ISA 한도 확대(연 4천만) 논의가 있어 해마다 다시 확인한다.
-    source: "소득세법 제59조의3·조세특례제한법 제91조의18 기준, 2026-11-06 기록 (국세청 공지로 다시 확인 필요)",
+    // 2023년 귀속부터 적용된 소득세법 제59조의3 기준.
+    // ISA: 2024년 정부안(연 4천만·총 2억)은 국회에서 처리되지 않아 연 2천만 유지. 2026년 정부안(생산적금융 ISA 신설)은 국회 심사 중 — 통과되면 다음 해 줄에 반영.
+    source: "소득세법 제59조의3·조세특례제한법 제91조의18 기준, 2026-11-06 확인 (언론·금융사 자료 대조, 국세청 원문은 연말정산 공지로 재확인)",
   },
 ];
 
@@ -115,4 +116,24 @@ export function summarizeTaxRoom(
   }
   const isa = has.isa ? { paid: sum("ISA"), room: Math.max(0, rule.isaAnnualCap - sum("ISA")) } : null;
   return { pension, isa };
+}
+
+/** 총급여 구간 — 연금 세액공제율이 갈린다. null = 모름 (두 공제율로 범위를 보여 준다) */
+export type SalaryBand = "UNDER" | "OVER";
+
+export function isSalaryBand(v: unknown): v is SalaryBand {
+  return v === "UNDER" || v === "OVER";
+}
+
+/** 돌려받는 세액 [낮은, 높은] 중 구간에 맞는 값 — 모르면 null (범위로 보여 준다) */
+export function refundForBand(range: [number, number], band: SalaryBand | null): number | null {
+  if (band === "UNDER") return range[1];
+  if (band === "OVER") return range[0];
+  return null;
+}
+
+/** 연말 연금 세액공제 알림을 띄우는 기간 — 12월 첫 주, 마지막 열흘 남짓 */
+export function isTaxDeadlineWindow(today: string): boolean {
+  const md = today.slice(5);
+  return (md >= "12-01" && md <= "12-07") || (md >= "12-20" && md <= "12-31");
 }

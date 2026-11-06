@@ -139,7 +139,7 @@ export default async function AssetsPage({ searchParams }: { searchParams: Promi
       {forecasts.length || taxRoom ? (
         <div className="grid grid-cols-1 items-start gap-3 lg:grid-cols-2">
           <ForecastCard forecasts={forecasts} />
-          {taxRoom ? <TaxRoomCard room={taxRoom} showOwner={ctx.isCouple} /> : null}
+          {taxRoom ? <TaxRoomCard room={taxRoom} showOwner={ctx.isCouple} viewerId={ctx.userId} /> : null}
         </div>
       ) : null}
 

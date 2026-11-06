@@ -3,18 +3,21 @@ import { getAccounts } from "@/features/ledger/queries";
 import type { HouseholdContext } from "@/lib/db/context";
 import { prisma, toDbDate } from "@/lib/db/prisma";
 import {
+  isSalaryBand,
   isTaxWrapper,
   summarizeTaxRoom,
   taxRuleFor,
   type IsaRoom,
   type PensionRoom,
+  type SalaryBand,
   type TaxWrapper,
   type TaxYearRule,
 } from "@/lib/finance/tax-accounts";
 import type { DateStr } from "@/lib/finance/types";
 import { txAccess } from "@/lib/finance/visibility";
 
-type Ctx = Pick<HouseholdContext, "householdId" | "userId" | "user" | "partner" | "isCouple">;
+/** 이름표에 필요한 것만 — 확인할 일에서는 이름 없이 부른다 */
+type Ctx = Pick<HouseholdContext, "householdId" | "userId"> & { user: { name: string | null }; partner: { id: string; name: string | null } | null };
 
 export interface TaxRoomRow {
   /** 명의 — 한도는 사람마다 따로 */
@@ -22,6 +25,8 @@ export interface TaxRoomRow {
   ownerLabel: string;
   pension: PensionRoom | null;
   isa: IsaRoom | null;
+  /** 명의자의 총급여 구간 (모르면 null — 돌려받는 세액을 범위로) */
+  salaryBand: SalaryBand | null;
 }
 
 export interface TaxRoom {
@@ -62,6 +67,11 @@ export async function getTaxRoom(ctx: Ctx, opts: { today: DateStr }): Promise<Ta
     .map((t) => ({ accountId: t.toAccountId!, wrapper: wrapperOf.get(t.toAccountId!)!, amount: Number(t.amount) }));
 
   const owners = [...new Set(accounts.map((a) => a.ownerUserId))].sort((a, b) => rank(ctx, a) - rank(ctx, b));
+  const people = await prisma.user.findMany({
+    where: { id: { in: owners.filter((o): o is string => o !== null) } },
+    select: { id: true, salaryBand: true },
+  });
+  const bandOf = new Map(people.map((u) => [u.id, isSalaryBand(u.salaryBand) ? u.salaryBand : null]));
   const rows = owners.map((owner) => {
     const mine = accounts.filter((a) => a.ownerUserId === owner);
     const ids = new Set(mine.map((a) => a.id));
@@ -73,7 +83,7 @@ export async function getTaxRoom(ctx: Ctx, opts: { today: DateStr }): Promise<Ta
         isa: mine.some((a) => a.taxWrapper === "ISA"),
       },
     );
-    return { ownerUserId: owner, ownerLabel: ownerLabel(ctx, owner), ...room };
+    return { ownerUserId: owner, ownerLabel: ownerLabel(ctx, owner), ...room, salaryBand: owner ? bandOf.get(owner) ?? null : null };
   });
 
   const msLeft = Date.parse(`${year + 1}-01-01T00:00:00Z`) - Date.parse(`${opts.today}T00:00:00Z`);

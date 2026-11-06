@@ -141,6 +141,29 @@ export function ReviewList({
                   </Button>
                 </div>
               </li>
+            ) : item.kind === "taxDeadline" ? (
+              <li key={item.key} className="grid gap-2 py-3 first:pt-0 last:pb-0">
+                <p className="text-sm">
+                  <span className="text-xs text-muted-foreground">12월 31일까지 · {dueLabel(item.date, today)} · </span>
+                  연금 세액공제 한도 <Money value={item.room} compact className="font-semibold" /> 남았어요
+                  <span className="block text-xs text-muted-foreground">
+                    채우면 연말정산에서{" "}
+                    {item.refundOne !== null ? (
+                      <Money value={item.refundOne} compact />
+                    ) : (
+                      <>
+                        <Money value={item.refund[0]} compact />~<Money value={item.refund[1]} compact />
+                      </>
+                    )}{" "}
+                    더 돌려받아요 (참고용 계산)
+                  </span>
+                </p>
+                <div>
+                  <Link href="/assets" className={buttonVariants({ size: "sm", variant: "outline" })}>
+                    절세 한도 보기
+                  </Link>
+                </div>
+              </li>
             ) : item.kind === "shortfall" ? (
               <li key={item.key} className="grid gap-2 py-3 first:pt-0 last:pb-0">
                 <p className="text-sm">

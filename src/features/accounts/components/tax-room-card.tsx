@@ -1,7 +1,8 @@
 import { Money } from "@/components/common/money";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import type { IsaRoom, PensionRoom, TaxYearRule } from "@/lib/finance/tax-accounts";
+import { refundForBand, type IsaRoom, type PensionRoom, type SalaryBand, type TaxYearRule } from "@/lib/finance/tax-accounts";
 import type { TaxRoom } from "../tax";
+import { SalaryBandPicker } from "./salary-band-picker";
 
 /** 막대 너비(%) — 0~100으로 자른다 */
 const pct = (num: number, den: number) => (den > 0 ? Math.min(100, Math.max(0, (num / den) * 100)) : 0);
@@ -15,7 +16,19 @@ function Meter({ value, max, label }: { value: number; max: number; label: strin
   );
 }
 
-function PensionLine({ p, rule }: { p: PensionRoom; rule: TaxYearRule }) {
+/** 구간을 알면 한 숫자, 모르면 "낮은~높은" */
+function Refund({ range, band }: { range: [number, number]; band: SalaryBand | null }) {
+  const one = refundForBand(range, band);
+  if (one !== null) return <Money value={one} compact className="font-medium text-foreground" />;
+  return (
+    <>
+      <Money value={range[0]} compact className="font-medium text-foreground" />~
+      <Money value={range[1]} compact className="font-medium text-foreground" />
+    </>
+  );
+}
+
+function PensionLine({ p, rule, band }: { p: PensionRoom; rule: TaxYearRule; band: SalaryBand | null }) {
   return (
     <div className="grid gap-1.5">
       <div className="flex items-baseline justify-between gap-2 text-sm">
@@ -27,9 +40,8 @@ function PensionLine({ p, rule }: { p: PensionRoom; rule: TaxYearRule }) {
       <Meter value={p.credited} max={rule.pensionTotalCap} label="연금 세액공제 한도 사용" />
       {p.room > 0 ? (
         <p className="text-xs text-muted-foreground">
-          남은 <Money value={p.room} compact className="font-medium text-foreground" />을 채우면 연말정산에서{" "}
-          <Money value={p.roomRefund[0]} compact className="font-medium text-foreground" />~
-          <Money value={p.roomRefund[1]} compact className="font-medium text-foreground" /> 더 돌려받아요.
+          남은 <Money value={p.room} compact className="font-medium text-foreground" />을 12월 31일까지 채우면 연말정산에서{" "}
+          <Refund range={p.roomRefund} band={band} /> 더 돌려받아요.
           {p.irpOnly ? " 연금저축은 한도를 다 채워서 남은 한도는 IRP로 채울 수 있어요." : ""}
         </p>
       ) : (
@@ -37,7 +49,7 @@ function PensionLine({ p, rule }: { p: PensionRoom; rule: TaxYearRule }) {
       )}
       {p.credited > 0 ? (
         <p className="text-xs text-muted-foreground">
-          지금까지 넣은 돈으로 <Money value={p.creditedRefund[0]} compact />~<Money value={p.creditedRefund[1]} compact /> 돌려받아요.
+          지금까지 넣은 돈으로 <Refund range={p.creditedRefund} band={band} /> 돌려받아요.
         </p>
       ) : null}
     </div>
@@ -71,8 +83,9 @@ function IsaLine({ i, rule }: { i: IsaRoom; rule: TaxYearRule }) {
  * 자산 화면 — 올해 절세 한도. 세제 혜택 계좌별 올해 납입액과 남은 한도, 채우면 돌려받는 세액 (참고용 계산).
  * 상품을 권하지 않고 계좌 종류별 한도만 보여 준다.
  */
-export function TaxRoomCard({ room, showOwner }: { room: TaxRoom; showOwner: boolean }) {
+export function TaxRoomCard({ room, showOwner, viewerId }: { room: TaxRoom; showOwner: boolean; viewerId: string }) {
   const { rule } = room;
+  const threshold = `${Math.round(rule.highRateMaxSalary / 1e4).toLocaleString("ko-KR")}만`;
   return (
     <Card>
       <CardHeader>
@@ -84,7 +97,8 @@ export function TaxRoomCard({ room, showOwner }: { room: TaxRoom; showOwner: boo
           {room.rows.map((r) => (
             <section key={r.ownerUserId ?? "none"} className="grid content-start gap-4" aria-label={`${r.ownerLabel} 절세 한도`}>
               {showOwner ? <h3 className="text-sm font-semibold">{r.ownerLabel}</h3> : null}
-              {r.pension ? <PensionLine p={r.pension} rule={rule} /> : null}
+              {r.pension ? <PensionLine p={r.pension} rule={rule} band={r.salaryBand} /> : null}
+              {r.pension && r.ownerUserId === viewerId ? <SalaryBandPicker value={r.salaryBand} thresholdLabel={threshold} /> : null}
               {r.isa ? <IsaLine i={r.isa} rule={rule} /> : null}
             </section>
           ))}

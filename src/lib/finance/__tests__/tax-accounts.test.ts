@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { summarizeTaxRoom, taxRuleFor, taxWrappersFor, type TaxYearRule } from "../tax-accounts";
+import { isTaxDeadlineWindow, refundForBand, summarizeTaxRoom, taxRuleFor, taxWrappersFor, type TaxYearRule } from "../tax-accounts";
 
 const rule: TaxYearRule = {
   year: 2026,
@@ -68,5 +68,22 @@ describe("taxRuleFor / taxWrappersFor", () => {
     expect(taxWrappersFor("PENSION")).toEqual(["PENSION_SAVINGS", "IRP"]);
     expect(taxWrappersFor("INVESTMENT")).toEqual(["ISA"]);
     expect(taxWrappersFor("CHECKING")).toEqual([]);
+  });
+});
+
+describe("총급여 구간 · 연말 알림 기간", () => {
+  it("구간을 알면 한 숫자, 모르면 범위", () => {
+    expect(refundForBand([1_188_000, 1_485_000], "UNDER")).toBe(1_485_000);
+    expect(refundForBand([1_188_000, 1_485_000], "OVER")).toBe(1_188_000);
+    expect(refundForBand([1_188_000, 1_485_000], null)).toBeNull();
+  });
+
+  it("12월 1~7일, 20~31일", () => {
+    expect(isTaxDeadlineWindow("2026-11-30")).toBe(false);
+    expect(isTaxDeadlineWindow("2026-12-01")).toBe(true);
+    expect(isTaxDeadlineWindow("2026-12-07")).toBe(true);
+    expect(isTaxDeadlineWindow("2026-12-08")).toBe(false);
+    expect(isTaxDeadlineWindow("2026-12-20")).toBe(true);
+    expect(isTaxDeadlineWindow("2026-12-31")).toBe(true);
   });
 });
