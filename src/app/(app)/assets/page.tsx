@@ -5,7 +5,9 @@ import { buttonVariants } from "@/components/ui/button";
 import { PageHeader } from "@/components/common/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AccountMenu, DeleteArchivedAccountButton, NewAccountButton, RestoreAccountButton, type AccountFormEnv } from "@/features/accounts/components/account-dialogs";
+import { TaxRoomCard } from "@/features/accounts/components/tax-room-card";
 import { getAccountOverview } from "@/features/accounts/queries";
+import { getTaxRoom } from "@/features/accounts/tax";
 import { defaultSourceAccount, ownerChoiceOf, PAYMENT_SOURCE_TYPES } from "@/features/accounts/rules";
 import { getAccounts } from "@/features/ledger/queries";
 import { NetWorthChart } from "@/components/charts/lazy-charts";
@@ -14,6 +16,7 @@ import { isLiability } from "@/lib/finance/balance";
 import { isLoanRepayment, LOAN_REPAYMENT_LABEL, loanPlan } from "@/lib/finance/loan";
 import { formatKRW } from "@/lib/finance/money";
 import { parseMonthKey, todayKST } from "@/lib/finance/period";
+import { isTaxWrapper, TAX_WRAPPER_LABEL } from "@/lib/finance/tax-accounts";
 import { parseViewScope } from "@/lib/finance/visibility";
 import { ACCOUNT_TYPE_LABEL, ACCOUNT_TYPE_ORDER, VISIBILITY_LABEL } from "@/lib/labels";
 
@@ -24,10 +27,11 @@ export default async function AssetsPage({ searchParams }: { searchParams: Promi
   const sp = await searchParams;
   const scope = ctx.isCouple ? parseViewScope(sp.scope) : "us";
   const today = todayKST();
-  const [{ accounts, netWorth, trend }, allVisible] = await Promise.all([
+  const [{ accounts, netWorth, trend }, allVisible, taxRoom] = await Promise.all([
     getAccountOverview(ctx, scope, { today, monthStartDay: ctx.household.monthStartDay, trendMonths: 12 }),
     // 출금 계좌 후보·이름은 뷰 스코프(나/배우자)와 상관없이 가계 전체에서
     getAccounts(ctx, "us"),
+    getTaxRoom(ctx, { today }),
   ]);
   // 보관한 계좌 — 순자산에서 빠지고 여기서만 되돌린다 (뷰 스코프는 위 목록과 같게)
   const archived = (await getAccounts(ctx, scope, { includeArchived: true })).filter((a) => a.isArchived);
@@ -125,6 +129,8 @@ export default async function AssetsPage({ searchParams }: { searchParams: Promi
         </Card>
       </div>
 
+      {taxRoom ? <TaxRoomCard room={taxRoom} showOwner={ctx.isCouple} /> : null}
+
       {groups.length === 0 ? (
         <Card>
           <CardContent className="py-10 text-center text-sm text-muted-foreground">
@@ -150,6 +156,7 @@ export default async function AssetsPage({ searchParams }: { searchParams: Promi
                           <div className="truncate text-sm font-medium">{a.name}</div>
                           <div className="truncate text-xs text-muted-foreground">
                             {[
+                              isTaxWrapper(a.taxWrapper) ? TAX_WRAPPER_LABEL[a.taxWrapper] : null,
                               a.institution,
                               a.type === "CREDIT_CARD" ? billingLabel(a) : null,
                               a.type === "SAVINGS" && a.maturityDate ? `${a.maturityDate.replaceAll("-", ".")} 만기` : null,
@@ -180,6 +187,7 @@ export default async function AssetsPage({ searchParams }: { searchParams: Promi
                             savingsTier: a.savingsTier,
                             loanRepayment: a.loanRepayment,
                             depositLoan: a.depositLoan,
+                            taxWrapper: a.taxWrapper,
                             isArchived: a.isArchived,
                           }}
                           balance={a.balance}

@@ -15,6 +15,7 @@ import { ReviewList } from "@/features/dashboard/components/review-list";
 import {
   computeSpendable,
   getMonthSaving,
+  getPlannedRest,
   getRecentTransactions,
   getReviewItems,
   getSpendableSource,
@@ -27,13 +28,14 @@ import { getAccounts, getCategories, getScopedTransactions } from "@/features/le
 import { materializeRecurring } from "@/features/ledger/service";
 import { requireHousehold } from "@/lib/db/context";
 import { getMonthKey, getMonthRange, todayKST } from "@/lib/finance/period";
+import { yesterdayResult } from "@/lib/finance/spendable";
 import type { DateStr } from "@/lib/finance/types";
 import { parseViewScope, type ViewScope } from "@/lib/finance/visibility";
 import { SCOPE_LABEL, withRo } from "@/lib/labels";
 
 export const metadata = { title: "홈" };
 
-/** 홈 (PROD.MD §2-8): 대표 목표 → 쓸 수 있는 돈 → 이번 달 저축 → 확인할 일 → 최근 기록 */
+/** 홈 (PROD.MD §2-8): 오늘 쓸 수 있는 돈 → 대표 목표 → 이번 달 저축 → 확인할 일 → 최근 기록 (휴대폰 순서) */
 export default async function DashboardPage({ searchParams }: { searchParams: Promise<{ scope?: string }> }) {
   const ctx = await requireHousehold();
   const sp = await searchParams;
@@ -46,13 +48,15 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
 
   // 확인할 일·최근 기록은 아래 Suspense 에서 따로 그려, 목표·쓸 수 있는 돈이 먼저 보이게 한다
   const goalsP = getGoalsOverview(ctx, { today, monthStartDay }).then((o) => o.goals);
-  const [goals, source, saving, current] = await Promise.all([
+  const [goals, source, saving, current, planned] = await Promise.all([
     goalsP,
     goalsP.then((goals) => getSpendableSource(ctx, scope, { today, monthStartDay, goals })),
     getMonthSaving(ctx, scope, range),
     getScopedTransactions(ctx, range, scope),
+    getPlannedRest(ctx, scope, { today, range }),
   ]);
   const spendable = computeSpendable(source);
+  const yesterday = yesterdayResult(source, today);
   const summaryOnlyTotal = current.summarized.reduce((s, t) => (t.type === "EXPENSE" ? s + t.amount : s), 0n);
   const scopeLabel = scope === "partner" ? ctx.partner?.name ?? "배우자" : SCOPE_LABEL[scope];
   const partnerName = ctx.partner?.name ?? "배우자";
@@ -81,23 +85,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
         </p>
       ) : null}
 
-      {/* 모바일은 DOM 순서대로 1단, 데스크톱은 왼쪽(목표·최근 기록) / 오른쪽(쓸 수 있는 돈·저축·확인할 일) */}
+      {/* 모바일은 DOM 순서대로 1단 — 매일 보는 오늘 쓸 수 있는 돈을 맨 위에. 데스크톱은 왼쪽(목표·최근 기록) / 오른쪽(쓸 수 있는 돈·저축·확인할 일) */}
       <div className="grid gap-4 lg:grid-cols-2 lg:grid-rows-[auto_auto_auto_1fr] lg:items-start">
-        <div className="grid min-w-0 gap-4 lg:col-start-1 lg:row-start-1">
-          {milestoneGoal ? (
-            <GoalMilestoneCard
-              goal={{
-                id: milestoneGoal.id,
-                name: milestoneGoal.name,
-                milestone: milestoneGoal.milestone!,
-                progress: milestoneGoal.evaluation.progress,
-                aheadMonths: milestoneGoal.evaluation.aheadMonths,
-                alreadyAchievable: milestoneGoal.evaluation.required.alreadyAchievable,
-              }}
-            />
-          ) : null}
-          <PrimaryGoalCard goals={goals} />
-        </div>
         <div className="grid min-w-0 gap-4 lg:col-start-2 lg:row-start-1">
           {surplusGoal && moveTarget ? (
             <MonthEndSurplusCard
@@ -117,10 +106,25 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
               }
             />
           ) : null}
-          <SpendableCard spendable={spendable} hasIncome={spendable.income > 0n} />
+          <SpendableCard spendable={spendable} hasIncome={spendable.income > 0n} yesterday={yesterday} />
+        </div>
+        <div className="grid min-w-0 gap-4 lg:col-start-1 lg:row-start-1">
+          {milestoneGoal ? (
+            <GoalMilestoneCard
+              goal={{
+                id: milestoneGoal.id,
+                name: milestoneGoal.name,
+                milestone: milestoneGoal.milestone!,
+                progress: milestoneGoal.evaluation.progress,
+                aheadMonths: milestoneGoal.evaluation.aheadMonths,
+                alreadyAchievable: milestoneGoal.evaluation.required.alreadyAchievable,
+              }}
+            />
+          ) : null}
+          <PrimaryGoalCard goals={goals} />
         </div>
         <div className="min-w-0 empty:hidden lg:col-start-2 lg:row-start-2">
-          <SavingCard actual={saving} target={spendable.plannedSaving} />
+          <SavingCard actual={saving} target={spendable.plannedSaving} scheduled={planned.saving} scheduledDate={planned.savingDate} />
         </div>
         <div className="min-w-0 empty:hidden lg:col-start-2 lg:row-start-3">
           <Suspense fallback={null}>

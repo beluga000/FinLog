@@ -256,6 +256,7 @@ export default async function SavingsPage() {
                               savingsTier: a.savingsTier,
                               loanRepayment: a.loanRepayment,
                               depositLoan: a.depositLoan,
+                              taxWrapper: a.taxWrapper,
                               isArchived: a.isArchived,
                             }}
                             balance={a.balance}

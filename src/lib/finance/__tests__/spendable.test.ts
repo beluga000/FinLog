@@ -6,6 +6,7 @@ import {
   summarizeSpendableInputs,
   type SpendableRule,
   type SpendableTx,
+  yesterdayResult,
 } from "../spendable";
 
 const base = { income: 8_200_000n, fixed: 2_150_000n, fixedSaving: 0n, goalSaving: 1_980_000n, variableExpense: 2_410_000n, daysLeft: 10 };
@@ -166,5 +167,37 @@ describe("남은 일수", () => {
     expect(daysLeftInRange("2026-11-30", getMonthRange("2026-11", 1))).toBe(1);
     expect(daysLeftInRange("2026-11-24", getMonthRange("2026-11", 25))).toBe(1);
     expect(daysLeftInRange("2026-10-25", getMonthRange("2026-11", 25))).toBe(31);
+  });
+});
+
+describe("yesterdayResult — 어제 아낀 돈", () => {
+  const range = { start: "2026-11-01", end: "2026-12-01" };
+  // 수입 310만, 고정비 10만 → 생활비 300만 (11월 30일)
+  const rules: SpendableRule[] = [
+    { id: "pay", type: "INCOME", amount: 3_100_000n, isActive: true, startDate: "2026-01-01", endDate: null },
+    { id: "rent", type: "EXPENSE", amount: 100_000n, isActive: true, startDate: "2026-01-01", endDate: null },
+  ];
+  const input = (txs: SpendableTx[]) => ({ rules, txs, goals: [], range, includeGoals: true });
+
+  it("어제 시작 시점 하루 몫 − 어제 쓴 돈 (오늘 쓴 돈·고정비 거래는 빼고)", () => {
+    const txs: SpendableTx[] = [
+      { type: "EXPENSE", amount: 290_000n, recurringRuleId: null, date: "2026-11-01" },
+      { type: "EXPENSE", amount: 100_000n, recurringRuleId: "rent", date: "2026-11-01" },
+      { type: "EXPENSE", amount: 40_000n, recurringRuleId: null, date: "2026-11-02" },
+      { type: "EXPENSE", amount: 500_000n, recurringRuleId: null, date: "2026-11-03" },
+    ];
+    // 11/2 시작: 남은 271만 / 29일 = 93,448원 → 어제 4만 썼으니 53,448원 아낌
+    expect(yesterdayResult(input(txs), "2026-11-03")).toBe(53_448n);
+  });
+
+  it("어제 하루 몫보다 많이 쓰면 음수", () => {
+    const txs: SpendableTx[] = [{ type: "EXPENSE", amount: 200_000n, recurringRuleId: null, date: "2026-11-02" }];
+    // 11/2 시작: 300만 / 29일 = 103,448원 − 20만
+    expect(yesterdayResult(input(txs), "2026-11-03")).toBe(103_448n - 200_000n);
+  });
+
+  it("이번 달 첫날·날짜 없는 거래는 null", () => {
+    expect(yesterdayResult(input([]), "2026-11-01")).toBeNull();
+    expect(yesterdayResult(input([{ type: "EXPENSE", amount: 1n, recurringRuleId: null }]), "2026-11-03")).toBeNull();
   });
 });

@@ -17,6 +17,7 @@ import { isLoanRepayment, LOAN_REPAYMENT_HINT, LOAN_REPAYMENT_LABEL, LOAN_REPAYM
 import { formatKRW } from "@/lib/finance/money";
 import { addMonthsExact, todayKST } from "@/lib/finance/period";
 import { isSavingsProduct, monthlyContribution, SAVINGS_PRODUCT_KEYS, SAVINGS_PRODUCTS, type SavingsProductKey } from "@/lib/finance/savings-products";
+import { isTaxWrapper, TAX_WRAPPER_LABEL, taxWrappersFor, type TaxWrapper } from "@/lib/finance/tax-accounts";
 import { institutionGroupsFor, isKnownInstitution } from "@/lib/institutions";
 import type { AccountType, Visibility } from "@/lib/finance/types";
 import { ACCOUNT_TYPE_LABEL, ACCOUNT_TYPE_ORDER, VISIBILITY_HINT, VISIBILITY_LABEL } from "@/lib/labels";
@@ -44,6 +45,8 @@ interface AccountValue {
   loanRepayment: string | null;
   /** 전세·월세 보증금 대출 (순자산에서 뺀다) */
   depositLoan: boolean;
+  /** 세제 혜택 계좌 (연금저축·IRP·ISA) */
+  taxWrapper: string | null;
 }
 
 /** 폼이 고를 수 있는 것들 — 화면(서버)에서 한 번 만들어 넘긴다 */
@@ -98,6 +101,8 @@ function AccountForm({
   const tierInfo = productInfo?.tiers.find((t) => t.key === tier) ?? null;
   const [repayment, setRepayment] = useState<LoanRepayment | "">(isLoanRepayment(initial?.loanRepayment) ? initial.loanRepayment : "");
   const [depositLoan, setDepositLoan] = useState(initial?.depositLoan ?? false);
+  const [taxWrapper, setTaxWrapper] = useState<TaxWrapper | "">(isTaxWrapper(initial?.taxWrapper) ? initial.taxWrapper : "");
+  const wrapperChoices = taxWrappersFor(type);
   // 새 만기일시상환 대출: 매달 이자 자동 기록 (기본 켬)
   const [autoInterest, setAutoInterest] = useState(true);
   // 정책형 상품은 가입일만 넣으면 만기일을 채운다 (직접 넣은 만기일은 덮지 않는다)
@@ -138,6 +143,7 @@ function AccountForm({
       savingsTier: savings && product ? tier || null : null,
       loanRepayment: loan ? repayment || null : null,
       depositLoan: loan ? depositLoan : false,
+      taxWrapper: taxWrapper && wrapperChoices.includes(taxWrapper) ? taxWrapper : null,
     };
     const withAutoSave = savings && !initial?.id && monthly !== "" && BigInt(monthly) > 0n;
     if (withAutoSave && !fromId) return setError("자동이체 출금 계좌를 고르세요.");
@@ -256,6 +262,22 @@ function AccountForm({
           </Field>
           <p className="col-span-2 -mt-2 text-xs text-muted-foreground">결제일이 다가오면 홈의 확인할 일에서 대금과 통장 잔액을 알려 드려요.</p>
         </div>
+      ) : null}
+      {wrapperChoices.length ? (
+        <Field
+          label="세제 혜택"
+          htmlFor="acc-tax"
+          hint="고르면 자산 화면에서 올해 넣은 돈과 남은 절세 한도를 계산해 드려요."
+        >
+          <NativeSelect id="acc-tax" value={wrapperChoices.includes(taxWrapper as TaxWrapper) ? taxWrapper : ""} onChange={(e) => setTaxWrapper(e.target.value as TaxWrapper | "")}>
+            <option value="">해당 없음</option>
+            {wrapperChoices.map((w) => (
+              <option key={w} value={w}>
+                {TAX_WRAPPER_LABEL[w]}
+              </option>
+            ))}
+          </NativeSelect>
+        </Field>
       ) : null}
       {type === "LOAN" ? (
         <LoanFields

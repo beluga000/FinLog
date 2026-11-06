@@ -1,4 +1,5 @@
 import { isLoanRepayment, type LoanRepayment } from "@/lib/finance/loan";
+import { isTaxWrapper, taxWrappersFor, type TaxWrapper } from "@/lib/finance/tax-accounts";
 import { isSavingsProduct, SAVINGS_PRODUCTS } from "@/lib/finance/savings-products";
 import type { AccountType, Visibility } from "@/lib/finance/types";
 
@@ -110,4 +111,9 @@ export function normalizeLoan(
   const raw = input.loanRepayment || null;
   if (raw && !isLoanRepayment(raw)) return { ok: false, error: "상환 방식을 확인하세요." };
   return { ok: true, loanRepayment: raw && isLoanRepayment(raw) ? raw : null, depositLoan: input.depositLoan };
+}
+
+/** 세제 혜택 계좌 정리: 계좌 종류에 맞지 않으면(예: 입출금 통장에 ISA) 비운다 */
+export function normalizeTaxWrapper(type: AccountType, raw: string | null): TaxWrapper | null {
+  return isTaxWrapper(raw) && taxWrappersFor(type).includes(raw) ? raw : null;
 }

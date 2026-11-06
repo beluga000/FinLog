@@ -1,4 +1,5 @@
 import { sumBigInt } from "./money";
+import { addDays } from "./period";
 import type { DateStr, TxType } from "./types";
 
 /**
@@ -68,6 +69,8 @@ export interface SpendableTx {
   type: TxType;
   amount: bigint;
   recurringRuleId: string | null;
+  /** 거래일 — 어제 결과(yesterdayResult)를 계산할 때만 쓴다 */
+  date?: DateStr;
 }
 
 export interface SpendableGoal {
@@ -136,4 +139,21 @@ export function summarizeSpendableInputs(input: {
 export function daysLeftInRange(today: DateStr, range: { start: DateStr; end: DateStr }): number {
   const ms = Date.parse(`${range.end}T00:00:00Z`) - Date.parse(`${today}T00:00:00Z`);
   return Math.max(1, Math.round(ms / 86_400_000));
+}
+
+/**
+ * 어제 결과 = 어제 시작 시점의 하루 권장액 − 어제 쓴 변동 지출.
+ * 양수면 아낀 만큼 오늘부터의 하루 몫이 늘고, 음수면 줄었다. 이번 달 첫날이거나 날짜 없는 거래가 있으면 null.
+ */
+export function yesterdayResult(
+  input: Parameters<typeof summarizeSpendableInputs>[0],
+  today: DateStr,
+): bigint | null {
+  const yesterday = addDays(today, -1);
+  if (yesterday < input.range.start) return null;
+  if (input.txs.some((t) => !t.date)) return null;
+  const before = summarizeSpendableInputs({ ...input, txs: input.txs.filter((t) => t.date! < yesterday) });
+  const through = summarizeSpendableInputs({ ...input, txs: input.txs.filter((t) => t.date! <= yesterday) });
+  const allowance = calculateSpendable({ ...before, daysLeft: daysLeftInRange(yesterday, input.range) }).daily;
+  return allowance - (through.variableExpense - before.variableExpense);
 }

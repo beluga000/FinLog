@@ -67,7 +67,7 @@ export async function getSpendableSource(
         date: { gte: toDbDate(range.start), lt: toDbDate(range.end) },
         OR: [{ createdByUserId: ctx.userId }, { visibility: { not: "PRIVATE" } }],
       },
-      select: { id: true, type: true, amount: true, recurringRuleId: true, createdByUserId: true, visibility: true },
+      select: { id: true, type: true, amount: true, recurringRuleId: true, createdByUserId: true, visibility: true, date: true },
     }),
   ]);
   const visible = (x: Parameters<typeof txAccess>[0]) => txAccess(x, ctx.userId, scope) !== "none";
@@ -84,7 +84,7 @@ export async function getSpendableSource(
         endDate: r.endDate ? fromDbDate(r.endDate) : null,
         toAccountId: t.toAccountId,
       })),
-    txs: txs.filter(visible).map(({ id, type, amount, recurringRuleId }) => ({ id, type, amount, recurringRuleId })),
+    txs: txs.filter(visible).map(({ id, type, amount, recurringRuleId, date }) => ({ id, type, amount, recurringRuleId, date: fromDbDate(date) })),
     goals: opts.goals.some((g) => "evaluation" in g) ? toSpendableGoals(opts.goals as GoalView[]) : (opts.goals as SpendableGoal[]),
     range,
     today: opts.today,

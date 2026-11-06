@@ -59,6 +59,8 @@ export interface AccountRow {
   loanRepayment: string | null;
   /** 전세·월세 보증금 대출 — 순자산에서 뺀다 (LOAN) */
   depositLoan: boolean;
+  /** 세제 혜택 계좌 (PENSION_SAVINGS · IRP · ISA) */
+  taxWrapper: string | null;
 }
 
 const accountSelect = {
@@ -78,6 +80,7 @@ const accountSelect = {
   savingsTier: true,
   loanRepayment: true,
   depositLoan: true,
+  taxWrapper: true,
 } satisfies Prisma.AccountSelect;
 
 /** 가구의 모든 계좌 (보관 포함) — 보관 여부·스코프는 메모리에서 거른다 */

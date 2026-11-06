@@ -92,6 +92,8 @@ async function main() {
   const jiyoungCard = await account("지영 개인카드", "CREDIT_CARD", jiyoung.id, 0n, "SUMMARY_ONLY", "삼성카드");
   const savings = await account("주택청약", "SAVINGS", null, 12_000_000n, "SHARED", "국민은행");
   const isa = await account("ISA 계좌", "INVESTMENT", minsu.id, 18_500_000n, "SHARED", "미래에셋");
+  // 세제 혜택 계좌 — 자산 화면 "올해 절세 한도"에 나온다
+  await prisma.account.update({ where: { id: isa.id }, data: { taxWrapper: "ISA" } });
   const secret = await account("지영 비상금", "SAVINGS", jiyoung.id, 5_000_000n, "PRIVATE", "토스뱅크");
   const loan = await account("전세자금대출", "LOAN", null, -80_000_000n, "SHARED", "국민은행");
   await prisma.account.create({

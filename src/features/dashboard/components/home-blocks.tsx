@@ -7,6 +7,7 @@ import { FastTrackBadge, GoalEta, GoalPace, GoalProgressBar, needsAdjust } from 
 import type { GoalView } from "@/features/goals/queries";
 import { formatPercent } from "@/lib/finance/money";
 import type { Spendable } from "@/lib/finance/spendable";
+import type { DateStr } from "@/lib/finance/types";
 
 /** 주의 기준: 생활비의 80% 이상 사용 (PROD.MD §5.4) */
 const CAUTION_RATIO = 0.8;
@@ -111,8 +112,22 @@ export function PrimaryGoalCard({ goals }: { goals: GoalView[] }) {
   );
 }
 
-/** ② 쓸 수 있는 돈 (§2-7) */
-export function SpendableCard({ spendable: s, hasIncome }: { spendable: Spendable; hasIncome: boolean }) {
+/** "2026-11-25" → "25일" */
+const dayLabel = (d: DateStr) => `${Number(d.slice(8))}일`;
+
+/**
+ * ② 오늘 쓸 수 있는 돈 (§2-7) — 매일 여는 이유라 휴대폰 홈 맨 위에 둔다.
+ * 큰 숫자는 하루 몫 하나, 이번 달 남은 돈은 보조 줄. yesterday = 어제 아낀(+)·더 쓴(−) 돈 (yesterdayResult).
+ */
+export function SpendableCard({
+  spendable: s,
+  hasIncome,
+  yesterday,
+}: {
+  spendable: Spendable;
+  hasIncome: boolean;
+  yesterday: bigint | null;
+}) {
   if (!hasIncome) {
     return (
       <Card>
@@ -134,27 +149,39 @@ export function SpendableCard({ spendable: s, hasIncome }: { spendable: Spendabl
     // 홈의 대표 카드 — 테마색으로 채운다 (globals.css 의 data-hero)
     <Card data-hero="">
       <CardHeader>
-        <CardTitle>이번 달 쓸 수 있는 돈</CardTitle>
+        <CardTitle>오늘 쓸 수 있는 돈</CardTitle>
       </CardHeader>
       <CardContent className="grid gap-3">
-        <div className="flex flex-wrap items-baseline gap-x-2">
-          {s.overspent ? (
-            <>
-              <Money value={-s.remaining} className="text-2xl font-bold text-critical" />
-              <span className="text-sm font-medium text-critical">초과</span>
-            </>
-          ) : (
-            <Money value={s.remaining} className="text-2xl font-bold" />
-          )}
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <Money value={s.daily} compact className="text-3xl font-black" />
+          {yesterday !== null && yesterday !== 0n ? (
+            <span
+              className={cn(
+                "rounded-full px-2 py-0.5 text-xs font-medium",
+                yesterday > 0n ? "bg-good/15 text-good" : "bg-warning/15 text-warning",
+              )}
+            >
+              어제 <Money value={yesterday > 0n ? yesterday : -yesterday} compact /> {yesterday > 0n ? "아꼈어요" : "더 썼어요"}
+            </span>
+          ) : null}
         </div>
         <p className="text-sm text-muted-foreground">
-          남은 {s.daysLeft}일 · 하루 <Money value={s.daily} className="font-semibold text-foreground" />
+          {s.overspent ? (
+            <span className="font-medium text-critical">
+              이번 달 <Money value={-s.remaining} compact /> 초과
+            </span>
+          ) : (
+            <>
+              이번 달 남은 돈 <Money value={s.remaining} compact className="font-semibold text-foreground" />
+            </>
+          )}{" "}
+          · {s.daysLeft}일 남음
         </p>
         <div className="grid gap-1">
           <Bar ratio={ratio} tone={tone} label="생활비 사용 비율" />
           <div className="flex justify-between text-xs text-muted-foreground">
             <span>
-              생활비 <Money value={s.variableExpense} compact /> 사용
+              생활비 <Money value={s.variableExpense} compact /> 썼어요
             </span>
             <span>
               {s.livingBudget > 0n ? (
@@ -219,10 +246,27 @@ export function MonthEndSurplusCard({
   );
 }
 
-/** ③ 이번 달 저축 — 실제 (SAVE_INVEST + LOAN_REPAY) / 계획 저축 (고정 저축 + 목표 저축) */
-export function SavingCard({ actual, target }: { actual: bigint; target: bigint }) {
+/**
+ * ③ 이번 달 저축 — 실제 (SAVE_INVEST + LOAN_REPAY) / 계획 저축 (고정 저축 + 목표 저축).
+ * 남은 자동이체(scheduled)는 점선으로 함께 그려 월초 0%가 실패로 읽히지 않게 하고,
+ * 자동이체가 없는 계획분은 직접 옮겨야 한다고 알려 준다.
+ */
+export function SavingCard({
+  actual,
+  target,
+  scheduled = 0n,
+  scheduledDate = null,
+}: {
+  actual: bigint;
+  target: bigint;
+  scheduled?: bigint;
+  scheduledDate?: DateStr | null;
+}) {
   if (target === 0n && actual === 0n) return null;
   const ratio = target > 0n ? Number(actual) / Number(target) : 1;
+  const filled = Math.min(100, ratio * 100);
+  const scheduledPct = target > 0n ? Math.min(100 - filled, (Number(scheduled) / Number(target)) * 100) : 0;
+  const manual = target - actual - scheduled;
   return (
     <Card size="sm">
       <CardHeader>
@@ -241,7 +285,45 @@ export function SavingCard({ actual, target }: { actual: bigint; target: bigint 
           </span>
           {target > 0n ? <span className="text-sm font-semibold tabular">{formatPercent(ratio, 0)}</span> : null}
         </div>
-        {target > 0n ? <Bar ratio={ratio} tone={ratio >= 1 ? "good" : "accent"} label="이번 달 저축 진행률" /> : null}
+        {target > 0n ? (
+          <div
+            className="relative h-2 overflow-hidden rounded-full bg-muted"
+            role="progressbar"
+            aria-valuenow={Math.round(filled)}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-label="이번 달 저축 진행률"
+          >
+            <div
+              className={cn("absolute inset-y-0 left-0 rounded-full", ratio >= 1 && "bg-good")}
+              style={{ width: `${filled}%`, ...(ratio < 1 ? { background: "var(--brand)" } : {}) }}
+            />
+            {scheduledPct > 0 ? (
+              <div
+                className="absolute inset-y-0"
+                aria-hidden
+                style={{
+                  left: `${filled}%`,
+                  width: `${scheduledPct}%`,
+                  background: "repeating-linear-gradient(90deg, color-mix(in oklab, var(--brand) 55%, transparent) 0 4px, transparent 4px 7px)",
+                }}
+              />
+            ) : null}
+          </div>
+        ) : null}
+        {scheduled > 0n ? (
+          <p className="text-xs text-muted-foreground">
+            {scheduledDate ? `${dayLabel(scheduledDate)} ` : ""}자동이체 <Money value={scheduled} compact /> 예정
+          </p>
+        ) : null}
+        {manual > 0n && target > 0n ? (
+          <p className="text-xs text-muted-foreground">
+            자동이체가 없는 <Money value={manual} compact />은 직접 옮겨야 해요.{" "}
+            <Link href="/goals" className="font-medium text-foreground underline underline-offset-4">
+              목표에서 자동이체 만들기
+            </Link>
+          </p>
+        ) : null}
       </CardContent>
     </Card>
   );

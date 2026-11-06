@@ -12,7 +12,7 @@ import { addDays, todayKST } from "@/lib/finance/period";
 import { loanPlan } from "@/lib/finance/loan";
 import { isSavingsProduct, SAVINGS_PRODUCTS } from "@/lib/finance/savings-products";
 import { canSeeAccount } from "@/lib/finance/visibility";
-import { normalizeBilling, normalizeLoan, normalizeSavings, OWNER_CHOICES, PAYMENT_SOURCE_TYPES, resolveOwner, visibilityError } from "./rules";
+import { normalizeBilling, normalizeLoan, normalizeSavings, normalizeTaxWrapper, OWNER_CHOICES, PAYMENT_SOURCE_TYPES, resolveOwner, visibilityError } from "./rules";
 
 const ACCOUNT_TYPES = [
   "CASH", "CHECKING", "SAVINGS", "INVESTMENT", "PENSION", "REAL_ESTATE", "OTHER_ASSET", "CREDIT_CARD", "LOAN",
@@ -41,6 +41,8 @@ const accountSchema = z.object({
   loanRepayment: z.string().max(20).nullable().default(null),
   /** 전세·월세 보증금 대출 (LOAN 만) — 순자산에서 뺀다 */
   depositLoan: z.boolean().default(false),
+  /** 세제 혜택 계좌 (연금저축·IRP — PENSION / ISA — INVESTMENT·SAVINGS) */
+  taxWrapper: z.string().max(20).nullable().default(null),
 });
 
 /** 적금 계좌 추가와 함께 만드는 매달 자동이체 (SAVINGS 새 계좌만) */
@@ -99,6 +101,7 @@ async function resolveInput(ctx: Ctx, d: z.infer<typeof accountSchema>, type: (t
     savingsTier: savings.savingsTier,
     loanRepayment: loan.loanRepayment,
     depositLoan: loan.depositLoan,
+    taxWrapper: normalizeTaxWrapper(type, d.taxWrapper),
   };
 }
 
@@ -182,6 +185,7 @@ export async function createAccount(raw: unknown): Promise<ActionResult<{ id: st
         savingsTier: r.savingsTier,
         loanRepayment: r.loanRepayment,
         depositLoan: r.depositLoan,
+        taxWrapper: r.taxWrapper,
         // 시작 잔액 = 어제 마감 잔액 → 오늘 입력하는 거래부터 반영된다
         snapshots: { create: { asOf: toDbDate(addDays(todayKST(), -1)), balance: toStoredBalance(d.type, d.openingBalance) } },
       },
@@ -283,6 +287,7 @@ export async function updateAccount(id: string, raw: unknown): Promise<ActionRes
       savingsTier: r.savingsTier,
       loanRepayment: r.loanRepayment,
       depositLoan: r.depositLoan,
+      taxWrapper: r.taxWrapper,
     },
   });
   if (account.ownerUserId !== ctx.userId || r.ownerUserId !== account.ownerUserId) {

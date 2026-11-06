@@ -174,6 +174,8 @@ model Account {
   loanRepayment     String?
   /// 전세·월세 보증금 대출 — 보증금으로 묶여 내가 쓰는 돈이 아니므로 순자산·부채 합계에서 뺀다 (이자만 고정비). LOAN 만
   depositLoan       Boolean           @default(false)
+  /// 세제 혜택 계좌 (PENSION_SAVINGS 연금저축 · IRP — PENSION 만 / ISA — INVESTMENT · SAVINGS 만). 한도는 src/lib/finance/tax-accounts.ts
+  taxWrapper        String?
   createdAt         DateTime          @default(now())
   household         Household         @relation(fields: [householdId], references: [id], onDelete: Cascade)
   paymentAccount    Account?          @relation("cardPayment", fields: [paymentAccountId], references: [id], onDelete: SetNull)
