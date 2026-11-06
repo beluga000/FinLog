@@ -8,6 +8,52 @@ DB: Neon Postgres (싱가포르, `ap-southeast-1`) · 함수 리전: Vercel `sin
 
 ---
 
+## 한 번에: 운영 DB 마이그레이션 + 운영 배포
+
+커밋까지 끝났으면(2·3단계) 4~6단계는 스크립트 하나로 한다 — `scripts/deploy-prod.sh`.
+
+```bash
+npm run deploy:prod -- --check          # 1) 먼저 상태만 본다 — 아무것도 바꾸지 않음
+npm run deploy:prod                     # 2) 확인 질문 한 번 → 마이그레이션 → 배포 → 확인
+```
+
+| 옵션 | 하는 일 |
+|---|---|
+| (없음) | Git 확인 → 운영 DB 주소 받기 → 적용할 마이그레이션 표시 → **확인 질문** → `migrate deploy` → 배포 → 접속 확인 |
+| `--check` | 3단계(적용할 마이그레이션 표시)까지만. 운영 DB·배포 모두 그대로 |
+| `--yes` | 확인 질문 없이 진행 |
+| `--skip-migrate` | 스키마 변경이 없을 때 배포만 |
+
+스크립트가 막아 주는 것:
+
+- 커밋 안 된 변경이 있으면 시작하지 않는다 (배포는 내 PC 파일 기준이라 커밋과 운영이 어긋난다).
+- Prisma 가 실제로 **운영 호스트(`*.neon.tech`, direct)** 에 붙었는지 `Datasource` 줄로 확인한다.
+- 마이그레이션이 실패하거나 적용 뒤 최신이 아니면 **배포하지 않는다**.
+- 적용할 마이그레이션에 `DROP`·`DELETE`·`TRUNCATE` 가 있으면 Neon 브랜치(스냅샷)부터 만들라고 알려 준다.
+- 접속 주소의 비밀번호는 출력에서 가린다.
+
+Claude Code 안에서는 운영 작업이 자동 권한 검사에 막힐 수 있다. 그럴 땐 프롬프트 맨 앞에 `!` 를 붙여 직접 실행한다 (앞에 공백 없이).
+
+```
+! npm run deploy:prod -- --yes
+```
+
+> 직접 명령으로 할 때 주의: 마이그레이션은 `schema.prisma` 의 `directUrl = env("DATABASE_URL_UNPOOLED")` 로 붙는다.
+> `DATABASE_URL` 만 운영 주소로 넘기면 `.env` 의 **로컬 DB** 에 붙어서 "No pending migrations to apply." 가 거짓으로 나온다.
+> 아래 4단계처럼 두 변수를 **모두** 넘기고, 출력의 `Datasource` 줄이 `neon.tech` 인지 확인한다.
+
+한 줄로 직접 할 때 (스크립트와 같은 순서):
+
+`pipefail` 이 있어야 마이그레이션이 실패했을 때 배포로 넘어가지 않는다.
+
+```bash
+set -o pipefail; U="$(npx --no-install neon connection-string production --project-id soft-wildflower-68858737 --ssl verify-full)" \
+  && DATABASE_URL="$U" DATABASE_URL_UNPOOLED="$U" npx prisma migrate deploy 2>&1 | sed -E 's#//[^@]*@#//***@#g' \
+  && unset U && npx vercel deploy --prod --yes
+```
+
+---
+
 ## 0. 미리 알아둘 것
 
 | 항목 | 위치 |
@@ -143,5 +189,10 @@ npx vercel deploy --prod --yes            # 환경변수는 새 배포부터 적
 | `20261103042458_session_version` | `User.sessionVersion` (모든 기기에서 로그아웃) | 2026-11-03 |
 | `20261103062424_savings_product` | `Account.openedOn`·`maturityDate`·`interestRate` (예적금 가입일·만기일·금리) | 2026-11-03 |
 | `20261104004039_user_palette` | `User.palette` (화면 테마: 숲·바다·저녁, 사용자별) | 2026-11-04 |
+| `20261105042551_youth_savings_product` | `Account.savingsProduct`·`savingsTier` (청년도약·미래적금) | 2026-11-05 |
+| `20261106000000_loan_repayment` | `Account.loanRepayment` (대출 상환 방식) | 2026-11-06 |
+| `20261106010000_deposit_loan` | `Account.depositLoan` (보증금 대출 순자산 제외) | 2026-11-06 |
+| `20261106020000_goal_start_amount` | `AssetGoal.startAmount`·`baseBalance` (목표 시작 금액·기준 잔액) | 2026-11-06 |
+| `20261106030000_goal_progress` | `AssetGoal.baseSetOn`·`milestoneSeen` (기준일·진행률 알림) | 2026-11-06 |
 
 새 마이그레이션을 운영에 적용하면 이 표에 한 줄 추가한다.

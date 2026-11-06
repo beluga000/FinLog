@@ -11,6 +11,7 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "db:migrate": "prisma migrate dev",
+    "deploy:prod": "bash scripts/deploy-prod.sh",
     "db:seed": "prisma db seed",
     "db:studio": "prisma studio",
     "postinstall": "prisma generate && node scripts/copy-ocr-assets.mjs",
