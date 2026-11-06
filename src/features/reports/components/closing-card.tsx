@@ -8,7 +8,7 @@ import { parseMonthKey } from "@/lib/finance/period";
 import type { MonthlyClosing } from "../closing";
 
 /** 리포트 최상단 — 지난달 결산 + 다음 달 조정 제안 (§4-7, AC-16) */
-export function ClosingCard({ closing: c }: { closing: MonthlyClosing }) {
+export function ClosingCard({ closing: c, surplusAction }: { closing: MonthlyClosing; surplusAction?: React.ReactNode }) {
   const { m } = parseMonthKey(c.month);
   const over = c.spendableResult < 0n;
   const savingRatio = c.saving.planned > 0n ? Number(c.saving.actual) / Number(c.saving.planned) : null;
@@ -60,11 +60,13 @@ export function ClosingCard({ closing: c }: { closing: MonthlyClosing }) {
             <div className="text-xs font-medium text-muted-foreground">이번 달 조정 제안</div>
             <ul className="grid gap-1.5">
               {c.suggestions.map((s) => (
-                <li key={s.kind}>
+                <li key={s.kind} className="grid gap-1.5">
                   <Link href={s.href} className="flex items-center gap-2 rounded-lg bg-muted px-3 py-2 text-sm hover:bg-muted/70">
                     <span className="min-w-0 flex-1">{s.text}</span>
                     <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
                   </Link>
+                  {/* 남은 돈 제안은 읽고 끝나지 않게 바로 옮기기 기록으로 */}
+                  {s.kind === "surplus" && surplusAction ? <div className="flex flex-wrap gap-2 pl-1">{surplusAction}</div> : null}
                 </li>
               ))}
             </ul>

@@ -3,7 +3,14 @@ import { Suspense } from "react";
 import { Money } from "@/components/common/money";
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import { PrimaryGoalCard, SavingCard, SpendableCard } from "@/features/dashboard/components/home-blocks";
+import {
+  MONTH_END_DAYS,
+  MONTH_END_MIN,
+  MonthEndSurplusCard,
+  PrimaryGoalCard,
+  SavingCard,
+  SpendableCard,
+} from "@/features/dashboard/components/home-blocks";
 import { ReviewList } from "@/features/dashboard/components/review-list";
 import {
   computeSpendable,
@@ -13,7 +20,8 @@ import {
   getSpendableSource,
 } from "@/features/dashboard/home";
 import { GoalMilestoneCard } from "@/features/goals/components/goal-milestone";
-import { getGoalsOverview } from "@/features/goals/queries";
+import { MoveToGoalButton } from "@/features/goals/components/move-to-goal";
+import { getGoalsOverview, getMoveTarget, pickSurplusGoal } from "@/features/goals/queries";
 import { TxList } from "@/features/ledger/components/tx-list";
 import { getAccounts, getCategories, getScopedTransactions } from "@/features/ledger/queries";
 import { materializeRecurring } from "@/features/ledger/service";
@@ -21,7 +29,7 @@ import { requireHousehold } from "@/lib/db/context";
 import { getMonthKey, getMonthRange, todayKST } from "@/lib/finance/period";
 import type { DateStr } from "@/lib/finance/types";
 import { parseViewScope, type ViewScope } from "@/lib/finance/visibility";
-import { SCOPE_LABEL } from "@/lib/labels";
+import { SCOPE_LABEL, withRo } from "@/lib/labels";
 
 export const metadata = { title: "홈" };
 
@@ -51,6 +59,14 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   const ledgerHref = scope === "us" ? "/ledger" : `/ledger?scope=${scope}`;
   // 진행률 알림은 우선순위가 가장 높은 목표 하나만
   const milestoneGoal = goals.find((g) => g.milestone !== null) ?? null;
+  // 월말 남은 돈 → 목표로 옮기기 ("우리" 뷰만 — 목표는 가구 공동)
+  const surplusAmount = (spendable.remaining / 10_000n) * 10_000n;
+  const monthEnd =
+    scope === "us" && spendable.income > 0n && !spendable.overspent && spendable.daysLeft <= MONTH_END_DAYS && surplusAmount >= MONTH_END_MIN;
+  const surplusGoal = monthEnd ? pickSurplusGoal(goals) : null;
+  const [moveTarget, accounts, categories] = surplusGoal
+    ? await Promise.all([getMoveTarget(ctx, surplusGoal), getAccounts(ctx, "us"), getCategories(ctx)])
+    : [null, [], []];
 
   return (
     <div className="grid gap-4">
@@ -80,9 +96,27 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
               }}
             />
           ) : null}
-          <PrimaryGoalCard goals={goals} today={today} />
+          <PrimaryGoalCard goals={goals} />
         </div>
-        <div className="min-w-0 lg:col-start-2 lg:row-start-1">
+        <div className="grid min-w-0 gap-4 lg:col-start-2 lg:row-start-1">
+          {surplusGoal && moveTarget ? (
+            <MonthEndSurplusCard
+              amount={surplusAmount}
+              daysLeft={spendable.daysLeft}
+              goalName={surplusGoal.name}
+              action={
+                <MoveToGoalButton
+                  target={moveTarget}
+                  amount={surplusAmount}
+                  label={`${withRo(surplusGoal.name)} 옮기기 기록`}
+                  accounts={accounts}
+                  categories={categories}
+                  viewerId={ctx.userId}
+                  isCouple={ctx.isCouple}
+                />
+              }
+            />
+          ) : null}
           <SpendableCard spendable={spendable} hasIncome={spendable.income > 0n} />
         </div>
         <div className="min-w-0 empty:hidden lg:col-start-2 lg:row-start-2">

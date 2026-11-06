@@ -35,3 +35,11 @@ export const BUCKET_LABEL: Record<BudgetBucket, string> = {
 };
 
 export const SCOPE_LABEL = { us: "우리", me: "나", partner: "배우자" } as const;
+
+/** 이름 뒤 방향 조사 — 받침 없거나 ㄹ 받침이면 "로", 그 외 받침이면 "으로" ("비상금으로", "내 집 마련으로", "여행로" ✗) */
+export function withRo(name: string): string {
+  const c = name.charCodeAt(name.length - 1);
+  if (c < 0xac00 || c > 0xd7a3) return `${name}(으)로`;
+  const jong = (c - 0xac00) % 28;
+  return jong === 0 || jong === 8 ? `${name}로` : `${name}으로`;
+}

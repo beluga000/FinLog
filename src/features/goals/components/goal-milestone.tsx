@@ -28,6 +28,8 @@ export interface MilestoneValue {
 
 /**
  * 홈 진행률 알림 — 25·50·75·100%를 넘으면 한 번 띄우고, 닫으면 그 단계는 다시 띄우지 않는다.
+ * 축하 카드라 늦어지는 목표에 "N개월 늦어요"를 붙이지 않는다 — 늦는 이유와 조정은 바로 아래 목표 카드가 말한다.
+ * (남은 금액도 쓰지 않는다: 홈은 모인 돈을 가려 두므로 남은 금액으로 모인 돈이 드러난다)
  * 홈은 모인 돈을 가려 두므로 금액 없이 진척률만 보여 준다.
  */
 export function GoalMilestoneCard({ goal }: { goal: MilestoneValue }) {
@@ -43,7 +45,7 @@ export function GoalMilestoneCard({ goal }: { goal: MilestoneValue }) {
           : goal.aheadMonths > 0
             ? `계획보다 ${goal.aheadMonths}개월 빨라요.`
             : goal.aheadMonths < 0
-              ? `계획보다 ${-goal.aheadMonths}개월 늦어요.`
+              ? null
               : "계획대로 가고 있어요.";
 
   const dismiss = () =>

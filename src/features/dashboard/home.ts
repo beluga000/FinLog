@@ -13,6 +13,7 @@ import type { HouseholdContext } from "@/lib/db/context";
 import { fromDbDate, prisma, toDbDate } from "@/lib/db/prisma";
 import { computeBalances } from "@/lib/finance/balance";
 import { upcomingCardDue } from "@/lib/finance/card-billing";
+import { summarizePlanned, upcomingPlanned, type PlannedSummary } from "@/lib/finance/month-progress";
 import { addDays, getMonthKey, getMonthRange } from "@/lib/finance/period";
 import {
   calculateSpendable,
@@ -90,6 +91,33 @@ export async function getSpendableSource(
     // 나/배우자 뷰는 가구 공동 목표 저축을 차감하지 않는다
     includeGoals: scope === "us",
   };
+}
+
+/**
+ * 오늘 뒤로 이번 달 안에 들어오거나 나갈 정기 수입·저축 (리포트 "예정").
+ * 공개 범위는 쓸 수 있는 돈과 같이 템플릿 공개범위로 거른다.
+ */
+export async function getPlannedRest(
+  ctx: Ctx,
+  scope: ViewScope,
+  opts: { today: DateStr; range: { start: DateStr; end: DateStr } },
+): Promise<PlannedSummary> {
+  const rules = await prisma.recurringRule.findMany({ where: { householdId: ctx.householdId, isActive: true } });
+  const planned = rules
+    .map((r) => ({ r, t: r.template as unknown as RecurringTemplate }))
+    .filter(({ r, t }) => txAccess({ createdByUserId: r.createdByUserId, visibility: t.visibility }, ctx.userId, scope) !== "none")
+    .map(({ r, t }) => ({
+      name: r.name,
+      type: t.type,
+      amount: BigInt(t.amount),
+      isActive: r.isActive,
+      dayOfMonth: r.dayOfMonth,
+      businessDayAdjust: r.businessDayAdjust,
+      startDate: fromDbDate(r.startDate),
+      endDate: r.endDate ? fromDbDate(r.endDate) : null,
+      lastRunOn: r.lastRunOn ? fromDbDate(r.lastRunOn) : null,
+    }));
+  return summarizePlanned(upcomingPlanned(planned, opts.today, opts.range));
 }
 
 export function computeSpendable(source: SpendableSource, opts: { excludeTxId?: string } = {}): Spendable {

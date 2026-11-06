@@ -3,12 +3,10 @@ import { cn } from "cn";
 import { HiddenMoney } from "@/components/common/hidden-money";
 import { Money } from "@/components/common/money";
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { GoalPace, GoalProgressBar } from "@/features/goals/components/goal-status";
+import { FastTrackBadge, GoalEta, GoalPace, GoalProgressBar, needsAdjust } from "@/features/goals/components/goal-status";
 import type { GoalView } from "@/features/goals/queries";
 import { formatPercent } from "@/lib/finance/money";
-import { formatMonthLabel, getMonthKey, shiftMonth } from "@/lib/finance/period";
 import type { Spendable } from "@/lib/finance/spendable";
-import type { DateStr } from "@/lib/finance/types";
 
 /** 주의 기준: 생활비의 80% 이상 사용 (PROD.MD §5.4) */
 const CAUTION_RATIO = 0.8;
@@ -38,7 +36,7 @@ function Bar({ ratio, tone, label }: { ratio: number; tone: "good" | "warning" |
 }
 
 /** ① 대표 목표 — priority 1위 ACTIVE 목표 + 나머지 한 줄 요약 */
-export function PrimaryGoalCard({ goals, today }: { goals: GoalView[]; today: DateStr }) {
+export function PrimaryGoalCard({ goals }: { goals: GoalView[] }) {
   const active = goals.filter((g) => g.status === "ACTIVE");
   const [primary, ...others] = active;
   if (!primary) {
@@ -57,10 +55,6 @@ export function PrimaryGoalCard({ goals, today }: { goals: GoalView[]; today: Da
     );
   }
   const e = primary.evaluation;
-  const eta =
-    e.projectedMonths !== null && !e.required.alreadyAchievable
-      ? formatMonthLabel(shiftMonth(getMonthKey(today, 1), e.projectedMonths))
-      : null;
   return (
     <Card>
       <CardHeader>
@@ -85,14 +79,25 @@ export function PrimaryGoalCard({ goals, today }: { goals: GoalView[]; today: Da
           <span className="rounded-full border px-2.5 py-0.5 text-xs font-medium">
             <GoalPace goal={primary} />
           </span>
-          {eta ? <span className="text-xs text-muted-foreground">예상 달성 {eta}</span> : null}
+          <GoalEta goal={primary} className="text-xs" />
         </div>
+        {needsAdjust(primary) ? (
+          <Link
+            href={`/goals/${primary.id}#adjust`}
+            className="inline-flex h-8 w-fit items-center rounded-md border px-3 text-xs font-medium hover:bg-muted"
+          >
+            어떻게 맞출지 보기
+          </Link>
+        ) : null}
         {others.length ? (
           <ul className="grid gap-1.5 border-t pt-3">
             {others.map((g) => (
               <li key={g.id}>
-                <Link href={`/goals/${g.id}`} className="flex items-baseline justify-between gap-2 text-sm hover:underline">
-                  <span className="truncate">{g.name}</span>
+                <Link href={`/goals/${g.id}`} className="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-1 text-sm hover:underline">
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    <span className="truncate">{g.name}</span>
+                    <FastTrackBadge goal={g} />
+                  </span>
                   <span className="shrink-0 text-xs text-muted-foreground tabular">
                     {formatPercent(g.evaluation.progress, 0)} · <GoalPace goal={g} />
                   </span>
@@ -182,6 +187,35 @@ export function SpendableCard({ spendable: s, hasIncome }: { spendable: Spendabl
         </dl>
       </CardContent>
     </Card>
+  );
+}
+
+/** 월말에 남은 돈을 보여 줄 기준 — 남은 일수와 최소 금액 */
+export const MONTH_END_DAYS = 3;
+export const MONTH_END_MIN = 10_000n;
+
+/**
+ * 월말 남은 돈 — 그냥 두면 다음 달 생활비에 섞이므로 목표 계좌로 옮기는 기록을 권한다.
+ * action 은 옮기기 버튼(클라이언트) — 페이지가 계좌·카테고리를 넘겨 그린다.
+ */
+export function MonthEndSurplusCard({
+  amount,
+  daysLeft,
+  goalName,
+  action,
+}: {
+  amount: bigint;
+  daysLeft: number;
+  goalName: string;
+  action: React.ReactNode;
+}) {
+  return (
+    <section className="grid gap-2 rounded-xl bg-brand-soft p-4" aria-label="이번 달 남은 돈">
+      <p className="text-sm text-muted-foreground">이번 달 {daysLeft}일 남았어요 · 지금 남은 돈</p>
+      <Money value={amount} className="text-2xl font-bold" />
+      <p className="text-sm text-muted-foreground">그냥 두면 다음 달 생활비와 섞여요. {goalName} 계좌로 옮겨 두면 목표가 빨라져요.</p>
+      <div className="flex flex-wrap gap-2">{action}</div>
+    </section>
   );
 }
 

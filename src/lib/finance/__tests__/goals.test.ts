@@ -4,7 +4,10 @@ import {
   claimsByAccount,
   clampStartAmount,
   evaluateGoal,
+  goalBlocker,
   goalCurrent,
+  goalPaceKind,
+  isFastTrack,
   goalPlanPath,
   newMilestone,
   reachedMilestone,
@@ -199,5 +202,91 @@ describe("claimsByAccount — 다른 목표가 쓰는 돈", () => {
       balances,
     );
     expect(m.size).toBe(0);
+  });
+});
+
+describe("곧 끝나는 목표 먼저 (isFastTrack)", () => {
+  it("남은 금액이 저축 가능액 3달 치 이하일 때만", () => {
+    expect(isFastTrack(1_750_000, 1_550_000)).toBe(true);
+    expect(isFastTrack(4_650_000, 1_550_000)).toBe(true);
+    expect(isFastTrack(4_650_001, 1_550_000)).toBe(false);
+    expect(isFastTrack(0, 1_550_000)).toBe(false);
+    expect(isFastTrack(100, 0)).toBe(false);
+  });
+
+  it("배분에서 순위보다 먼저 채우고, 나머지는 우선순위 순", () => {
+    // 데모 가구: 내 집 마련(1위) 필요 311만, 비상금(2위, 175만 남음) 필요 15.2만, 저축 가능액 155만
+    const r = allocateByPriority(
+      [
+        { id: "house", priority: 1, demand: 3_113_000 },
+        { id: "emergency", priority: 2, demand: 152_000, fastTrack: true },
+        { id: "retire", priority: 3, demand: 1_364_000 },
+      ],
+      1_550_000,
+    );
+    expect(r.get("emergency")).toEqual({ allocated: 152_000, shortfall: 0 });
+    expect(r.get("house")).toEqual({ allocated: 1_398_000, shortfall: 1_715_000 });
+    expect(r.get("retire")).toEqual({ allocated: 0, shortfall: 1_364_000 });
+  });
+
+  it("한 칸 올리기는 먼저 채우는 목표를 건너뛰고 그 위 목표와 자리를 바꾼다", () => {
+    const goals = [
+      { id: "house", demand: 700, active: true },
+      { id: "emergency", demand: 100, active: true, fastTrack: true },
+      { id: "retire", demand: 300, active: true },
+    ];
+    // 바로 위 비상금은 이미 먼저 채워지므로 내 집 마련 위로 올라간다
+    expect(simulatePriorityRaise(goals, 1000, "retire")).toEqual({
+      allocated: 300,
+      gain: 100,
+      shortfall: 0,
+      displaced: [{ id: "house", loss: 100 }],
+    });
+  });
+});
+
+describe("goalPaceKind / goalBlocker", () => {
+  const required = (monthly: number, alreadyAchievable = false) => ({
+    monthly,
+    alreadyAchievable,
+  });
+  const ev = (o: { monthly: number; ahead: number | null; onTrack: boolean; ready?: boolean }) => ({
+    required: required(o.monthly, o.ready),
+    aheadMonths: o.ahead,
+    onTrack: o.onTrack,
+  });
+
+  it("배정 0원이면 원인을 말한다", () => {
+    const blockedBy = goalBlocker({ status: "ACTIVE", contribution: 0, committed: false, capacity: 1_550_000, alreadyAchievable: false });
+    expect(blockedBy).toBe("priority");
+    expect(goalPaceKind({ status: "ACTIVE", contribution: 0, blockedBy, evaluation: ev({ monthly: 151_820, ahead: -66, onTrack: false }) })).toEqual({
+      kind: "blocked",
+      by: "priority",
+    });
+    expect(goalBlocker({ status: "ACTIVE", contribution: 0, committed: true, capacity: 1, alreadyAchievable: false })).toBe("commit");
+    expect(goalBlocker({ status: "ACTIVE", contribution: 0, committed: false, capacity: 0, alreadyAchievable: false })).toBe("noSaving");
+    expect(goalBlocker({ status: "PAUSED", contribution: 0, committed: false, capacity: 1, alreadyAchievable: false })).toBeNull();
+  });
+
+  it("배정이 모자라면 모자란 월 금액", () => {
+    expect(
+      goalPaceKind({ status: "ACTIVE", contribution: 1_550_000, blockedBy: null, evaluation: ev({ monthly: 3_113_000, ahead: -77, onTrack: false }) }),
+    ).toEqual({ kind: "short", gap: 1_563_000 });
+  });
+
+  it("닿지 않으면 stuck, 계획대로면 onTrack, 이미 닿으면 ready", () => {
+    expect(goalPaceKind({ status: "ACTIVE", contribution: 10, blockedBy: null, evaluation: ev({ monthly: 1e6, ahead: null, onTrack: false }) }).kind).toBe(
+      "stuck",
+    );
+    expect(goalPaceKind({ status: "ACTIVE", contribution: 200, blockedBy: null, evaluation: ev({ monthly: 100, ahead: 3, onTrack: true }) })).toEqual({
+      kind: "onTrack",
+      aheadMonths: 3,
+    });
+    expect(goalPaceKind({ status: "ACTIVE", contribution: 0, blockedBy: null, evaluation: ev({ monthly: 0, ahead: 5, onTrack: true, ready: true }) }).kind).toBe(
+      "ready",
+    );
+    expect(goalPaceKind({ status: "ACHIEVED", contribution: 0, blockedBy: null, evaluation: ev({ monthly: 0, ahead: 0, onTrack: true }) }).kind).toBe(
+      "achieved",
+    );
   });
 });

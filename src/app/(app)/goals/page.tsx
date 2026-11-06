@@ -3,12 +3,14 @@ import { cn } from "cn";
 import { Money } from "@/components/common/money";
 import { PageHeader } from "@/components/common/page-header";
 import { Card, CardContent } from "@/components/ui/card";
+import { AutoSaveButton } from "@/features/goals/components/goal-autosave";
 import { PriorityButtons } from "@/features/goals/components/goal-controls";
 import { NewGoalButton } from "@/features/goals/components/goal-form";
-import { GoalPace, GoalProgressBar, RequiredLine } from "@/features/goals/components/goal-status";
-import { getGoalsOverview } from "@/features/goals/queries";
+import { FastTrackBadge, GoalEta, GoalPace, GoalProgressBar, RequiredLine } from "@/features/goals/components/goal-status";
+import { getAutoSaveSetup, getGoalsOverview, pickSurplusGoal } from "@/features/goals/queries";
 import { requireHousehold } from "@/lib/db/context";
 import { todayKST } from "@/lib/finance/period";
+import { withRo } from "@/lib/labels";
 
 export const metadata = { title: "목표" };
 
@@ -19,6 +21,9 @@ export default async function GoalsPage() {
     monthStartDay: ctx.household.monthStartDay,
   });
   const over = totalDemand > capacity.capacity;
+  // 평균 남는 돈 → 매달 자동으로 옮기기 (곧 끝나는 목표 먼저)
+  const surplusGoal = capacity.avgSurplus > 0 ? pickSurplusGoal(goals) : null;
+  const surplusSetup = surplusGoal ? await getAutoSaveSetup(ctx, surplusGoal.linkedAccountIds) : null;
 
   return (
     <div className="grid gap-5">
@@ -42,7 +47,29 @@ export default async function GoalsPage() {
             <div>
               <div className="text-xs text-muted-foreground">평균 남는 돈</div>
               <div className="text-lg font-bold"><Money value={capacity.avgSurplus} /></div>
-              <div className="text-xs text-muted-foreground">저축으로 돌리면 목표가 빨라져요</div>
+              <div className="text-xs text-muted-foreground">
+                {surplusGoal ? `${withRo(surplusGoal.name)} 돌리면 목표가 빨라져요` : "저축으로 돌리면 목표가 빨라져요"}
+              </div>
+              {surplusGoal && surplusSetup ? (
+                <div className="mt-2">
+                  <AutoSaveButton
+                    goal={{
+                      id: surplusGoal.id,
+                      name: surplusGoal.name,
+                      targetDate: surplusGoal.targetDate,
+                      linkedAccountIds: surplusGoal.linkedAccountIds,
+                      committed: surplusGoal.contributionSource === "commit",
+                    }}
+                    accounts={accounts}
+                    setup={surplusSetup}
+                    // 달마다 남는 돈이 달라 절반부터 — 금액은 창에서 바꿀 수 있다
+                    monthly={Math.floor(capacity.avgSurplus / 2 / 10_000) * 10_000}
+                    label="매달 자동으로 옮기기"
+                    offerCommit={false}
+                    size="sm"
+                  />
+                </div>
+              ) : null}
             </div>
           ) : null}
         </CardContent>
@@ -63,9 +90,10 @@ export default async function GoalsPage() {
                   <PriorityButtons id={g.id} first={i === 0} last={i === goals.length - 1} />
                   <Link href={`/goals/${g.id}`} className="grid min-w-0 flex-1 gap-2">
                     <div className="flex flex-wrap items-baseline justify-between gap-2">
-                      <div className="font-semibold">
-                        <span className="mr-2 text-xs text-muted-foreground tabular">#{g.priority}</span>
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1 font-semibold">
+                        <span className="text-xs text-muted-foreground tabular">#{g.priority}</span>
                         {g.name}
+                        <FastTrackBadge goal={g} />
                       </div>
                       <div className="text-sm tabular">
                         <Money value={g.current} compact /> <span className="text-muted-foreground">/ <Money value={g.targetAmount} compact /></span>
@@ -73,7 +101,10 @@ export default async function GoalsPage() {
                     </div>
                     <GoalProgressBar goal={g} />
                     <div className="flex flex-wrap justify-between gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                      <GoalPace goal={g} />
+                      <span className="flex flex-wrap gap-x-2">
+                        <GoalPace goal={g} />
+                        <GoalEta goal={g} />
+                      </span>
                       <span>
                         {g.targetDate.replaceAll("-", ".")} · <RequiredLine goal={g} />
                         {g.status === "ACTIVE" ? (

@@ -9,17 +9,21 @@ import {
   allocateByPriority,
   claimsByAccount,
   evaluateGoal,
+  goalBlocker,
   goalCurrent,
   goalPlanPath,
+  isFastTrack,
   newMilestone,
   simulatePriorityRaise,
+  type GoalBlocker,
   type GoalClaim,
   type GoalEvaluation,
 } from "@/lib/finance/goals";
 import { calculateRequiredInvestment } from "@/lib/finance/projection";
-import { addMonthsExact, monthsBetween, todayKST } from "@/lib/finance/period";
+import { addMonthsExact, getMonthKey, monthsBetween, shiftMonth, todayKST } from "@/lib/finance/period";
 import type { SpendableGoal } from "@/lib/finance/spendable";
-import type { DateStr } from "@/lib/finance/types";
+import type { MoveTarget } from "./components/move-to-goal";
+import type { DateStr, MonthKey } from "@/lib/finance/types";
 
 type Ctx = Pick<HouseholdContext, "householdId" | "userId">;
 
@@ -59,6 +63,12 @@ export interface GoalView {
   contribution: number;
   contributionSource: "commit" | "allocated";
   shortfall: number;
+  /** 곧 끝나는 목표라 우선순위보다 먼저 배분받는지 (isFastTrack) */
+  fastTrack: boolean;
+  /** 배정액이 0원인 원인 — 없으면 null */
+  blockedBy: GoalBlocker | null;
+  /** 지금 배정액을 유지하면 달성하는 달 — 못 닿거나 이미 달성 가능하면 null */
+  etaMonth: MonthKey | null;
   /**
    * 대안 (d) — 자동 배분 목표가 우선순위에 밀려 부족할 때, 한 칸 올리면 어떻게 되는지.
    * displaced.committed = 확정액 목표라 납입액은 그대로지만 확정액보다 모자라게 된다.
@@ -135,12 +145,20 @@ export async function getSpendableGoals(ctx: Ctx, opts: { today: DateStr; monthS
 export async function getGoalsOverview(ctx: Ctx, opts: { today: DateStr; monthStartDay: number }) {
   const [{ base, overview, netWorth }, capacity] = await Promise.all([goalBases(ctx, opts), getSavingCapacity(ctx, opts)]);
 
+  const fastTrack = new Set(
+    base.filter((b) => b.demand > 0 && isFastTrack(b.target - b.current, capacity.capacity)).map((b) => b.g.id),
+  );
   const allocation = allocateByPriority(
-    base.map((b) => ({ id: b.g.id, priority: b.g.priority, demand: b.demand })),
+    base.map((b) => ({ id: b.g.id, priority: b.g.priority, demand: b.demand, fastTrack: fastTrack.has(b.g.id) })),
     capacity.capacity,
   );
 
-  const ordered = base.map((b) => ({ id: b.g.id, demand: b.demand, active: b.g.status === "ACTIVE" }));
+  const ordered = base.map((b) => ({
+    id: b.g.id,
+    demand: b.demand,
+    active: b.g.status === "ACTIVE",
+    fastTrack: fastTrack.has(b.g.id),
+  }));
   const byId = new Map(base.map((b) => [b.g.id, b]));
 
   const views: GoalView[] = base.map((b) => {
@@ -151,6 +169,17 @@ export async function getGoalsOverview(ctx: Ctx, opts: { today: DateStr; monthSt
       b.commit === null && b.g.status === "ACTIVE" && alloc.shortfall > 0
         ? simulatePriorityRaise(ordered, capacity.capacity, b.g.id)
         : null;
+    const evaluation = evaluateGoal({
+      target: b.target,
+      targetIsReal: b.g.targetIsReal,
+      targetDate: b.targetDate,
+      expectedReturn: b.expectedReturn,
+      current: b.current,
+      monthlyContribution: contribution,
+      today: opts.today,
+      inflation: DEFAULT_INFLATION,
+      higherReturn: higherReturnOf(b.expectedReturn),
+    });
     return {
       id: b.g.id,
       name: b.g.name,
@@ -175,6 +204,18 @@ export async function getGoalsOverview(ctx: Ctx, opts: { today: DateStr; monthSt
       contribution,
       contributionSource: b.commit !== null ? "commit" : "allocated",
       shortfall: alloc.shortfall,
+      fastTrack: fastTrack.has(b.g.id),
+      blockedBy: goalBlocker({
+        status: b.g.status,
+        contribution,
+        committed: b.commit !== null,
+        capacity: capacity.capacity,
+        alreadyAchievable: evaluation.required.alreadyAchievable,
+      }),
+      etaMonth:
+        evaluation.projectedMonths !== null && !evaluation.required.alreadyAchievable
+          ? shiftMonth(getMonthKey(opts.today, 1), evaluation.projectedMonths)
+          : null,
       priorityRaise: raise && {
         ...raise,
         displaced: raise.displaced.map((d) => {
@@ -182,17 +223,7 @@ export async function getGoalsOverview(ctx: Ctx, opts: { today: DateStr; monthSt
           return { id: d.id, name: o.g.name, loss: d.loss, committed: o.commit !== null };
         }),
       },
-      evaluation: evaluateGoal({
-        target: b.target,
-        targetIsReal: b.g.targetIsReal,
-        targetDate: b.targetDate,
-        expectedReturn: b.expectedReturn,
-        current: b.current,
-        monthlyContribution: contribution,
-        today: opts.today,
-        inflation: DEFAULT_INFLATION,
-        higherReturn: higherReturnOf(b.expectedReturn),
-      }),
+      evaluation,
     };
   });
 
@@ -336,6 +367,27 @@ export async function getGoalHistory(
     const m = i < monthly ? i : monthly - 1 + (Date.parse(today) - Date.parse(dates[monthly - 1])) / (30.44 * 864e5);
     return { date, actual: actual[i], plan: plan(m) };
   });
+}
+
+/* ───────── 남은 돈 옮기기 ───────── */
+
+/**
+ * 남은 돈을 보낼 목표 — 곧 끝나는 목표 먼저, 없으면 우선순위 순.
+ * 연결 계좌가 있는 진행 중 목표만 (순자산 기준 목표는 옮겨도 진척이 같다).
+ */
+export function pickSurplusGoal(goals: GoalView[]): GoalView | null {
+  const eligible = goals.filter(
+    (g) => g.status === "ACTIVE" && !g.usesNetWorth && g.linkedAccountIds.length > 0 && !g.evaluation.required.alreadyAchievable,
+  );
+  return eligible.find((g) => g.fastTrack) ?? eligible[0] ?? null;
+}
+
+/** 옮기기 기록의 받는 계좌(목표 첫 연결 계좌)와 보내는 계좌 기본값(월급 통장) */
+export async function getMoveTarget(ctx: Ctx, goal: Pick<GoalView, "name" | "linkedAccountIds">): Promise<MoveTarget | null> {
+  const toAccountId = goal.linkedAccountIds[0];
+  if (!toAccountId) return null;
+  const { fromAccountId } = await getAutoSaveSetup(ctx, goal.linkedAccountIds);
+  return { goalName: goal.name, toAccountId, fromAccountId };
 }
 
 /* ───────── 자동이체 등록 기본값 ───────── */

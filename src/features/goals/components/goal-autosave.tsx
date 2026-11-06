@@ -30,23 +30,32 @@ interface Acc {
 
 const NOT_SAVING: AccountType[] = ["CREDIT_CARD", "LOAN"];
 
-/** 목표 상세 — 매달 필요한 금액을 연결 계좌로 가는 정기 저축으로 등록 */
+/**
+ * 목표 상세 — 매달 필요한 금액을 연결 계좌로 가는 정기 저축으로 등록.
+ * 목표 화면의 "평균 남는 돈"에서도 쓴다 — 그때는 남는 돈이 필요액과 다르므로 확정 체크를 내놓지 않는다(offerCommit=false).
+ */
 export function AutoSaveButton({
   goal,
   accounts,
   setup,
   monthly,
+  label = "자동이체로 등록",
+  offerCommit = true,
+  size,
 }: {
   goal: { id: string; name: string; targetDate: DateStr; linkedAccountIds: string[]; committed: boolean };
   accounts: Acc[];
   setup: AutoSaveSetup;
   monthly: number;
+  label?: string;
+  offerCommit?: boolean;
+  size?: "sm" | "default";
 }) {
   const [open, setOpen] = useState(false);
   return (
     <>
-      <Button variant="outline" onClick={() => setOpen(true)}>
-        자동이체로 등록
+      <Button variant="outline" size={size} onClick={() => setOpen(true)}>
+        {label}
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="sm:max-w-md">
@@ -54,7 +63,15 @@ export function AutoSaveButton({
             <DialogTitle>자동이체 만들기</DialogTitle>
             <DialogDescription>매달 정한 날에 가계부에 저축 기록이 자동으로 남아요.</DialogDescription>
           </DialogHeader>
-          {open ? <AutoSaveForm goal={goal} accounts={accounts} setup={setup} monthly={monthly} onDone={() => setOpen(false)} /> : null}
+          {open ? (
+            <AutoSaveForm
+              goal={{ ...goal, committed: goal.committed || !offerCommit }}
+              accounts={accounts}
+              setup={setup}
+              monthly={monthly}
+              onDone={() => setOpen(false)}
+            />
+          ) : null}
         </DialogContent>
       </Dialog>
     </>

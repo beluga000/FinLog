@@ -8,7 +8,7 @@ import { AutoSaveButton } from "@/features/goals/components/goal-autosave";
 import { GoalHistoryChart } from "@/components/charts/lazy-charts";
 import { GoalProgressDetail } from "@/features/goals/components/goal-progress";
 import { CommitButton, GoalMenu } from "@/features/goals/components/goal-controls";
-import { GoalPace } from "@/features/goals/components/goal-status";
+import { FastTrackBadge, GoalEta, GoalPace } from "@/features/goals/components/goal-status";
 import { GoalWhatIf } from "@/features/goals/components/goal-what-if";
 import { getAutoSaveSetup, getGoalHistory, getGoalsOverview } from "@/features/goals/queries";
 import { requireHousehold } from "@/lib/db/context";
@@ -60,7 +60,11 @@ export default async function GoalDetailPage({ params }: { params: Promise<{ id:
           }}
         />
         <div className="flex flex-wrap justify-between gap-2 text-sm">
-          <GoalPace goal={goal} className="font-medium" />
+          <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <GoalPace goal={goal} className="font-medium" />
+            <GoalEta goal={goal} />
+            <FastTrackBadge goal={goal} />
+          </span>
           <span className="text-muted-foreground">진척 {formatPercent(e.progress, 0)}</span>
         </div>
         <p className="text-xs text-muted-foreground">
@@ -86,6 +90,7 @@ export default async function GoalDetailPage({ params }: { params: Promise<{ id:
               지금 배분된 금액 <Money value={goal.contribution} className="font-medium text-foreground" />
               {goal.contributionSource === "commit" ? " (확정)" : " (저축 가능액 자동 배분)"}
               {goal.shortfall > 0 ? <> · 우선순위에 밀려 <Money value={goal.shortfall} /> 부족</> : null}
+              {goal.fastTrack && goal.contributionSource === "allocated" ? " · 곧 끝나는 목표라 순위보다 먼저 배분했어요" : null}
             </div>
             {goal.status === "ACTIVE" && !e.required.alreadyAchievable ? (
               <div className="flex flex-wrap gap-2">
@@ -107,7 +112,9 @@ export default async function GoalDetailPage({ params }: { params: Promise<{ id:
           </CardContent>
         </Card>
 
-        <GoalAlternativesCard goal={goal} today={today} capacity={capacity.capacity} />
+        <div id="adjust" className="scroll-mt-20">
+          <GoalAlternativesCard goal={goal} today={today} capacity={capacity.capacity} />
+        </div>
       </div>
 
       <Card>

@@ -14,11 +14,17 @@ export function MetricCard({
   invert,
   href,
   hero,
+  deltaLabel,
+  note,
 }: {
   label: string;
   value: React.ReactNode;
   sub?: React.ReactNode;
   delta?: Delta | null;
+  /** 비교 기준 이름 (기본 "전월 대비") */
+  deltaLabel?: string;
+  /** 비교 아래 한 줄 — 진행 중인 달의 "25일 727만 예정" */
+  note?: React.ReactNode;
   /** 지출처럼 늘어나면 나쁜 지표 */
   invert?: boolean;
   href?: string;
@@ -30,7 +36,8 @@ export function MetricCard({
       <CardContent className="grid gap-1">
         <div className="text-xs text-muted-foreground">{label}</div>
         <div className="text-lg font-bold md:text-xl">{value}</div>
-        {delta ? <DeltaLine delta={delta} invert={invert} /> : sub ? <div className="text-xs text-muted-foreground">{sub}</div> : null}
+        {delta ? <DeltaLine delta={delta} invert={invert} label={deltaLabel} /> : sub ? <div className="text-xs text-muted-foreground">{sub}</div> : null}
+        {note ? <div className="text-xs text-muted-foreground">{note}</div> : null}
       </CardContent>
     </Card>
   );
@@ -55,8 +62,11 @@ export function DeltaLine({ delta, invert, label = "전월 대비" }: { delta: D
   );
 }
 
-/** 수입이 어디로 갔나: 지출 / 저축 / 남은 돈 — 100% 누적 막대 (2px 간격) */
-export function IncomeFlowBar({ stats }: { stats: MonthlyStats }) {
+/**
+ * 수입이 어디로 갔나: 지출 / 저축 / 남은 돈 — 100% 누적 막대 (2px 간격).
+ * pendingIncome: 진행 중인 달에 아직 들어오지 않은 정기 수입 — 월급날 전 "더 썼어요" 경고를 막는다.
+ */
+export function IncomeFlowBar({ stats, pendingIncome = 0n }: { stats: MonthlyStats; pendingIncome?: bigint }) {
   const income = Number(stats.income);
   const parts = [
     { label: "지출", value: Number(stats.expense), color: "var(--chart-2)" },
@@ -88,9 +98,17 @@ export function IncomeFlowBar({ stats }: { stats: MonthlyStats }) {
           </div>
         ))}
       </dl>
-      {stats.remaining < 0n ? (
+      {stats.remaining >= 0n ? null : pendingIncome > 0n && stats.remaining + pendingIncome >= 0n ? (
+        <p className="text-xs text-muted-foreground">
+          아직 들어오지 않은 수입 <Money value={pendingIncome} compact />이 들어오면 채워져요.
+        </p>
+      ) : pendingIncome > 0n ? (
+        <p className="text-xs text-critical">
+          들어올 수입 <Money value={pendingIncome} compact />까지 더해도 <Money value={-(stats.remaining + pendingIncome)} /> 더 썼어요.
+        </p>
+      ) : (
         <p className="text-xs text-critical">수입보다 <Money value={-stats.remaining} /> 더 썼어요.</p>
-      ) : null}
+      )}
     </div>
   );
 }

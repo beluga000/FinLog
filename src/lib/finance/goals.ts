@@ -166,17 +166,30 @@ export function evaluateGoal(g: GoalInput): GoalEvaluation {
   };
 }
 
+/** 남은 금액이 저축 가능액 몇 달 치 이하면 "곧 끝나는 목표"로 보는지 */
+export const FAST_TRACK_MONTHS = 3;
+
+/**
+ * 곧 끝나는 목표 — 남은 금액이 저축 가능액 FAST_TRACK_MONTHS 달 치 이하.
+ * 거의 다 모은 목표가 앞 순위에 밀려 몇 년씩 멈춰 있지 않도록 배분에서 순위보다 먼저 채운다.
+ */
+export function isFastTrack(remaining: number, capacity: number): boolean {
+  return remaining > 0 && capacity > 0 && remaining <= capacity * FAST_TRACK_MONTHS;
+}
+
 /**
  * 우선순위 순으로 저축 가능액을 배분 (PROD.MD §4-6 마지막 항목).
  * 확정 납입액(commit)이 있는 목표는 그 금액을, 없으면 필요액을 요구한다.
+ * fastTrack(곧 끝나는 목표)은 순위와 상관없이 먼저 채우고, 그 안에서는 우선순위 순이다.
  */
-export function allocateByPriority<T extends { id: string; priority: number; demand: number }>(
+export function allocateByPriority<T extends { id: string; priority: number; demand: number; fastTrack?: boolean }>(
   goals: T[],
   capacity: number,
 ): Map<string, { allocated: number; shortfall: number }> {
   const result = new Map<string, { allocated: number; shortfall: number }>();
   let left = Math.max(0, capacity);
-  for (const g of [...goals].sort((a, b) => a.priority - b.priority)) {
+  const order = (g: T) => (g.fastTrack ? 0 : 1);
+  for (const g of [...goals].sort((a, b) => order(a) - order(b) || a.priority - b.priority)) {
     const allocated = Math.min(left, Math.max(0, g.demand));
     left -= allocated;
     result.set(g.id, { allocated, shortfall: Math.max(0, g.demand - allocated) });
@@ -197,22 +210,24 @@ export interface PriorityRaise {
 /**
  * 우선순위를 "바로 위 진행 중 목표" 위로 한 칸 올렸을 때의 배분 (§4-6 대안 (d)).
  * goals 는 지금 우선순위 순서. 진행 중이 아닌 목표(일시정지·달성)는 배분에 영향이 없어 건너뛴다.
+ * 곧 끝나는 목표(fastTrack)는 순위와 상관없이 먼저 채워지므로, 그 위로 올라가도 배분이 같아 함께 건너뛴다.
  * 위에 진행 중 목표가 없거나 올려도 배정이 늘지 않으면 null.
  */
 export function simulatePriorityRaise(
-  goals: { id: string; demand: number; active: boolean }[],
+  goals: { id: string; demand: number; active: boolean; fastTrack?: boolean }[],
   capacity: number,
   id: string,
 ): PriorityRaise | null {
   const i = goals.findIndex((g) => g.id === id);
   if (i < 0) return null;
+  const skip = (g: (typeof goals)[number]) => !g.active || (!!g.fastTrack && !goals[i].fastTrack);
   let j = i - 1;
-  while (j >= 0 && !goals[j].active) j--;
+  while (j >= 0 && skip(goals[j])) j--;
   if (j < 0) return null;
   const raised = [...goals];
   const [me] = raised.splice(i, 1);
   raised.splice(j, 0, me);
-  const rank = (list: typeof goals) => list.map((g, idx) => ({ id: g.id, priority: idx, demand: g.demand }));
+  const rank = (list: typeof goals) => list.map((g, idx) => ({ id: g.id, priority: idx, demand: g.demand, fastTrack: g.fastTrack }));
   const before = allocateByPriority(rank(goals), capacity);
   const after = allocateByPriority(rank(raised), capacity);
   const now = after.get(id)!;
@@ -223,4 +238,51 @@ export function simulatePriorityRaise(
     .map((g) => ({ id: g.id, loss: before.get(g.id)!.allocated - after.get(g.id)!.allocated }))
     .filter((d) => d.loss > 0);
   return { allocated: now.allocated, gain, shortfall: now.shortfall, displaced };
+}
+
+/** 목표가 왜 멈췄는지 — 배정액이 0원인 진행 중 목표의 원인 */
+export type GoalBlocker = "priority" | "commit" | "noSaving";
+
+/**
+ * 목표 상태 한 줄의 종류 — "N개월 늦어요" 대신 원인과 모자란 금액으로 말한다.
+ * - blocked: 배정액이 0원 (앞 순위에 밀림·확정액 0원·저축 기록 없음)
+ * - short: 배정액이 필요액보다 gap 만큼 적음
+ * - stuck: 100년 안에 닿지 않음 (배정액이 있어도)
+ */
+export type GoalPaceKind =
+  | { kind: "achieved" }
+  | { kind: "paused" }
+  | { kind: "ready" }
+  | { kind: "onTrack"; aheadMonths: number }
+  | { kind: "blocked"; by: GoalBlocker }
+  | { kind: "short"; gap: number }
+  | { kind: "stuck" };
+
+export function goalPaceKind(g: {
+  status: "ACTIVE" | "ACHIEVED" | "PAUSED";
+  contribution: number;
+  blockedBy: GoalBlocker | null;
+  evaluation: Pick<GoalEvaluation, "aheadMonths" | "onTrack"> & { required: Pick<RequiredResult, "monthly" | "alreadyAchievable"> };
+}): GoalPaceKind {
+  const e = g.evaluation;
+  if (g.status === "ACHIEVED") return { kind: "achieved" };
+  if (g.status === "PAUSED") return { kind: "paused" };
+  if (e.required.alreadyAchievable) return { kind: "ready" };
+  if (e.onTrack && e.aheadMonths !== null) return { kind: "onTrack", aheadMonths: Math.max(0, e.aheadMonths) };
+  if (g.contribution <= 0 && g.blockedBy) return { kind: "blocked", by: g.blockedBy };
+  if (e.aheadMonths === null) return { kind: "stuck" };
+  return { kind: "short", gap: Math.max(0, Math.round(e.required.monthly - g.contribution)) };
+}
+
+/** 배정액이 0원인 원인 — 진행 중이고 더 모아야 하는 목표만 */
+export function goalBlocker(g: {
+  status: "ACTIVE" | "ACHIEVED" | "PAUSED";
+  contribution: number;
+  committed: boolean;
+  capacity: number;
+  alreadyAchievable: boolean;
+}): GoalBlocker | null {
+  if (g.status !== "ACTIVE" || g.alreadyAchievable || g.contribution > 0) return null;
+  if (g.committed) return "commit";
+  return g.capacity <= 0 ? "noSaving" : "priority";
 }

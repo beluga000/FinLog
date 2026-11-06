@@ -5,19 +5,26 @@ import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/componen
 import { getAccountOverview } from "@/features/accounts/queries";
 import { CashflowTrendChart, NetWorthChart } from "@/components/charts/lazy-charts";
 import { BucketCompare, DeltaLine, IncomeFlowBar, MetricCard } from "@/features/dashboard/components/widgets";
+import { getPlannedRest } from "@/features/dashboard/home";
 import { getMonthlySeries } from "@/features/dashboard/queries";
-import { getGoalsOverview } from "@/features/goals/queries";
-import { getScopedTransactions } from "@/features/ledger/queries";
+import { MoveToGoalButton } from "@/features/goals/components/move-to-goal";
+import { getGoalsOverview, getMoveTarget } from "@/features/goals/queries";
+import { getAccounts, getCategories, getScopedTransactions } from "@/features/ledger/queries";
 import { getMonthlyClosing } from "@/features/reports/closing";
 import { ClosingCard } from "@/features/reports/components/closing-card";
 import { requireHousehold } from "@/lib/db/context";
 import { formatPercent } from "@/lib/finance/money";
-import { getMonthKey, getMonthRange, parseMonthKey, todayKST } from "@/lib/finance/period";
-import { compareMonths, delta } from "@/lib/finance/stats";
+import { samePeriodRange } from "@/lib/finance/month-progress";
+import { getMonthKey, getMonthRange, parseMonthKey, shiftMonth, todayKST } from "@/lib/finance/period";
+import { calculateMonthlyStats, compareMonths, delta } from "@/lib/finance/stats";
+import type { DateStr } from "@/lib/finance/types";
 import { parseViewScope } from "@/lib/finance/visibility";
-import { SCOPE_LABEL } from "@/lib/labels";
+import { SCOPE_LABEL, withRo } from "@/lib/labels";
 
 export const metadata = { title: "리포트" };
+
+/** "2026-11-25" → "25일" */
+const dayLabel = (d: DateStr) => `${Number(d.slice(8))}일`;
 
 /** 리포트 (PROD.MD §2-9) — 월간 결산(§4-7) + v2 대시보드의 통계 차트 */
 export default async function ReportsPage({
@@ -32,22 +39,43 @@ export default async function ReportsPage({
   const { monthStartDay } = ctx.household;
   const thisMonth = getMonthKey(today, monthStartDay);
   const month = /^\d{4}-\d{2}$/.test(sp.month ?? "") ? sp.month! : thisMonth;
+  const range = getMonthRange(month, monthStartDay);
+  // 진행 중인 달은 지난달 같은 기간과 비교하고, 남은 정기 수입·저축을 예정으로 보여 준다 (월초에 "100% 감소"로 겁주지 않게)
+  const partial = month === thisMonth ? samePeriodRange(range, getMonthRange(shiftMonth(month, -1), monthStartDay), today) : null;
+  const prevPartialP = partial
+    ? Promise.all([getScopedTransactions(ctx, partial, scope), getCategories(ctx)]).then(([{ items, summarized }, categories]) =>
+        calculateMonthlyStats([...items, ...summarized], categories),
+      )
+    : Promise.resolve(null);
+  const plannedP = partial ? getPlannedRest(ctx, scope, { today, range }) : Promise.resolve(null);
 
   // 월간 결산은 이번 달을 볼 때만 최상단에 (§4-7)
   const closingP =
     month === thisMonth
       ? getGoalsOverview(ctx, { today, monthStartDay }).then(({ goals }) => getMonthlyClosing(ctx, { today, monthStartDay, goals }))
       : Promise.resolve(null);
-  const [series, overview, current, closing] = await Promise.all([
+  const [series, overview, current, closing, prevPartial, planned] = await Promise.all([
     getMonthlySeries(ctx, scope, { endMonth: month, count: 12, monthStartDay }),
     getAccountOverview(ctx, scope, { today, monthStartDay, trendMonths: 12 }),
-    getScopedTransactions(ctx, getMonthRange(month, monthStartDay), scope),
+    getScopedTransactions(ctx, range, scope),
     closingP,
+    prevPartialP,
+    plannedP,
   ]);
 
+  // 결산의 남은 돈 → 목표로 옮기기 기록
+  const surplusGoal = closing && closing.surplus.amount >= 10_000n ? closing.surplus.goal : null;
+  const [moveTarget, accounts, categories] = surplusGoal
+    ? await Promise.all([getMoveTarget(ctx, surplusGoal), getAccounts(ctx, "us"), getCategories(ctx)])
+    : [null, [], []];
+
   const cur = series[series.length - 1].stats;
-  const prev = series[series.length - 2].stats;
+  const prev = prevPartial ?? series[series.length - 2].stats;
   const cmp = compareMonths(cur, prev);
+  const deltaLabel = partial ? "지난달 같은 기간 대비" : "전월 대비";
+  const md = (d: DateStr) => `${Number(d.slice(5, 7))}월 ${dayLabel(d)}`;
+  // 월 시작일이 1일이 아니면 두 달에 걸친다 ("10월 25일~11월 6일")
+  const periodLabel = partial ? `${md(range.start)}~${range.start.slice(0, 7) === today.slice(0, 7) ? dayLabel(today) : md(today)}` : null;
   const nwTrend = overview.trend;
   const nwDelta = nwTrend.length > 1 ? delta(nwTrend[nwTrend.length - 1].netWorth, nwTrend[nwTrend.length - 2].netWorth) : null;
   const summaryOnlyTotal = current.summarized.reduce((s, t) => (t.type === "EXPENSE" ? s + t.amount : s), 0n);
@@ -65,7 +93,29 @@ export default async function ReportsPage({
         <MonthNav month={month} monthStartDay={monthStartDay} basePath="/reports" params={{ scope: scope === "us" ? undefined : scope }} />
       </div>
 
-      {closing ? <ClosingCard closing={closing} /> : null}
+      {closing ? (
+        <ClosingCard
+          closing={closing}
+          surplusAction={
+            moveTarget && surplusGoal ? (
+              <MoveToGoalButton
+                target={moveTarget}
+                amount={(closing.surplus.amount / 10_000n) * 10_000n}
+                label={`${withRo(surplusGoal.name)} 옮기기 기록`}
+                variant="outline"
+                accounts={accounts}
+                categories={categories}
+                viewerId={ctx.userId}
+                isCouple={ctx.isCouple}
+              />
+            ) : null
+          }
+        />
+      ) : null}
+
+      {periodLabel && !empty ? (
+        <p className="text-xs text-muted-foreground">진행 중인 달이에요. {periodLabel} 기록을 지난달 같은 기간과 비교해요.</p>
+      ) : null}
 
       {empty ? (
         <p className="rounded-xl border py-12 text-center text-sm text-muted-foreground">
@@ -78,9 +128,21 @@ export default async function ReportsPage({
             <div className="col-span-2 grid lg:col-span-1">
               <MetricCard hero label="순자산" value={<Money value={overview.netWorth.netWorth} compact />} delta={nwDelta} href={`/assets${qs}`} />
             </div>
-            <MetricCard label="수입" value={<Money value={cur.income} compact />} delta={cmp.income} />
-            <MetricCard label="지출" value={<Money value={cur.expense} compact />} delta={cmp.expense} invert />
-            <MetricCard label="저축·투자" value={<Money value={cur.saving} compact />} delta={cmp.saving} />
+            <MetricCard
+              label="수입"
+              value={<Money value={cur.income} compact />}
+              delta={cmp.income}
+              deltaLabel={deltaLabel}
+              note={planned && planned.income > 0n ? <PlannedNote amount={planned.income} date={planned.incomeDate} /> : null}
+            />
+            <MetricCard label="지출" value={<Money value={cur.expense} compact />} delta={cmp.expense} deltaLabel={deltaLabel} invert />
+            <MetricCard
+              label="저축·투자"
+              value={<Money value={cur.saving} compact />}
+              delta={cmp.saving}
+              deltaLabel={deltaLabel}
+              note={planned && planned.saving > 0n ? <PlannedNote amount={planned.saving} date={planned.savingDate} /> : null}
+            />
             <MetricCard label="저축률" value={formatPercent(cur.savingsRate, 0)} />
           </section>
 
@@ -96,7 +158,7 @@ export default async function ReportsPage({
                 <CardTitle>수입은 어디로 갔나</CardTitle>
               </CardHeader>
               <CardContent>
-                <IncomeFlowBar stats={cur} />
+                <IncomeFlowBar stats={cur} pendingIncome={planned?.income ?? 0n} />
               </CardContent>
             </Card>
             <Card>
@@ -137,7 +199,7 @@ export default async function ReportsPage({
                         <div className="h-1.5 rounded-full bg-muted">
                           <div className="h-1.5 rounded-full" style={{ width: `${(c.share ?? 0) * 100}%`, background: "var(--chart-2)" }} />
                         </div>
-                        <DeltaLine delta={c.delta} invert />
+                        <DeltaLine delta={c.delta} invert label={deltaLabel} />
                       </li>
                     ))}
                   </ol>
@@ -188,5 +250,14 @@ export default async function ReportsPage({
         </>
       )}
     </div>
+  );
+}
+
+function PlannedNote({ amount, date }: { amount: bigint; date: DateStr | null }) {
+  return (
+    <>
+      {date ? `${dayLabel(date)} ` : ""}
+      <Money value={amount} compact /> 예정
+    </>
   );
 }

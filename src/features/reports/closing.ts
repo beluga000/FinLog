@@ -30,6 +30,8 @@ export interface MonthlyClosing {
   spendableResult: bigint;
   primaryGoal: { id: string; name: string; pace: string | null } | null;
   suggestions: ClosingSuggestion[];
+  /** 지난달 남긴 돈과 옮길 목표 — 결산 카드의 [옮기기 기록] 버튼용 */
+  surplus: { amount: bigint; goal: { id: string; name: string; linkedAccountIds: string[] } | null };
 }
 
 /**
@@ -142,6 +144,10 @@ export async function getMonthlyClosing(
     spendableResult: last.remaining,
     primaryGoal: primary ? { id: primary.id, name: primary.name, pace } : null,
     suggestions,
+    surplus: {
+      amount: surplusAmount,
+      goal: surplusGoal ? { id: surplusGoal.id, name: surplusGoal.name, linkedAccountIds: surplusGoal.linkedAccountIds } : null,
+    },
   };
 }
 
