@@ -194,5 +194,6 @@ npx vercel deploy --prod --yes            # 환경변수는 새 배포부터 적
 | `20261106010000_deposit_loan` | `Account.depositLoan` (보증금 대출 순자산 제외) | 2026-11-06 |
 | `20261106020000_goal_start_amount` | `AssetGoal.startAmount`·`baseBalance` (목표 시작 금액·기준 잔액) | 2026-11-06 |
 | `20261106030000_goal_progress` | `AssetGoal.baseSetOn`·`milestoneSeen` (기준일·진행률 알림) | 2026-11-06 |
+| `20261106040000_perf_indexes` | `Transaction(householdId, needsReview, date)`·`(fromAccountId, date)`·`(toAccountId, date)`, `RecurringRule(householdId)` 인덱스 (성능) | 2026-11-06 |
 
 새 마이그레이션을 운영에 적용하면 이 표에 한 줄 추가한다.

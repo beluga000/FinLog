@@ -48,11 +48,14 @@ const fail = (s) => {
 /** 접속 주소의 아이디·비밀번호 가리기 */
 const mask = (s) => s.replace(/\/\/[^@/\s]*@/g, "//***@");
 
-/** 명령 실행 — Windows 의 npx 는 .cmd 라 셸을 거친다. env 는 여기서 직접 넘긴다. */
+/**
+ * 명령 실행 — env 는 여기서 직접 넘긴다. Windows 의 npx 는 .cmd 라 셸을 거쳐야 하지만,
+ * 셸을 거치면 공백 있는 인자(git --format="%h %s")가 쪼개지므로 npx 만 셸로 돌린다.
+ */
 function run(cmd, cmdArgs, { env = {}, inherit = false } = {}) {
   const r = spawnSync(cmd, cmdArgs, {
     cwd: ROOT,
-    shell: process.platform === "win32",
+    shell: process.platform === "win32" && cmd === "npx",
     encoding: "utf8",
     env: { ...process.env, ...env },
     stdio: inherit ? "inherit" : "pipe",
