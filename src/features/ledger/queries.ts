@@ -4,6 +4,7 @@ import type { Prisma } from "@/generated/prisma/client";
 import { fromDbDate, prisma, toDbDate } from "@/lib/db/prisma";
 import type { HouseholdContext } from "@/lib/db/context";
 import { canSeeAccount, scopeTransactions, txAccess, type SummaryTx, type ViewScope } from "@/lib/finance/visibility";
+import type { MerchantRule } from "@/lib/finance/merchant-rules";
 import type { AccountType, BudgetBucket, DateStr, TxType, Visibility } from "@/lib/finance/types";
 
 type Ctx = Pick<HouseholdContext, "householdId" | "userId">;
@@ -61,6 +62,8 @@ export interface AccountRow {
   depositLoan: boolean;
   /** 세제 혜택 계좌 (PENSION_SAVINGS · IRP · ISA) */
   taxWrapper: string | null;
+  /** 잔액을 1년에 한 번만 확인 */
+  balanceCheckYearly: boolean;
 }
 
 const accountSelect = {
@@ -81,6 +84,7 @@ const accountSelect = {
   loanRepayment: true,
   depositLoan: true,
   taxWrapper: true,
+  balanceCheckYearly: true,
 } satisfies Prisma.AccountSelect;
 
 /** 가구의 모든 계좌 (보관 포함) — 보관 여부·스코프는 메모리에서 거른다 */
@@ -360,4 +364,14 @@ export async function queryMerchantSuggestions(ctx: Ctx, type: TxType): Promise<
     .sort((a, b) => b.count - a.count || a.order - b.order)
     .slice(0, MERCHANT_MAX)
     .map((v) => v.s);
+}
+
+/** 가구 가맹점 규칙 (가구 공유) — 긴 키부터 (지점 규칙이 브랜드 규칙보다 먼저 맞도록 findRule 이 다시 고른다) */
+export async function queryMerchantRules(ctx: Ctx): Promise<(MerchantRule & { id: string })[]> {
+  const rows = await prisma.merchantCategoryRule.findMany({
+    where: { householdId: ctx.householdId },
+    orderBy: { merchant: "asc" },
+    select: { id: true, merchantKey: true, merchant: true, categoryId: true },
+  });
+  return rows;
 }

@@ -1,15 +1,17 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
 import { Money } from "@/components/common/money";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { BalanceForm } from "@/features/accounts/components/balance-form";
 import { confirmTransaction } from "@/features/ledger/actions";
 import type { AccountOption, TxDraft } from "@/features/ledger/components/tx-form";
 import { LazyTxFormDialog } from "@/features/ledger/components/tx-form-lazy";
+import { formatCompactKRW } from "@/lib/finance/money";
 import { todayKST } from "@/lib/finance/period";
 import type { CategoryRow, TxRow } from "@/features/ledger/queries";
 import type { ReviewItem } from "../home";
@@ -44,6 +46,20 @@ function cardPaymentDraft(item: CardDueItem, today: string): TxDraft {
     fromAccountId: item.payment?.id ?? null,
     toAccountId: item.card.id,
     memo: `${item.card.name} 대금`,
+  };
+}
+
+type ShortfallItem = Extract<ReviewItem, { kind: "shortfall" }>;
+
+/** 잔액 부족 → 여유 있는 통장에서 오늘 옮기는 이체 (기록만 미리 채운다) */
+function shortfallDraft(item: ShortfallItem, today: string): TxDraft {
+  return {
+    type: "TRANSFER",
+    amount: item.amount,
+    date: today,
+    fromAccountId: item.source?.id ?? null,
+    toAccountId: item.account.id,
+    memo: `${shortDate(item.date)} 부족분 미리 옮기기`,
   };
 }
 
@@ -123,6 +139,38 @@ export function ReviewList({
                   <Button size="sm" variant="outline" onClick={() => setDraft(cardPaymentDraft(item, today))}>
                     결제 기록
                   </Button>
+                </div>
+              </li>
+            ) : item.kind === "shortfall" ? (
+              <li key={item.key} className="grid gap-2 py-3 first:pt-0 last:pb-0">
+                <p className="text-sm">
+                  <span className="text-xs text-muted-foreground">{shortDate(item.date)} · {dueLabel(item.date, today)} · </span>
+                  {item.account.name} <Money value={item.amount} compact className="font-semibold" /> 모자랄 것 같아요
+                  <span className="block text-xs text-muted-foreground">
+                    {item.causes.map((c) => `${shortDate(c.date)} ${c.label} ${formatCompactKRW(c.amount)}`).join(" · ")}
+                    {item.source ? `${item.causes.length ? " · " : ""}${item.source.name}에서 옮기면 돼요` : ""}
+                  </span>
+                </p>
+                <div>
+                  <Button size="sm" variant="outline" onClick={() => setDraft(shortfallDraft(item, today))}>
+                    미리 옮기기 기록
+                  </Button>
+                </div>
+              </li>
+            ) : item.kind === "reconcile" ? (
+              <li key={item.key} className="grid gap-2 py-3 first:pt-0 last:pb-0">
+                <p className="text-sm">
+                  {item.payday ? "이번 달 잔액 맞추기 · 1분" : `잔액이 오래된 계좌가 ${item.stale}개예요`}
+                  <span className="block text-xs text-muted-foreground">
+                    {item.payday
+                      ? `${shortDate(item.payday)} 월급이 들어왔어요. 통장 숫자와 다른 것만 고치면 돼요.`
+                      : "한 화면에서 바뀐 것만 고치고 나머지는 그대로 넘겨요."}
+                  </span>
+                </p>
+                <div>
+                  <Link href="/assets/reconcile" className={buttonVariants({ size: "sm", variant: "outline" })}>
+                    한 번에 맞추기
+                  </Link>
                 </div>
               </li>
             ) : (

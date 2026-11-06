@@ -7,11 +7,13 @@ import { cn } from "cn";
 import { AmountInput } from "@/components/common/amount-input";
 import { Field } from "@/components/common/field";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
 import { LIABILITY_TYPES, SAVING_DESTINATION_TYPES } from "@/lib/finance/balance";
 import type { ParsedCardMessage } from "@/lib/finance/card-message";
+import { canHaveRule, resolveCategory, type MerchantRule } from "@/lib/finance/merchant-rules";
 import { addDays, todayKST } from "@/lib/finance/period";
 import { TX_TYPE_META, TX_TYPES_ORDER, validateTxShape } from "@/lib/finance/tx-rules";
 import type { AccountType, TxType, Visibility } from "@/lib/finance/types";
@@ -22,8 +24,10 @@ import {
   updateRecurringRule,
   createTransaction,
   deleteTransaction,
+  getMerchantRules,
   getMerchantSuggestions,
   inspectPastedExpense,
+  saveMerchantRule,
   updateTransaction,
   type PastedExpenseInfo,
   type SpendableChange,
@@ -123,6 +127,16 @@ function accountFilter(type: TxType, side: "from" | "to"): (t: AccountType) => b
 /** 처음부터 보이는 유형 — 나머지(이체·대출상환·잔액보정)는 펼쳐서 고른다 */
 const MAIN_TYPES: TxType[] = ["EXPENSE", "INCOME", "SAVE_INVEST"];
 const CATEGORY_CHIP_COUNT = 8;
+
+/** 가맹점 규칙은 창을 열 때마다 받지 않는다 — 규칙을 저장하면 비운다 */
+let rulesCache: Promise<MerchantRule[]> | null = null;
+function loadMerchantRules() {
+  rulesCache ??= getMerchantRules().catch(() => {
+    rulesCache = null;
+    return [];
+  });
+  return rulesCache;
+}
 
 function dateLabel(date: string) {
   const today = todayKST();
@@ -284,10 +298,26 @@ function TxForm({
   const [merchantFocused, setMerchantFocused] = useState(false);
   // 사용자가 카테고리를 직접 고른 뒤에는 사용처 입력이 그 선택을 덮지 않는다
   const [categoryTouched, setCategoryTouched] = useState(Boolean(initial));
+  // 이 창에서 카테고리를 손으로 골랐는지 — "앞으로 이 사용처는…" 제안은 이때만 (금액만 고친 수정에는 묻지 않는다)
+  const [pickedByHand, setPickedByHand] = useState(false);
   const pickCategory = (id: string) => {
     setCategoryTouched(true);
+    setPickedByHand(true);
     setCategory(id);
   };
+  // 가맹점 규칙 (가구 공유) — 지출만
+  const [rules, setRules] = useState<MerchantRule[]>([]);
+  useEffect(() => {
+    let alive = true;
+    void loadMerchantRules().then((list) => alive && setRules(list));
+    return () => {
+      alive = false;
+    };
+  }, []);
+  // 사용처로 자동으로 고른 카테고리의 출처 (안내 문구용)
+  const [autoSource, setAutoSource] = useState<"rule" | "brand" | null>(null);
+  // "앞으로 이 사용처는 이 카테고리로" — null 이면 기본값 (수정 중인 거래는 켬, 새 기록은 끔)
+  const [saveRule, setSaveRule] = useState<boolean | null>(null);
   const suggestionCache = useRef(new Map<TxType, MerchantSuggestion[]>());
   useEffect(() => {
     const cached = suggestionCache.current.get(type);
@@ -370,6 +400,23 @@ function TxForm({
     if (to) setTo(to);
   }
 
+  // 사용처를 쓰면 규칙 → (지난 기록이 없을 때만) 브랜드 사전으로 카테고리를 고른다. 직접 고른 뒤에는 건드리지 않는다
+  const ruleHit = type === "EXPENSE" ? resolveCategory(merchant, rules, categories) : null;
+  const ruleHitKey = ruleHit ? `${ruleHit.source}:${ruleHit.categoryId}` : "";
+  useEffect(() => {
+    if (categoryTouched || !ruleHit) return setAutoSource(null);
+    const known = suggestions.find((sg) => sg.merchant === merchant.trim())?.categoryId;
+    if (ruleHit.source === "brand" && known) return setAutoSource(null);
+    setCategory(ruleHit.categoryId);
+    setAutoSource(ruleHit.source);
+    // ruleHit 은 ruleHitKey 로 비교한다 (매 렌더 새 객체)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ruleHitKey, categoryTouched, suggestions, merchant]);
+  const existingRule = ruleHit?.source === "rule" ? ruleHit.rule ?? null : null;
+  const offerRule =
+    mode === "tx" && type === "EXPENSE" && pickedByHand && !!categoryId && canHaveRule(merchant) && existingRule?.categoryId !== categoryId;
+  const willSaveRule = offerRule && (saveRule ?? Boolean(initial));
+
   const merchantQuery = merchant.trim();
   const exactSuggestion = merchantQuery ? suggestions.find((sg) => sg.merchant === merchantQuery) : undefined;
   const shownSuggestions = exactSuggestion
@@ -446,6 +493,14 @@ function TxForm({
         result = await createTransaction(tx);
       }
       if (!result.ok) return setError(result.error);
+      if (willSaveRule && tx.categoryId) {
+        const saved = await saveMerchantRule({ merchant: merchant.trim(), categoryId: tx.categoryId, applyToPast: true });
+        if (saved.ok) {
+          rulesCache = null;
+          const n = saved.data?.updated ?? 0;
+          toast.success(`앞으로 ${merchant.trim()}은(는) ${categories.find((c) => c.id === tx.categoryId)?.name ?? "이 카테고리"}로 기록해요${n ? ` · 지난 기록 ${n}건도 바꿨어요` : ""}`);
+        } else toast.error(saved.error);
+      }
       rememberAccount(`${type}:from`, tx.fromAccountId);
       rememberAccount(`${type}:to`, tx.toAccountId);
       if (mode === "tx") rememberCategory(type, tx.categoryId);
@@ -628,6 +683,21 @@ function TxForm({
               );
             })}
           </NativeSelect>
+          {autoSource && !categoryTouched ? (
+            <p className="text-xs text-muted-foreground">{autoSource === "rule" ? "가맹점 규칙으로 골랐어요" : "가맹점 이름으로 골랐어요 · 다르면 바꿔 주세요"}</p>
+          ) : null}
+          {offerRule ? (
+            <label className="flex items-start gap-2 rounded-lg bg-muted px-3 py-2 text-sm">
+              <Checkbox checked={willSaveRule} onChange={(e) => setSaveRule(e.target.checked)} className="mt-0.5" />
+              <span>
+                앞으로 <b className="font-semibold">{merchant.trim()}</b>은(는) {byCategory.get(categoryId)?.name}로
+                <span className="block text-xs text-muted-foreground">
+                  {existingRule ? `지금 규칙: ${categories.find((c) => c.id === existingRule.categoryId)?.name ?? "없는 카테고리"} · ` : ""}
+                  우리 가구 기록 창에 모두 적용돼요. 내가 쓴 지난 기록도 바꿔요.
+                </span>
+              </span>
+            </label>
+          ) : null}
         </Field>
       ) : null}
 

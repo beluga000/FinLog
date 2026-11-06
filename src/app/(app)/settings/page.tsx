@@ -9,14 +9,16 @@ import {
   HouseholdSettingsForm,
   ThemeSelect,
 } from "@/features/household/components/settings-forms";
-import { getCategories } from "@/features/ledger/queries";
+import { MerchantRuleList } from "@/features/ledger/components/merchant-rule-list";
+import { getCategories, queryMerchantRules } from "@/features/ledger/queries";
 import { requireHousehold } from "@/lib/db/context";
 
 export const metadata = { title: "설정" };
 
 export default async function SettingsPage() {
   const ctx = await requireHousehold();
-  const categories = await getCategories(ctx);
+  const [categories, rules] = await Promise.all([getCategories(ctx), queryMerchantRules(ctx)]);
+  const categoryName = new Map(categories.map((c) => [c.id, c.name]));
   const expenseParents = categories
     .filter((c) => c.txType === "EXPENSE" && !c.parentId)
     .map((p) => ({ ...p, children: categories.filter((c) => c.parentId === p.id) }));
@@ -57,6 +59,16 @@ export default async function SettingsPage() {
         </CardHeader>
         <CardContent>
           <CategoryEditor parents={expenseParents} />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>가맹점 규칙</CardTitle>
+          <CardDescription>이 사용처는 이 카테고리로 — 우리 가구 기록 창과 캡처 가져오기에 함께 적용돼요.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <MerchantRuleList rules={rules.map((r) => ({ id: r.id, merchant: r.merchant, categoryName: categoryName.get(r.categoryId) ?? "" }))} />
         </CardContent>
       </Card>
 

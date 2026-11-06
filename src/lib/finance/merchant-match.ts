@@ -26,6 +26,8 @@ const CONFUSE = new Set(CONFUSABLE.flatMap(([a, b]) => [a + b, b + a]));
 /** 전각 영숫자·기호(Ｌ)만 반각으로 — NFKC 는 한글 자모(ㅁ)까지 바꿔서 쓰지 않는다 */
 const halfWidth = (s: string) => s.replace(/[！-～]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xfee0));
 const key = (s: string) => halfWidth(s).replace(/[\s·.\-_*()<>]/g, "").toUpperCase();
+/** 비교용 가맹점 키 — 전각→반각, 공백·기호 제거, 대문자 (가맹점 규칙 키로도 쓴다) */
+export const merchantKey = key;
 
 /** 글자 하나 바꾸는 비용: 같음 0, 헷갈리는 쌍 0.3, 그 외 1 */
 function subCost(a: string, b: string): number {

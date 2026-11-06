@@ -1,11 +1,13 @@
 import Link from "next/link";
-import { PiggyBank } from "lucide-react";
+import { PiggyBank, Scale } from "lucide-react";
 import { Money } from "@/components/common/money";
 import { buttonVariants } from "@/components/ui/button";
 import { PageHeader } from "@/components/common/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AccountMenu, DeleteArchivedAccountButton, NewAccountButton, RestoreAccountButton, type AccountFormEnv } from "@/features/accounts/components/account-dialogs";
+import { ForecastCard } from "@/features/accounts/components/forecast-card";
 import { TaxRoomCard } from "@/features/accounts/components/tax-room-card";
+import { getBalanceForecast } from "@/features/accounts/forecast";
 import { getAccountOverview } from "@/features/accounts/queries";
 import { getTaxRoom } from "@/features/accounts/tax";
 import { defaultSourceAccount, ownerChoiceOf, PAYMENT_SOURCE_TYPES } from "@/features/accounts/rules";
@@ -27,11 +29,12 @@ export default async function AssetsPage({ searchParams }: { searchParams: Promi
   const sp = await searchParams;
   const scope = ctx.isCouple ? parseViewScope(sp.scope) : "us";
   const today = todayKST();
-  const [{ accounts, netWorth, trend }, allVisible, taxRoom] = await Promise.all([
+  const [{ accounts, netWorth, trend }, allVisible, taxRoom, forecasts] = await Promise.all([
     getAccountOverview(ctx, scope, { today, monthStartDay: ctx.household.monthStartDay, trendMonths: 12 }),
     // 출금 계좌 후보·이름은 뷰 스코프(나/배우자)와 상관없이 가계 전체에서
     getAccounts(ctx, "us"),
     getTaxRoom(ctx, { today }),
+    getBalanceForecast(ctx, { today }),
   ]);
   // 보관한 계좌 — 순자산에서 빠지고 여기서만 되돌린다 (뷰 스코프는 위 목록과 같게)
   const archived = (await getAccounts(ctx, scope, { includeArchived: true })).filter((a) => a.isArchived);
@@ -78,6 +81,9 @@ export default async function AssetsPage({ searchParams }: { searchParams: Promi
         description="계좌 잔액 = 마지막으로 맞춘 잔액 + 이후 거래"
         actions={
           <>
+            <Link href="/assets/reconcile" className={buttonVariants({ variant: "outline" })}>
+              <Scale /> 잔액 맞추기
+            </Link>
             <Link href="/assets/savings" className={buttonVariants({ variant: "outline" })}>
               <PiggyBank /> 고정 저축
             </Link>
@@ -129,7 +135,13 @@ export default async function AssetsPage({ searchParams }: { searchParams: Promi
         </Card>
       </div>
 
-      {taxRoom ? <TaxRoomCard room={taxRoom} showOwner={ctx.isCouple} /> : null}
+      {/* 예보·절세는 한 줄에 둘 (휴대폰에서는 위아래) */}
+      {forecasts.length || taxRoom ? (
+        <div className="grid grid-cols-1 items-start gap-3 lg:grid-cols-2">
+          <ForecastCard forecasts={forecasts} />
+          {taxRoom ? <TaxRoomCard room={taxRoom} showOwner={ctx.isCouple} /> : null}
+        </div>
+      ) : null}
 
       {groups.length === 0 ? (
         <Card>

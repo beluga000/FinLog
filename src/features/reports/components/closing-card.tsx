@@ -1,11 +1,19 @@
 import Link from "next/link";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, Flag } from "lucide-react";
 import { cn } from "cn";
 import { Money } from "@/components/common/money";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatPercent } from "@/lib/finance/money";
 import { parseMonthKey } from "@/lib/finance/period";
+import type { ClosingPace } from "@/lib/finance/closing";
 import type { MonthlyClosing } from "../closing";
+import { StartChallengeButton } from "./challenge-controls";
+
+const PACE_TONE: Record<ClosingPace["tone"], string> = {
+  good: "text-good",
+  warning: "text-warning",
+  critical: "text-critical",
+};
 
 /** 리포트 최상단 — 지난달 결산 + 다음 달 조정 제안 (§4-7, AC-16) */
 export function ClosingCard({ closing: c, surplusAction }: { closing: MonthlyClosing; surplusAction?: React.ReactNode }) {
@@ -50,10 +58,28 @@ export function ClosingCard({ closing: c, surplusAction }: { closing: MonthlyClo
           {c.primaryGoal ? (
             <div className="grid gap-0.5">
               <dt className="truncate text-xs text-muted-foreground">{c.primaryGoal.name}</dt>
-              <dd className="font-semibold">{c.primaryGoal.pace ?? "잔액 기록 이전"}</dd>
+              {c.primaryGoal.pace ? (
+                <>
+                  <dd className={cn("font-semibold", PACE_TONE[c.primaryGoal.pace.tone])}>{c.primaryGoal.pace.text}</dd>
+                  {c.primaryGoal.pace.change ? <dd className="text-xs text-muted-foreground">{c.primaryGoal.pace.change}</dd> : null}
+                </>
+              ) : (
+                <dd className="font-semibold">잔액 기록 이전</dd>
+              )}
             </div>
           ) : null}
         </dl>
+
+        {c.challengeResults.length ? (
+          <ul className="grid gap-1 border-t pt-3 text-sm">
+            {c.challengeResults.map((r) => (
+              <li key={r.text} className={cn("flex items-start gap-1.5", r.tone === "good" && "text-good")}>
+                <Flag className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                {r.text}
+              </li>
+            ))}
+          </ul>
+        ) : null}
 
         {c.suggestions.length ? (
           <div className="grid gap-2 border-t pt-3">
@@ -67,6 +93,16 @@ export function ClosingCard({ closing: c, surplusAction }: { closing: MonthlyClo
                   </Link>
                   {/* 남은 돈 제안은 읽고 끝나지 않게 바로 옮기기 기록으로 */}
                   {s.kind === "surplus" && surplusAction ? <div className="flex flex-wrap gap-2 pl-1">{surplusAction}</div> : null}
+                  {/* 사용처 집중 제안은 이번 달 챌린지로 */}
+                  {s.kind === "merchant" && c.challenge ? (
+                    <div className="flex flex-wrap items-center gap-2 pl-1">
+                      {c.challenge.started ? (
+                        <span className="text-xs text-muted-foreground">이번 달 {c.challenge.limitCount}번까지 해 보는 중이에요 · 홈에서 진행을 볼 수 있어요</span>
+                      ) : (
+                        <StartChallengeButton merchant={c.challenge.merchant} count={c.challenge.count} amount={c.challenge.amount} limitCount={c.challenge.limitCount} />
+                      )}
+                    </div>
+                  ) : null}
                 </li>
               ))}
             </ul>

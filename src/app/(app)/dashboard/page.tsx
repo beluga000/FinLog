@@ -24,6 +24,8 @@ import { GoalMilestoneCard } from "@/features/goals/components/goal-milestone";
 import { MoveToGoalButton } from "@/features/goals/components/move-to-goal";
 import { getGoalsOverview, getMoveTarget, pickSurplusGoal } from "@/features/goals/queries";
 import { TxList } from "@/features/ledger/components/tx-list";
+import { getChallengeProgress } from "@/features/reports/challenge";
+import { ChallengeChips } from "@/features/reports/components/challenge-controls";
 import { getAccounts, getCategories, getScopedTransactions } from "@/features/ledger/queries";
 import { materializeRecurring } from "@/features/ledger/service";
 import { requireHousehold } from "@/lib/db/context";
@@ -48,12 +50,13 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
 
   // 확인할 일·최근 기록은 아래 Suspense 에서 따로 그려, 목표·쓸 수 있는 돈이 먼저 보이게 한다
   const goalsP = getGoalsOverview(ctx, { today, monthStartDay }).then((o) => o.goals);
-  const [goals, source, saving, current, planned] = await Promise.all([
+  const [goals, source, saving, current, planned, challenges] = await Promise.all([
     goalsP,
     goalsP.then((goals) => getSpendableSource(ctx, scope, { today, monthStartDay, goals })),
     getMonthSaving(ctx, scope, range),
     getScopedTransactions(ctx, range, scope),
     getPlannedRest(ctx, scope, { today, range }),
+    getChallengeProgress(ctx, { today, monthStartDay }),
   ]);
   const spendable = computeSpendable(source);
   const yesterday = yesterdayResult(source, today);
@@ -107,6 +110,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
             />
           ) : null}
           <SpendableCard spendable={spendable} hasIncome={spendable.income > 0n} yesterday={yesterday} />
+          <ChallengeChips items={challenges} />
         </div>
         <div className="grid min-w-0 gap-4 lg:col-start-1 lg:row-start-1">
           {milestoneGoal ? (

@@ -3,17 +3,21 @@ import {
   getAccountFlows,
   getAccounts,
   getLatestTransactions,
+  getRecurringRules,
   getReviewTransactions,
   getScopedTransactions,
   type RecurringTemplate,
   type TxRow,
 } from "@/features/ledger/queries";
+import { getBalanceForecast } from "@/features/accounts/forecast";
 import type { GoalView } from "@/features/goals/queries";
 import type { HouseholdContext } from "@/lib/db/context";
 import { fromDbDate, prisma, toDbDate } from "@/lib/db/prisma";
 import { computeBalances } from "@/lib/finance/balance";
+import { bigOutflowsBefore, pickTransferSource, roundUpToManwon } from "@/lib/finance/forecast";
 import { upcomingCardDue } from "@/lib/finance/card-billing";
 import { summarizePlanned, upcomingPlanned, type PlannedSummary } from "@/lib/finance/month-progress";
+import { isBalanceStale, recentPayday, RECONCILE_BUNDLE_MIN } from "@/lib/finance/reconcile";
 import { addDays, getMonthKey, getMonthRange } from "@/lib/finance/period";
 import {
   calculateSpendable,
@@ -136,7 +140,6 @@ export async function getMonthSaving(ctx: Ctx, scope: ViewScope, range: { start:
 
 /** 거래 흐름만으로는 평가액 변동을 알 수 없는 계좌 — 잔액 업데이트 대상 */
 const VALUATION_TYPES: AccountType[] = ["INVESTMENT", "PENSION", "REAL_ESTATE", "OTHER_ASSET"];
-export const STALE_BALANCE_DAYS = 30;
 const REVIEW_LIMIT = 3;
 
 export type ReviewItem =
@@ -156,10 +159,34 @@ export type ReviewItem =
       key: string;
       date: DateStr | null;
       account: { id: string; name: string; type: AccountType; balance: bigint };
+    }
+  | {
+      /** 통장 잔액 예보에서 2주 안에 0 아래로 내려가는 통장 */
+      kind: "shortfall";
+      key: string;
+      /** 처음 모자라는 날 */
+      date: DateStr;
+      account: { id: string; name: string };
+      /** 옮길 금액 (가장 낮을 때 기준, 만 원 단위 올림) */
+      amount: bigint;
+      /** 그때까지 크게 나가는 것 — "20일 생활비 카드 대금 272만" */
+      causes: { date: DateStr; label: string; amount: bigint }[];
+      /** 옮겨도 0 위에 남는 통장 */
+      source: { id: string; name: string } | null;
+    }
+  | {
+      /** 잔액 한 번에 맞추기 — 월급날 직후이거나 낡은 계좌가 여럿일 때 한 줄로 묶는다 */
+      kind: "reconcile";
+      key: string;
+      date: DateStr | null;
+      /** 잔액 입력이 오래된 평가액 계좌 수 */
+      stale: number;
+      /** 월급날 직후라 띄운 경우 그 월급일 */
+      payday: DateStr | null;
     };
 
 /**
- * 평가액 계좌 중 마지막 잔액 입력이 30일 넘은 것 — 오래된 순.
+ * 평가액 계좌 중 마지막 잔액 입력이 30일(1년에 한 번 고른 계좌는 365일) 넘은 것 — 오래된 순.
  * 부부는 서로의 계좌를 관리할 수 있으므로 내가 볼 수 있는 계좌 전부가 대상이다.
  */
 export async function getStaleBalanceAccounts(ctx: Ctx, opts: { today: DateStr }) {
@@ -172,10 +199,9 @@ export async function getStaleBalanceAccounts(ctx: Ctx, opts: { today: DateStr }
     _max: { asOf: true },
   });
   const lastById = new Map(lastSnapshots.map((s) => [s.accountId, s._max.asOf ? fromDbDate(s._max.asOf) : null]));
-  const staleBefore = addDays(opts.today, -STALE_BALANCE_DAYS);
   const stale = valuation
     .map((a) => ({ a, last: lastById.get(a.id) ?? null }))
-    .filter(({ last }) => last === null || last < staleBefore);
+    .filter(({ a, last }) => isBalanceStale(last, opts.today, a.balanceCheckYearly));
   if (!stale.length) return [];
   const ids = stale.map(({ a }) => a.id);
   const { snapshots, flows } = await getAccountFlows(ctx, ids, opts.today);
@@ -239,22 +265,73 @@ export async function getCardDueItems(ctx: Ctx, opts: { today: DateStr }): Promi
 }
 
 /**
- * 확인할 일 (PROD.MD §2-10): 결제일이 가까운 카드 + 정기 규칙이 만든 미확인 거래 + 평가액이 30일 넘게 갱신 안 된 자산 계좌.
+ * 월급날 직후인데 그날 이후 아무 계좌도 잔액을 맞추지 않았으면 그 월급일.
+ * 월급 = 진행 중인 수입(INCOME) 정기 규칙.
+ */
+async function getPaydayToReconcile(ctx: Ctx, today: DateStr): Promise<DateStr | null> {
+  const rules = (await getRecurringRules(ctx)).filter((r) => r.isActive && r.template.type === "INCOME");
+  const payday = recentPayday(rules, today);
+  if (payday === null) return null;
+  const last = await prisma.accountSnapshot.aggregate({
+    where: { account: { householdId: ctx.householdId, isArchived: false } },
+    _max: { asOf: true },
+  });
+  const lastAsOf = last._max.asOf ? fromDbDate(last._max.asOf) : null;
+  return lastAsOf !== null && lastAsOf >= payday ? null : payday;
+}
+
+/**
+ * 확인할 일 (PROD.MD §2-10): 결제일이 가까운 카드 + 정기 규칙이 만든 미확인 거래 + 평가액이 오래된 자산 계좌.
  * 카드 결제는 기한이 있으므로 맨 앞, 나머지는 오래된 순. 최대 3건.
+ * 월급날 직후이거나 낡은 계좌가 2개 이상이면 계좌별 줄 대신 "잔액 한 번에 맞추기" 한 줄을 카드 다음에 둔다.
  */
 export async function getReviewItems(ctx: Ctx, opts: { today: DateStr }): Promise<ReviewItem[]> {
-  const [cards, pending, stale] = await Promise.all([
+  const [cards, pending, stale, payday, shortfalls] = await Promise.all([
     getCardDueItems(ctx, opts),
     getReviewTransactions(ctx, REVIEW_LIMIT),
     getStaleBalanceAccounts(ctx, opts),
+    getPaydayToReconcile(ctx, opts.today),
+    getShortfallItems(ctx, opts),
   ]);
+  const bundle = payday !== null || stale.length >= RECONCILE_BUNDLE_MIN;
   const rest: ReviewItem[] = [
     ...pending.map((tx): ReviewItem => ({ kind: "recurring", key: `tx:${tx.id}`, date: tx.date, tx })),
-    ...stale.map(({ last, ...account }): ReviewItem => ({ kind: "balance", key: `acc:${account.id}`, date: last, account })),
+    ...(bundle ? [] : stale.map(({ last, ...account }): ReviewItem => ({ kind: "balance", key: `acc:${account.id}`, date: last, account }))),
   ];
   // 스냅샷이 아예 없는 계좌는 가장 오래된 것으로 본다
   rest.sort((x, y) => (x.date ?? "").localeCompare(y.date ?? ""));
-  return [...cards.sort((x, y) => x.date.localeCompare(y.date)), ...rest].slice(0, REVIEW_LIMIT);
+  const reconcile: ReviewItem[] = bundle
+    ? [{ kind: "reconcile", key: "reconcile", date: payday ?? stale[0]?.last ?? null, stale: stale.length, payday }]
+    : [];
+  // 기한이 있는 것(카드 결제·잔액 부족)을 날짜순으로 맨 앞에
+  const dated = [...cards, ...shortfalls].sort((x, y) => x.date.localeCompare(y.date));
+  return [...dated, ...reconcile, ...rest].slice(0, REVIEW_LIMIT);
+}
+
+/** 잔액 부족은 이만큼 앞까지만 알린다 — 한 달 뒤 부족은 그 사이 월급·기록으로 바뀌기 쉽다 */
+const SHORTFALL_NOTICE_DAYS = 14;
+
+type ShortfallItem = Extract<ReviewItem, { kind: "shortfall" }>;
+
+async function getShortfallItems(ctx: Ctx, opts: { today: DateStr }): Promise<ShortfallItem[]> {
+  const forecasts = await getBalanceForecast(ctx, opts);
+  const until = addDays(opts.today, SHORTFALL_NOTICE_DAYS);
+  return forecasts.flatMap((f): ShortfallItem[] => {
+    if (!f.shortfall || f.shortfall.date > until) return [];
+    const amount = roundUpToManwon(f.shortfall.amount);
+    const source = pickTransferSource(forecasts, f.id, amount);
+    return [
+      {
+        kind: "shortfall",
+        key: `short:${f.id}`,
+        date: f.shortfall.date,
+        account: { id: f.id, name: f.name },
+        amount,
+        causes: bigOutflowsBefore(f, f.shortfall.date).map((e) => ({ date: e.date, label: e.label, amount: -e.amount })),
+        source: source ? { id: source.id, name: source.name } : null,
+      },
+    ];
+  });
 }
 
 /** 최근 기록 — 오늘 기준 60일 안에서 최신 n건 */

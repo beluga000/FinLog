@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeAheadChange, findFrequentMerchant, findOneOffExpense, suggestAdjustments, type ClosingExpense } from "../closing";
+import { describeClosingPace, findFrequentMerchant, findOneOffExpense, suggestAdjustments, type ClosingExpense } from "../closing";
 
 const base = {
   overspent: false,
@@ -158,12 +158,32 @@ describe("사용처 집중 찾기", () => {
   });
 });
 
-describe("대표 목표 앞섬·뒤처짐 변화", () => {
-  it("전월 대비 변화를 문장으로", () => {
-    expect(describeAheadChange(3, 1)).toBe("3개월 앞섬 (전월보다 2개월 당김)");
-    expect(describeAheadChange(-4, -2)).toBe("4개월 뒤처짐 (전월보다 2개월 밀림)");
-    expect(describeAheadChange(0, 0)).toBe("0개월 앞섬 (전월과 같음)");
-    expect(describeAheadChange(2, null)).toBe("2개월 앞섬");
-    expect(describeAheadChange(null, 3)).toBe("지금 납입액으로는 달성이 어려워요");
+describe("결산 카드 대표 목표 한 줄", () => {
+  it("앞서면 목표 화면과 같은 말 + 당겨진 개월", () => {
+    expect(describeClosingPace({ pace: { kind: "onTrack", aheadMonths: 3 }, ahead: 3, prevAhead: 1, savingGap: 0n })).toEqual({
+      text: "계획대로면 3개월 먼저 달성",
+      tone: "good",
+      change: "전월보다 2개월 당겨졌어요",
+    });
+    expect(describeClosingPace({ pace: { kind: "onTrack", aheadMonths: 0 }, ahead: 0, prevAhead: 0, savingGap: 0n }).change).toBe("전월과 같아요");
+  });
+
+  it("뒤처지면 개월 수 대신 모자란 금액, 밀린 이유는 덜 한 저축", () => {
+    const p = describeClosingPace({ pace: { kind: "short", gap: 300_000 }, ahead: -4, prevAhead: -2, savingGap: 500_000n });
+    expect(p.text).toBe("월 30만 모자라요");
+    expect(p.tone).toBe("warning");
+    expect(p.change).toBe("목표 저축을 50만 덜 해서 2개월 밀렸어요");
+    // 저축은 다 했는데 밀렸으면 이유를 지어내지 않는다
+    expect(describeClosingPace({ pace: { kind: "short", gap: 1 }, ahead: -4, prevAhead: -2, savingGap: 0n }).change).toBe("전월보다 2개월 밀렸어요");
+  });
+
+  it("멈춘 목표는 원인, 닿지 않으면 빨강, 비교 불가면 변화 없음", () => {
+    expect(describeClosingPace({ pace: { kind: "blocked", by: "priority" }, ahead: null, prevAhead: 3, savingGap: 0n })).toEqual({
+      text: "앞 순위에 밀려 배분 0원",
+      tone: "warning",
+      change: null,
+    });
+    expect(describeClosingPace({ pace: { kind: "stuck" }, ahead: null, prevAhead: null, savingGap: 0n }).tone).toBe("critical");
+    expect(describeClosingPace({ pace: { kind: "onTrack", aheadMonths: 2 }, ahead: 2, prevAhead: null, savingGap: 0n }).change).toBeNull();
   });
 });

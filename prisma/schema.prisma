@@ -101,11 +101,11 @@ model User {
 }
 
 model Household {
-  id              String            @id @default(cuid())
+  id              String                 @id @default(cuid())
   name            String
-  monthStartDay   Int               @default(1)
-  emergencyMonths Int               @default(3)
-  createdAt       DateTime          @default(now())
+  monthStartDay   Int                    @default(1)
+  emergencyMonths Int                    @default(3)
+  createdAt       DateTime               @default(now())
   members         HouseholdMember[]
   invites         HouseholdInvite[]
   accounts        Account[]
@@ -119,6 +119,8 @@ model Household {
   goals           AssetGoal[]
   lifeEvents      LifeEvent[]
   auditLogs       AuditLog[]
+  merchantRules   MerchantCategoryRule[]
+  challenges      Challenge[]
 }
 
 model HouseholdMember {
@@ -147,42 +149,44 @@ model HouseholdInvite {
 }
 
 model Account {
-  id                String            @id @default(cuid())
-  householdId       String
-  ownerUserId       String?
-  name              String
-  type              AccountType
-  institution       String?
-  defaultVisibility Visibility        @default(SHARED)
-  assetClassTag     String?
-  isArchived        Boolean           @default(false)
+  id                 String            @id @default(cuid())
+  householdId        String
+  ownerUserId        String?
+  name               String
+  type               AccountType
+  institution        String?
+  defaultVisibility  Visibility        @default(SHARED)
+  assetClassTag      String?
+  isArchived         Boolean           @default(false)
   /// 카드 결제일 / 대출 납입일 (1~31, 짧은 달은 말일). CREDIT_CARD · LOAN
-  billingDay        Int?
+  billingDay         Int?
   /// 카드 대금 / 대출 이자·상환금이 빠져나가는 계좌. CREDIT_CARD · LOAN
-  paymentAccountId  String?
+  paymentAccountId   String?
   /// 예적금 가입일 / 대출 실행일. SAVINGS · LOAN
-  openedOn          DateTime?         @db.Date
+  openedOn           DateTime?         @db.Date
   /// 예적금·대출 만기일. SAVINGS · LOAN
-  maturityDate      DateTime?         @db.Date
+  maturityDate       DateTime?         @db.Date
   /// 예적금·대출 연 금리 (0.035 = 3.5%). SAVINGS · LOAN
-  interestRate      Decimal?          @db.Decimal(9, 6)
+  interestRate       Decimal?          @db.Decimal(9, 6)
   /// 정책형 적금 종류 (YOUTH_LEAP 청년도약계좌 · YOUTH_FUTURE 청년미래적금). SAVINGS 만, 일반 상품은 null
-  savingsProduct    String?
+  savingsProduct     String?
   /// 정책형 적금의 기여금 구간 (소득 구간·일반/우대형). 값은 src/lib/finance/savings-products.ts
-  savingsTier       String?
+  savingsTier        String?
   /// 대출 상환 방식 (BULLET 만기일시 · EQUAL_PAYMENT 원리금균등 · EQUAL_PRINCIPAL 원금균등). LOAN 만. 계산은 src/lib/finance/loan.ts
-  loanRepayment     String?
+  loanRepayment      String?
   /// 전세·월세 보증금 대출 — 보증금으로 묶여 내가 쓰는 돈이 아니므로 순자산·부채 합계에서 뺀다 (이자만 고정비). LOAN 만
-  depositLoan       Boolean           @default(false)
+  depositLoan        Boolean           @default(false)
   /// 세제 혜택 계좌 (PENSION_SAVINGS 연금저축 · IRP — PENSION 만 / ISA — INVESTMENT · SAVINGS 만). 한도는 src/lib/finance/tax-accounts.ts
-  taxWrapper        String?
-  createdAt         DateTime          @default(now())
-  household         Household         @relation(fields: [householdId], references: [id], onDelete: Cascade)
-  paymentAccount    Account?          @relation("cardPayment", fields: [paymentAccountId], references: [id], onDelete: SetNull)
-  paidCards         Account[]         @relation("cardPayment")
-  snapshots         AccountSnapshot[]
-  outgoing          Transaction[]     @relation("fromAccount")
-  incoming          Transaction[]     @relation("toAccount")
+  taxWrapper         String?
+  /// 잔액을 1년에 한 번만 확인 (전세보증금처럼 거의 안 바뀌는 계좌) — 확인할 일·잔액 맞추기에서 365일 기준
+  balanceCheckYearly Boolean           @default(false)
+  createdAt          DateTime          @default(now())
+  household          Household         @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  paymentAccount     Account?          @relation("cardPayment", fields: [paymentAccountId], references: [id], onDelete: SetNull)
+  paidCards          Account[]         @relation("cardPayment")
+  snapshots          AccountSnapshot[]
+  outgoing           Transaction[]     @relation("fromAccount")
+  incoming           Transaction[]     @relation("toAccount")
 
   @@index([householdId])
 }
@@ -198,18 +202,19 @@ model AccountSnapshot {
 }
 
 model Category {
-  id           String        @id @default(cuid())
-  householdId  String
-  parentId     String?
-  name         String
-  txType       TxType
-  bucket       BudgetBucket?
-  icon         String?
-  sortOrder    Int           @default(0)
-  household    Household     @relation(fields: [householdId], references: [id], onDelete: Cascade)
-  parent       Category?     @relation("CategoryTree", fields: [parentId], references: [id], onDelete: Cascade)
-  children     Category[]    @relation("CategoryTree")
-  transactions Transaction[]
+  id            String                 @id @default(cuid())
+  householdId   String
+  parentId      String?
+  name          String
+  txType        TxType
+  bucket        BudgetBucket?
+  icon          String?
+  sortOrder     Int                    @default(0)
+  household     Household              @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  parent        Category?              @relation("CategoryTree", fields: [parentId], references: [id], onDelete: Cascade)
+  children      Category[]             @relation("CategoryTree")
+  transactions  Transaction[]
+  merchantRules MerchantCategoryRule[]
 
   @@index([householdId, txType])
 }
@@ -396,4 +401,40 @@ model RateLimit {
   key     String   @id
   count   Int
   resetAt DateTime
+}
+
+/// 가맹점 → 카테고리 규칙 (가구 공유). 기록 창에서 가맹점을 쓰면 이 카테고리를 먼저 채운다.
+/// merchantKey = 공백·기호를 뺀 대문자 가맹점 이름 (src/lib/finance/merchant-rules.ts merchantKey)
+model MerchantCategoryRule {
+  id              String    @id @default(cuid())
+  householdId     String
+  merchantKey     String
+  /// 화면에 보여 줄 가맹점 이름 (마지막으로 고친 사람이 쓴 그대로)
+  merchant        String
+  categoryId      String
+  createdByUserId String
+  updatedAt       DateTime  @updatedAt
+  household       Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  category        Category  @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+
+  @@unique([householdId, merchantKey])
+}
+
+/// 이번 달 챌린지 — 결산 제안 "같은 사용처 N번"을 "이번 달 M번까지"로 (가구 공유, 달마다 하나씩)
+model Challenge {
+  id              String    @id @default(cuid())
+  householdId     String
+  /// 챌린지 달 (YYYY-MM, 가구 월 시작일 기준)
+  month           String
+  merchantKey     String
+  merchant        String
+  limitCount      Int
+  /// 결산 달(시작한 달의 전달) 방문 횟수·금액 — 다음 결산에서 비교
+  baselineCount   Int
+  baselineAmount  BigInt
+  createdByUserId String
+  createdAt       DateTime  @default(now())
+  household       Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  @@unique([householdId, month, merchantKey])
 }

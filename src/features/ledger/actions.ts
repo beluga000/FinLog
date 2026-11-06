@@ -9,6 +9,7 @@ import { requireHousehold, writeAudit, type HouseholdContext } from "@/lib/db/co
 import { fromDbDate, prisma, toDbDate } from "@/lib/db/prisma";
 import { importKeys } from "@/lib/finance/capture-import";
 import { addDays, getMonthKey, getMonthRange, inRange, todayKST } from "@/lib/finance/period";
+import { canHaveRule, findRule, isNearAmount, merchantKey, resolveCategory, type MerchantRule } from "@/lib/finance/merchant-rules";
 import { lastRunAfterScheduleChange } from "@/lib/finance/recurring";
 import { TX_TYPES_ORDER } from "@/lib/finance/tx-rules";
 import type { TxType } from "@/lib/finance/types";
@@ -16,7 +17,7 @@ import { txAccess } from "@/lib/finance/visibility";
 import { recurringInputSchema, type ActionResult } from "./schema";
 import { materializeRecurring, prefetchTxLookup, resolveTxInput } from "./service";
 import { SHARED_TEXT_COOKIE } from "./shared-text";
-import { queryMerchantSuggestions, type MerchantSuggestion, type RecurringTemplate } from "./queries";
+import { getCategories, queryMerchantRules, queryMerchantSuggestions, type MerchantSuggestion, type RecurringTemplate } from "./queries";
 
 function done() {
   revalidatePath("/", "layout");
@@ -254,6 +255,8 @@ export async function inspectCapturedExpenses(
 /**
  * windowDays: 앞뒤로 볼 날 수 (문자 붙여넣기 1, 캡처 0).
  * 기존 기록 하나는 한 건에만 맞춘다 — 같은 날 같은 금액이 두 번이면 기록이 하나뿐일 때 한 건만 의심한다.
+ * 금액이 같은 기록이 없으면 같은 날·같은 가맹점에서 금액이 거의 같은(3% 안) 기록도 의심한다 (10,000 / 10,100).
+ * 카테고리: 가구 가맹점 규칙 → 같은 가맹점에 최근 쓴 카테고리 → 브랜드 사전.
  */
 async function inspectExpenses(
   ctx: HouseholdContext,
@@ -267,11 +270,10 @@ async function inspectExpenses(
   const visible = { householdId: ctx.householdId, deletedAt: null, type: "EXPENSE" as const, OR: [{ createdByUserId: ctx.userId }, { visibility: { not: "PRIVATE" as const } }] };
   const dates = ok.map((i) => i.date).sort();
   const merchants = [...new Set(ok.map((i) => (typeof i.merchant === "string" ? i.merchant.trim() : "")).filter(Boolean))];
-  const [candidates, lastCategories] = await Promise.all([
+  const [candidates, lastCategories, rules, categories] = await Promise.all([
     prisma.transaction.findMany({
       where: {
         ...visible,
-        amount: { in: [...new Set(ok.map((i) => i.amount))].map(BigInt) },
         date: { gte: toDbDate(addDays(dates[0], -windowDays)), lte: toDbDate(addDays(dates[dates.length - 1], windowDays)) },
       },
       orderBy: { date: "asc" },
@@ -285,6 +287,8 @@ async function inspectExpenses(
           select: { merchant: true, categoryId: true },
         })
       : [],
+    merchants.length ? queryMerchantRules(ctx) : [],
+    merchants.length ? getCategories(ctx) : [],
   ]);
   const existing = candidates.map((t) => ({ date: fromDbDate(t.date), merchant: t.merchant, amount: t.amount }));
   const categoryOf = new Map(lastCategories.map((c) => [c.merchant, c.categoryId]));
@@ -299,9 +303,59 @@ async function inspectExpenses(
     // 같은 날·같은 가맹점 기록을 먼저 맞춘다
     let k = existing.findIndex((t, n) => fits(t, n) && t.date === i.date && t.merchant === merchant);
     if (k < 0) k = existing.findIndex(fits);
+    if (k < 0 && merchant) {
+      const key = merchantKey(merchant);
+      k = existing.findIndex((t, n) => !used.has(n) && t.date === i.date && !!t.merchant && merchantKey(t.merchant) === key && isNearAmount(t.amount, amount));
+    }
     if (k >= 0) used.add(k);
-    return { duplicate: k >= 0 ? existing[k] : null, categoryId: (merchant && categoryOf.get(merchant)) || null };
+    const hit = resolveCategory(merchant, rules, categories);
+    const categoryId = hit?.source === "rule" ? hit.categoryId : (merchant && categoryOf.get(merchant)) || hit?.categoryId || null;
+    return { duplicate: k >= 0 ? existing[k] : null, categoryId };
   });
+}
+
+/** 가구 가맹점 규칙 — 기록 창이 한 번 받아 두고 사용처를 쓸 때마다 맞춰 본다 */
+export async function getMerchantRules(): Promise<(MerchantRule & { id: string })[]> {
+  const ctx = await requireHousehold();
+  return queryMerchantRules(ctx);
+}
+
+/**
+ * "앞으로 이 가맹점은 이 카테고리로" — 가구가 함께 쓴다 (배우자 기록 창에도 적용).
+ * applyToPast: 내가 기록한 같은 가맹점 지출의 카테고리도 바꾼다 (배우자 기록은 배우자가 고친다).
+ */
+export async function saveMerchantRule(input: { merchant: string; categoryId: string; applyToPast?: boolean }): Promise<ActionResult<{ updated: number }>> {
+  const ctx = await requireHousehold();
+  const merchant = typeof input?.merchant === "string" ? input.merchant.trim().slice(0, 100) : "";
+  if (!canHaveRule(merchant)) return { ok: false, error: "이 사용처는 규칙을 만들 수 없어요." };
+  const category = await prisma.category.findFirst({ where: { id: String(input.categoryId), householdId: ctx.householdId, txType: "EXPENSE" } });
+  if (!category) return { ok: false, error: "카테고리를 찾을 수 없어요." };
+  const key = merchantKey(merchant);
+  await prisma.merchantCategoryRule.upsert({
+    where: { householdId_merchantKey: { householdId: ctx.householdId, merchantKey: key } },
+    create: { householdId: ctx.householdId, merchantKey: key, merchant, categoryId: category.id, createdByUserId: ctx.userId },
+    update: { merchant, categoryId: category.id, createdByUserId: ctx.userId },
+  });
+  let updated = 0;
+  if (input.applyToPast) {
+    const mine = await prisma.transaction.findMany({
+      where: { householdId: ctx.householdId, createdByUserId: ctx.userId, deletedAt: null, type: "EXPENSE", merchant: { not: null }, NOT: { categoryId: category.id } },
+      select: { id: true, merchant: true },
+    });
+    const rule = [{ merchantKey: key, merchant, categoryId: category.id }];
+    const ids = mine.filter((t) => findRule(t.merchant!, rule)).map((t) => t.id);
+    if (ids.length) updated = (await prisma.transaction.updateMany({ where: { id: { in: ids } }, data: { categoryId: category.id } })).count;
+  }
+  done();
+  return { ok: true, data: { updated } };
+}
+
+export async function deleteMerchantRule(id: string): Promise<ActionResult> {
+  const ctx = await requireHousehold();
+  const r = await prisma.merchantCategoryRule.deleteMany({ where: { id: String(id), householdId: ctx.householdId } });
+  if (!r.count) return { ok: false, error: "규칙을 찾을 수 없어요." };
+  done();
+  return { ok: true };
 }
 
 export interface BulkExpenseRow {

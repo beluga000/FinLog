@@ -243,6 +243,13 @@ export function simulatePriorityRaise(
 /** 목표가 왜 멈췄는지 — 배정액이 0원인 진행 중 목표의 원인 */
 export type GoalBlocker = "priority" | "commit" | "noSaving";
 
+/** 멈춘 원인 문구 — 목표 화면과 결산 카드가 같은 말을 쓴다 */
+export const GOAL_BLOCKER_TEXT: Record<GoalBlocker, string> = {
+  priority: "앞 순위에 밀려 배분 0원",
+  commit: "확정액이 0원이에요",
+  noSaving: "저축 기록이 없어 멈춰 있어요",
+};
+
 /**
  * 목표 상태 한 줄의 종류 — "N개월 늦어요" 대신 원인과 모자란 금액으로 말한다.
  * - blocked: 배정액이 0원 (앞 순위에 밀림·확정액 0원·저축 기록 없음)

@@ -1,14 +1,8 @@
 import { cn } from "cn";
 import { Money } from "@/components/common/money";
-import { goalPaceKind, type GoalBlocker } from "@/lib/finance/goals";
+import { GOAL_BLOCKER_TEXT as BLOCKER_TEXT, goalPaceKind } from "@/lib/finance/goals";
 import { formatMonthLabel } from "@/lib/finance/period";
 import type { GoalView } from "../queries";
-
-const BLOCKER_TEXT: Record<GoalBlocker, string> = {
-  priority: "앞 순위에 밀려 배분 0원",
-  commit: "확정액이 0원이에요",
-  noSaving: "저축 기록이 없어 멈춰 있어요",
-};
 
 /**
  * 계획 대비 상태 한 줄 — 색 + 텍스트 (색만으로 의미 전달 금지).

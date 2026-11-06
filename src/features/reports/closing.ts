@@ -7,16 +7,20 @@ import type { HouseholdContext } from "@/lib/db/context";
 import { prisma, toDbDate } from "@/lib/db/prisma";
 import { balanceSeries, summarizeNetWorth } from "@/lib/finance/balance";
 import {
-  describeAheadChange,
+  describeClosingPace,
   findFrequentMerchant,
   findOneOffExpense,
   suggestAdjustments,
   type ClosingExpense,
+  type ClosingPace,
   type ClosingSuggestion,
 } from "@/lib/finance/closing";
-import { evaluateGoal, goalCurrent } from "@/lib/finance/goals";
+import { challengeLimit, countVisits, describeChallengeResult, type ChallengeResult } from "@/lib/finance/challenge";
+import { evaluateGoal, goalCurrent, goalPaceKind } from "@/lib/finance/goals";
+import { merchantKey } from "@/lib/finance/merchant-rules";
 import { addDays, getMonthKey, getMonthRange, shiftMonth } from "@/lib/finance/period";
 import { buildCategoryIndex, UNCATEGORIZED } from "@/lib/finance/stats";
+import { getChallenges } from "./challenge";
 import type { DateStr, MonthKey } from "@/lib/finance/types";
 import { txAccess } from "@/lib/finance/visibility";
 
@@ -28,10 +32,14 @@ export interface MonthlyClosing {
   saving: { actual: bigint; planned: bigint };
   /** 지난달 쓸 수 있는 돈 결과 — 양수 = 남김, 음수 = 초과 */
   spendableResult: bigint;
-  primaryGoal: { id: string; name: string; pace: string | null } | null;
+  primaryGoal: { id: string; name: string; pace: ClosingPace | null } | null;
   suggestions: ClosingSuggestion[];
   /** 지난달 남긴 돈과 옮길 목표 — 결산 카드의 [옮기기 기록] 버튼용 */
   surplus: { amount: bigint; goal: { id: string; name: string; linkedAccountIds: string[] } | null };
+  /** "같은 사용처 N번" 제안 → 이번 달 챌린지 (started = 이미 시작함) */
+  challenge: { merchant: string; count: number; amount: bigint; limitCount: number; started: boolean } | null;
+  /** 결산 달에 했던 챌린지 결과 */
+  challengeResults: ChallengeResult[];
 }
 
 /**
@@ -49,7 +57,7 @@ export async function getMonthlyClosing(
   const before = shiftMonth(month, -1);
   const range = getMonthRange(month, monthStartDay);
 
-  const [series, lastSource, prevSource, stale, accounts, monthTxs, categories, pendingReviews] = await Promise.all([
+  const [series, lastSource, prevSource, stale, accounts, monthTxs, categories, pendingReviews, pastChallenges, nowChallenges] = await Promise.all([
     getMonthlySeries(ctx, "us", { endMonth: month, count: 2, monthStartDay }),
     getSpendableSource(ctx, "us", { today, monthStartDay, goals, month }),
     getSpendableSource(ctx, "us", { today, monthStartDay, goals, month: before }),
@@ -58,6 +66,8 @@ export async function getMonthlyClosing(
     getScopedTransactions(ctx, range, "us"),
     getCategories(ctx),
     countPendingReviews(ctx, range.end),
+    getChallenges(ctx, month),
+    getChallenges(ctx, shiftMonth(month, 1)),
   ]);
   const [prevStats, stats] = [series[0].stats, series[1].stats];
   if (stats.income === 0n && stats.expense === 0n && stats.saving === 0n) return null;
@@ -72,7 +82,7 @@ export async function getMonthlyClosing(
   // 남은 돈은 연결 계좌가 있는 목표로만 옮기라고 제안한다 (순자산 목표는 옮겨도 진척이 같다)
   const surplusAmount = last.overspent ? 0n : last.remaining;
   const surplusGoal = primary && !primary.usesNetWorth && primary.linkedAccountIds.length ? primary : null;
-  let pace: string | null = null;
+  let pace: ClosingPace | null = null;
   let monthsSooner: number | null = null;
   if (primary) {
     const ids = accounts.map((a) => a.id);
@@ -82,7 +92,7 @@ export async function getMonthlyClosing(
     const prevEnd = addDays(getMonthRange(before, monthStartDay).end, -1);
     // 두 날짜 잔액을 한 번에 계산해 둔다
     const [endBalances, prevBalances] = balanceSeries(ids, snapshots, flows, [monthEnd, prevEnd]);
-    const aheadAt = (asOf: DateStr, extra = 0) => {
+    const evaluateAt = (asOf: DateStr, extra = 0) => {
       if (trackingStart === null || asOf < trackingStart) return undefined;
       const balances = asOf === monthEnd ? endBalances : prevBalances;
       const basis = primary.usesNetWorth
@@ -99,13 +109,20 @@ export async function getMonthlyClosing(
         monthlyContribution: primary.contribution,
         today: asOf,
         inflation: DEFAULT_INFLATION,
-      }).aheadMonths;
+      });
     };
-    const ahead = aheadAt(monthEnd);
-    const prevAhead = aheadAt(prevEnd);
-    pace = ahead === undefined ? null : describeAheadChange(ahead, prevAhead ?? null);
+    const end = evaluateAt(monthEnd);
+    const ahead = end?.aheadMonths;
+    if (end) {
+      pace = describeClosingPace({
+        pace: goalPaceKind({ status: primary.status, contribution: primary.contribution, blockedBy: primary.blockedBy, evaluation: end }),
+        ahead: end.aheadMonths,
+        prevAhead: evaluateAt(prevEnd)?.aheadMonths ?? null,
+        savingGap: planned - stats.saving,
+      });
+    }
     if (surplusGoal && surplusAmount > 0n && typeof ahead === "number") {
-      const moved = aheadAt(monthEnd, Number(surplusAmount));
+      const moved = evaluateAt(monthEnd, Number(surplusAmount))?.aheadMonths;
       if (typeof moved === "number" && moved > ahead) monthsSooner = moved - ahead;
     }
   }
@@ -122,6 +139,16 @@ export async function getMonthlyClosing(
       needs: index.bucketOf(t.categoryId) === "NEEDS",
     }));
 
+  const frequent = findFrequentMerchant(expenses);
+  const startedKeys = new Set(nowChallenges.map((c) => c.merchantKey));
+  const challenge = frequent
+    ? { ...frequent, merchant: frequent.name, limitCount: challengeLimit(frequent.count), started: startedKeys.has(merchantKey(frequent.name)) }
+    : null;
+  const monthMerchants = monthTxs.items.filter((t) => t.type === "EXPENSE").map((t) => t.merchant);
+  const challengeResults = pastChallenges.map((c) =>
+    describeChallengeResult({ ...c, actual: countVisits(monthMerchants, c.merchant) }),
+  );
+
   const prevByCat = new Map(prevStats.expenseByTopCategory.map((c) => [c.categoryId, c.amount]));
   const suggestions = suggestAdjustments({
     overspent: last.overspent,
@@ -132,7 +159,7 @@ export async function getMonthlyClosing(
     staleAccounts: stale,
     ledgerHref: `/ledger?month=${month}`,
     oneOff: findOneOffExpense(expenses, stats.expense),
-    frequentMerchant: findFrequentMerchant(expenses),
+    frequentMerchant: frequent,
     pendingReviews,
     surplus: { amount: surplusAmount, goal: surplusGoal ? { id: surplusGoal.id, name: surplusGoal.name, monthsSooner } : null },
   });
@@ -148,6 +175,8 @@ export async function getMonthlyClosing(
       amount: surplusAmount,
       goal: surplusGoal ? { id: surplusGoal.id, name: surplusGoal.name, linkedAccountIds: surplusGoal.linkedAccountIds } : null,
     },
+    challenge: challenge ? { merchant: challenge.merchant, count: challenge.count, amount: challenge.amount, limitCount: challenge.limitCount, started: challenge.started } : null,
+    challengeResults,
   };
 }
 

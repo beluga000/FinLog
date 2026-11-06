@@ -1,3 +1,4 @@
+import { GOAL_BLOCKER_TEXT, type GoalPaceKind } from "./goals";
 import { formatCompactKRW } from "./money";
 
 /**
@@ -193,12 +194,64 @@ export function suggestAdjustments(input: {
   return out.sort((a, b) => PRIORITY[a.kind] - PRIORITY[b.kind]).slice(0, MAX_SUGGESTIONS);
 }
 
-/** 대표 목표 앞섬(+)·뒤처짐(−) 개월의 전월 대비 변화 문구 */
-export function describeAheadChange(ahead: number | null, prevAhead: number | null): string | null {
-  if (ahead === null) return "지금 납입액으로는 달성이 어려워요";
-  const now = ahead >= 0 ? `${ahead}개월 앞섬` : `${-ahead}개월 뒤처짐`;
-  if (prevAhead === null) return now;
-  const diff = ahead - prevAhead;
-  if (diff === 0) return `${now} (전월과 같음)`;
-  return `${now} (전월보다 ${Math.abs(diff)}개월 ${diff > 0 ? "당김" : "밀림"})`;
+export interface ClosingPace {
+  /** 결산 달 말일 기준 상태 — 목표 화면과 같은 말 (원인·모자란 금액) */
+  text: string;
+  tone: "good" | "warning" | "critical";
+  /** 그 전달 말일 대비 변화와 이유 — 비교할 수 없으면 null */
+  change: string | null;
+}
+
+/**
+ * 결산 카드의 대표 목표 한 줄 — "N개월 뒤처짐" 대신 목표 화면처럼 원인·모자란 금액으로 말하고,
+ * 전월 대비 변화는 개월 수와 함께 이유(목표 저축을 덜 함)를 붙인다.
+ * savingGap = 결산 달 계획 저축 − 실제 저축 (0 이하면 다 채움).
+ */
+export function describeClosingPace(input: {
+  pace: GoalPaceKind;
+  ahead: number | null;
+  prevAhead: number | null;
+  savingGap: bigint;
+}): ClosingPace {
+  const { pace, ahead, prevAhead, savingGap } = input;
+  let text: string;
+  let tone: ClosingPace["tone"] = "warning";
+  switch (pace.kind) {
+    case "achieved":
+      text = "달성 완료";
+      tone = "good";
+      break;
+    case "paused":
+      text = "일시정지";
+      tone = "good";
+      break;
+    case "ready":
+      text = "모인 돈만으로 닿아요";
+      tone = "good";
+      break;
+    case "onTrack":
+      text = pace.aheadMonths === 0 ? "계획대로면 목표일에 달성" : `계획대로면 ${pace.aheadMonths}개월 먼저 달성`;
+      tone = "good";
+      break;
+    case "blocked":
+      text = GOAL_BLOCKER_TEXT[pace.by];
+      break;
+    case "short":
+      text = `월 ${formatCompactKRW(pace.gap)} 모자라요`;
+      break;
+    case "stuck":
+      text = "지금 배분으로는 닿기 어려워요";
+      tone = "critical";
+      break;
+  }
+
+  let change: string | null = null;
+  if (ahead !== null && prevAhead !== null && pace.kind !== "achieved" && pace.kind !== "paused") {
+    const diff = ahead - prevAhead;
+    if (diff > 0) change = `전월보다 ${diff}개월 당겨졌어요`;
+    else if (diff < 0 && savingGap > 0n) change = `목표 저축을 ${formatCompactKRW(savingGap)} 덜 해서 ${-diff}개월 밀렸어요`;
+    else if (diff < 0) change = `전월보다 ${-diff}개월 밀렸어요`;
+    else change = "전월과 같아요";
+  }
+  return { text, tone, change };
 }

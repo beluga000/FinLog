@@ -316,6 +316,54 @@ export async function recordBalance(id: string, raw: unknown): Promise<ActionRes
   return { ok: true };
 }
 
+const reconcileSchema = z
+  .array(
+    z.object({
+      id: z.string().min(1),
+      /** 표시 금액 (부채는 갚아야 할 금액을 양수로). null = 이번엔 건너뜀 (1년에 한 번 계좌) */
+      balance: z.string().regex(/^-?\d+$/, "금액은 숫자만 입력하세요.").nullable(),
+      yearly: z.boolean(),
+    }),
+  )
+  .min(1)
+  .max(100);
+
+/**
+ * 잔액 한 번에 맞추기 — 오늘 기준 스냅샷을 계좌마다 남긴다 ("그대로예요"도 기록해야 다음 확인 시점이 밀린다).
+ * 1년에 한 번 확인 여부도 같이 저장한다. 하나라도 내가 관리할 수 없는 계좌면 아무것도 저장하지 않는다.
+ */
+export async function recordBalances(raw: unknown): Promise<ActionResult<{ saved: number }>> {
+  const ctx = await requireHousehold();
+  const parsed = reconcileSchema.safeParse(raw);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "입력값을 확인하세요." };
+  const ids = [...new Set(parsed.data.map((e) => e.id))];
+  const accounts = await prisma.account.findMany({ where: { id: { in: ids }, householdId: ctx.householdId, isArchived: false } });
+  const byId = new Map(accounts.filter((a) => canSeeAccount(a, ctx.userId, "us")).map((a) => [a.id, a]));
+  if (byId.size !== ids.length) return { ok: false, error: NOT_FOUND };
+  const asOf = toDbDate(todayKST());
+  const ops = parsed.data.flatMap((e) => {
+    const account = byId.get(e.id)!;
+    const out = [];
+    if (e.balance !== null) {
+      const balance = toStoredBalance(account.type, e.balance);
+      out.push(
+        prisma.accountSnapshot.upsert({
+          where: { accountId_asOf: { accountId: e.id, asOf } },
+          create: { accountId: e.id, asOf, balance },
+          update: { balance },
+        }),
+      );
+    }
+    if (e.yearly !== account.balanceCheckYearly) {
+      out.push(prisma.account.update({ where: { id: e.id }, data: { balanceCheckYearly: e.yearly } }));
+    }
+    return out;
+  });
+  await prisma.$transaction(ops);
+  revalidatePath("/", "layout");
+  return { ok: true, data: { saved: parsed.data.filter((e) => e.balance !== null).length } };
+}
+
 /** 이 계좌로 들어가거나 나가는 진행 중 자동이체 (정기 거래 템플릿은 JSON 이라 가계 규칙을 읽어 거른다) */
 async function activeRulesOf(householdId: string, accountId: string) {
   const rules = await prisma.recurringRule.findMany({ where: { householdId, isActive: true } });
