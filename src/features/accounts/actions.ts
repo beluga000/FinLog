@@ -8,9 +8,10 @@ import { requireHousehold, writeAudit, type HouseholdContext } from "@/lib/db/co
 import { prisma, toDbDate } from "@/lib/db/prisma";
 import { isLiability } from "@/lib/finance/balance";
 import { addDays, todayKST } from "@/lib/finance/period";
+import { loanPlan } from "@/lib/finance/loan";
 import { isSavingsProduct, SAVINGS_PRODUCTS } from "@/lib/finance/savings-products";
 import { canSeeAccount } from "@/lib/finance/visibility";
-import { normalizeBilling, normalizeSavings, OWNER_CHOICES, PAYMENT_SOURCE_TYPES, resolveOwner, visibilityError } from "./rules";
+import { normalizeBilling, normalizeLoan, normalizeSavings, OWNER_CHOICES, PAYMENT_SOURCE_TYPES, resolveOwner, visibilityError } from "./rules";
 
 const ACCOUNT_TYPES = [
   "CASH", "CHECKING", "SAVINGS", "INVESTMENT", "PENSION", "REAL_ESTATE", "OTHER_ASSET", "CREDIT_CARD", "LOAN",
@@ -24,17 +25,21 @@ const accountSchema = z.object({
   institution: z.string().trim().max(40).nullable(),
   owner: z.enum(OWNER_CHOICES),
   defaultVisibility: z.enum(["SHARED", "SUMMARY_ONLY", "PRIVATE"]),
-  /** 카드 결제일 (CREDIT_CARD 만) */
+  /** 카드 결제일 · 대출 납입일 (CREDIT_CARD · LOAN) */
   billingDay: z.number().int().min(1, "결제일은 1~31일이에요.").max(31, "결제일은 1~31일이에요.").nullable().default(null),
-  /** 카드 대금 출금 계좌 (CREDIT_CARD 만) */
+  /** 카드 대금 · 대출 이자·상환금 출금 계좌 (CREDIT_CARD · LOAN) */
   paymentAccountId: z.string().nullable().default(null),
-  /** 예적금 가입일·만기일·연 금리(%) (SAVINGS 만) */
+  /** 예적금 가입일 / 대출일 · 만기일 · 연 금리(%) (SAVINGS · LOAN) */
   openedOn: dateStr.nullable().default(null),
   maturityDate: dateStr.nullable().default(null),
   interestRatePct: z.number().min(0, "금리를 확인하세요.").max(30, "금리는 30% 이하로 입력하세요.").nullable().default(null),
   /** 정책형 적금 종류·기여금 구간 (SAVINGS 만) */
   savingsProduct: z.string().max(20).nullable().default(null),
   savingsTier: z.string().max(20).nullable().default(null),
+  /** 대출 상환 방식 (LOAN 만) */
+  loanRepayment: z.string().max(20).nullable().default(null),
+  /** 전세·월세 보증금 대출 (LOAN 만) — 순자산에서 뺀다 */
+  depositLoan: z.boolean().default(false),
 });
 
 /** 적금 계좌 추가와 함께 만드는 매달 자동이체 (SAVINGS 새 계좌만) */
@@ -62,7 +67,7 @@ function toStoredBalance(type: (typeof ACCOUNT_TYPES)[number], input: string): b
 /** 출금 계좌: 같은 가계·사용 중·통장/현금·내가 볼 수 있는 계좌 */
 async function checkPaymentAccount(ctx: Ctx, paymentAccountId: string | null, cardId?: string): Promise<string | null> {
   if (!paymentAccountId) return null;
-  if (paymentAccountId === cardId) return "카드 자신을 출금 계좌로 고를 수 없어요.";
+  if (paymentAccountId === cardId) return "자기 자신을 출금 계좌로 고를 수 없어요.";
   const src = await prisma.account.findFirst({ where: { id: paymentAccountId, householdId: ctx.householdId, isArchived: false } });
   if (!src || !canSeeAccount(src, ctx.userId, "us")) return "출금 계좌를 찾을 수 없어요.";
   if (!PAYMENT_SOURCE_TYPES.includes(src.type)) return "출금 계좌는 입출금·저축 통장이나 현금만 고를 수 있어요.";
@@ -80,6 +85,8 @@ async function resolveInput(ctx: Ctx, d: z.infer<typeof accountSchema>, type: (t
   if (payErr) return { ok: false as const, error: payErr };
   const savings = normalizeSavings(type, d);
   if (!savings.ok) return savings;
+  const loan = normalizeLoan(type, d);
+  if (!loan.ok) return loan;
   return {
     ok: true as const,
     ownerUserId: owner.ownerUserId,
@@ -89,13 +96,20 @@ async function resolveInput(ctx: Ctx, d: z.infer<typeof accountSchema>, type: (t
     interestRate: savings.interestRate,
     savingsProduct: savings.savingsProduct,
     savingsTier: savings.savingsTier,
+    loanRepayment: loan.loanRepayment,
+    depositLoan: loan.depositLoan,
   };
 }
 
 export async function createAccount(raw: unknown): Promise<ActionResult<{ id: string }>> {
   const ctx = await requireHousehold();
   const parsed = accountSchema
-    .extend({ openingBalance: balanceSchema.shape.balance, autoSave: autoSaveSchema.nullable().default(null) })
+    .extend({
+      openingBalance: balanceSchema.shape.balance,
+      autoSave: autoSaveSchema.nullable().default(null),
+      /** 만기일시상환 대출: 매달 이자 자동 기록 (LOAN 새 계좌만) */
+      autoInterest: z.boolean().default(false),
+    })
     .safeParse(raw);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "입력값을 확인하세요." };
   const d = parsed.data;
@@ -120,6 +134,35 @@ export async function createAccount(raw: unknown): Promise<ActionResult<{ id: st
     rulePlan = { fromVisibility: from.defaultVisibility, startDate, endDate };
   }
 
+  // 만기일시상환은 원금이 그대로라 매달 이자도 같다 → 이자 자동이체(지출)를 같이 만들어 고정비로 잡는다.
+  // 원리금·원금균등은 원금·이자 비율이 매달 바뀌어 고정 금액 자동이체로 맞출 수 없어 만들지 않는다.
+  let interestRule: { amount: bigint; dayOfMonth: number; fromAccountId: string; categoryId: string | null; visibility: (typeof d)["defaultVisibility"]; startDate: string; endDate: string | null } | null = null;
+  if (d.type === "LOAN" && d.autoInterest) {
+    if (r.loanRepayment !== "BULLET") return { ok: false, error: "이자 자동 기록은 만기일시상환 대출만 할 수 있어요." };
+    if (!r.paymentAccountId) return { ok: false, error: "이자 출금 계좌를 고르세요." };
+    if (r.interestRate === null) return { ok: false, error: "금리를 넣어 주세요." };
+    const today = todayKST();
+    const plan = loanPlan(
+      { balance: -toStoredBalance(d.type, d.openingBalance), annualRate: r.interestRate, repayment: "BULLET", payDay: r.billingDay, maturityDate: d.maturityDate },
+      today,
+    );
+    if (!plan || plan.next.interest <= 0n) return { ok: false, error: "남은 원금과 만기일을 확인하세요." };
+    const tomorrow = addDays(today, 1);
+    const [from, category] = await Promise.all([
+      prisma.account.findUniqueOrThrow({ where: { id: r.paymentAccountId }, select: { defaultVisibility: true } }),
+      prisma.category.findFirst({ where: { householdId: ctx.householdId, txType: "EXPENSE", name: "대출이자" }, select: { id: true } }),
+    ]);
+    interestRule = {
+      amount: plan.next.interest,
+      dayOfMonth: r.billingDay ?? Number((d.maturityDate ?? tomorrow).slice(8, 10)),
+      fromAccountId: r.paymentAccountId,
+      categoryId: category?.id ?? null,
+      visibility: from.defaultVisibility,
+      startDate: tomorrow,
+      endDate: d.maturityDate,
+    };
+  }
+
   const account = await prisma.$transaction(async (db) => {
     const created = await db.account.create({
       data: {
@@ -136,6 +179,8 @@ export async function createAccount(raw: unknown): Promise<ActionResult<{ id: st
         interestRate: r.interestRate,
         savingsProduct: r.savingsProduct,
         savingsTier: r.savingsTier,
+        loanRepayment: r.loanRepayment,
+        depositLoan: r.depositLoan,
         // 시작 잔액 = 어제 마감 잔액 → 오늘 입력하는 거래부터 반영된다
         snapshots: { create: { asOf: toDbDate(addDays(todayKST(), -1)), balance: toStoredBalance(d.type, d.openingBalance) } },
       },
@@ -162,6 +207,30 @@ export async function createAccount(raw: unknown): Promise<ActionResult<{ id: st
           businessDayAdjust: "NONE",
           startDate: toDbDate(rulePlan.startDate),
           endDate: rulePlan.endDate ? toDbDate(rulePlan.endDate) : null,
+        },
+      });
+    }
+    if (interestRule) {
+      const template: RecurringTemplate = {
+        type: "EXPENSE",
+        amount: interestRule.amount.toString(),
+        fromAccountId: interestRule.fromAccountId,
+        toAccountId: null,
+        categoryId: interestRule.categoryId,
+        merchant: d.institution || d.name,
+        memo: `${d.name} 이자`,
+        visibility: interestRule.visibility,
+      };
+      await db.recurringRule.create({
+        data: {
+          householdId: ctx.householdId,
+          createdByUserId: ctx.userId,
+          name: `${d.name} 이자`,
+          template: template as object,
+          dayOfMonth: interestRule.dayOfMonth,
+          businessDayAdjust: "NONE",
+          startDate: toDbDate(interestRule.startDate),
+          endDate: interestRule.endDate ? toDbDate(interestRule.endDate) : null,
         },
       });
     }
@@ -211,6 +280,8 @@ export async function updateAccount(id: string, raw: unknown): Promise<ActionRes
       interestRate: r.interestRate,
       savingsProduct: r.savingsProduct,
       savingsTier: r.savingsTier,
+      loanRepayment: r.loanRepayment,
+      depositLoan: r.depositLoan,
     },
   });
   if (account.ownerUserId !== ctx.userId || r.ownerUserId !== account.ownerUserId) {

@@ -202,7 +202,15 @@ describe("계좌 잔액 & 순자산", () => {
     expect(end.get("bank")).toBe(950_000n);
     expect(end.get("card")).toBe(0n);
     const nw = summarizeNetWorth([{ id: "bank", type: "CHECKING" }, { id: "card", type: "CREDIT_CARD" }], mid);
-    expect(nw).toEqual({ assets: 1_000_000n, liabilities: 50_000n, netWorth: 950_000n });
+    expect(nw).toEqual({ assets: 1_000_000n, liabilities: 50_000n, netWorth: 950_000n, depositLoans: 0n });
+  });
+  it("보증금 대출은 순자산·부채에서 빼고 따로 모은다", () => {
+    const b = new Map([["bank", 1_000_000n], ["jeonse", -100_000_000n], ["credit", -3_000_000n]]);
+    const nw = summarizeNetWorth(
+      [{ id: "bank", type: "CHECKING" }, { id: "jeonse", type: "LOAN", depositLoan: true }, { id: "credit", type: "LOAN" }],
+      b,
+    );
+    expect(nw).toEqual({ assets: 1_000_000n, liabilities: 3_000_000n, netWorth: -2_000_000n, depositLoans: 100_000_000n });
   });
   it("기준일 이후 스냅샷은 무시, 스냅샷 없으면 0부터", () => {
     const b = computeBalances(

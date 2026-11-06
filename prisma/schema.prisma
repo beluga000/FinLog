@@ -156,20 +156,24 @@ model Account {
   defaultVisibility Visibility        @default(SHARED)
   assetClassTag     String?
   isArchived        Boolean           @default(false)
-  /// 카드 결제일 (1~31, 짧은 달은 말일). CREDIT_CARD 만 사용
+  /// 카드 결제일 / 대출 납입일 (1~31, 짧은 달은 말일). CREDIT_CARD · LOAN
   billingDay        Int?
-  /// 카드 대금이 빠져나가는 계좌. CREDIT_CARD 만 사용
+  /// 카드 대금 / 대출 이자·상환금이 빠져나가는 계좌. CREDIT_CARD · LOAN
   paymentAccountId  String?
-  /// 예적금 가입일. SAVINGS 만 사용
+  /// 예적금 가입일 / 대출 실행일. SAVINGS · LOAN
   openedOn          DateTime?         @db.Date
-  /// 예적금 만기일. SAVINGS 만 사용
+  /// 예적금·대출 만기일. SAVINGS · LOAN
   maturityDate      DateTime?         @db.Date
-  /// 예적금 연 금리 (0.035 = 3.5%). SAVINGS 만 사용
+  /// 예적금·대출 연 금리 (0.035 = 3.5%). SAVINGS · LOAN
   interestRate      Decimal?          @db.Decimal(9, 6)
   /// 정책형 적금 종류 (YOUTH_LEAP 청년도약계좌 · YOUTH_FUTURE 청년미래적금). SAVINGS 만, 일반 상품은 null
   savingsProduct    String?
   /// 정책형 적금의 기여금 구간 (소득 구간·일반/우대형). 값은 src/lib/finance/savings-products.ts
   savingsTier       String?
+  /// 대출 상환 방식 (BULLET 만기일시 · EQUAL_PAYMENT 원리금균등 · EQUAL_PRINCIPAL 원금균등). LOAN 만. 계산은 src/lib/finance/loan.ts
+  loanRepayment     String?
+  /// 전세·월세 보증금 대출 — 보증금으로 묶여 내가 쓰는 돈이 아니므로 순자산·부채 합계에서 뺀다 (이자만 고정비). LOAN 만
+  depositLoan       Boolean           @default(false)
   createdAt         DateTime          @default(now())
   household         Household         @relation(fields: [householdId], references: [id], onDelete: Cascade)
   paymentAccount    Account?          @relation("cardPayment", fields: [paymentAccountId], references: [id], onDelete: SetNull)

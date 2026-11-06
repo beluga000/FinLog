@@ -11,6 +11,8 @@ import { getAccounts } from "@/features/ledger/queries";
 import { NetWorthChart } from "@/features/dashboard/components/charts";
 import { requireHousehold } from "@/lib/db/context";
 import { isLiability } from "@/lib/finance/balance";
+import { isLoanRepayment, LOAN_REPAYMENT_LABEL, loanPlan } from "@/lib/finance/loan";
+import { formatKRW } from "@/lib/finance/money";
 import { parseMonthKey, todayKST } from "@/lib/finance/period";
 import { parseViewScope } from "@/lib/finance/visibility";
 import { ACCOUNT_TYPE_LABEL, ACCOUNT_TYPE_ORDER, VISIBILITY_LABEL } from "@/lib/labels";
@@ -42,6 +44,24 @@ export default async function AssetsPage({ searchParams }: { searchParams: Promi
       : [a.billingDay ? `매월 ${a.billingDay}일 결제` : null, a.paymentAccountId ? nameById.get(a.paymentAccountId) : null]
           .filter(Boolean)
           .join(" · ");
+  // 대출: 상환 방식 · 금리 · 다음 납입액(이자) · 출금 계좌
+  const loanLabel = (a: (typeof accounts)[number]) => {
+    const repayment = isLoanRepayment(a.loanRepayment) ? a.loanRepayment : null;
+    const plan =
+      repayment && a.interestRate !== null
+        ? loanPlan({ balance: -a.balance, annualRate: a.interestRate, repayment, payDay: a.billingDay, maturityDate: a.maturityDate }, today)
+        : null;
+    return [
+      a.depositLoan ? "보증금 대출 · 순자산 제외" : null,
+      repayment ? LOAN_REPAYMENT_LABEL[repayment] : null,
+      a.interestRate !== null ? `연 ${Math.round(a.interestRate * 1_000_000) / 10_000}%` : null,
+      plan ? `${plan.next.date ? `${Number(plan.next.date.slice(8))}일 ` : "매달 "}${formatKRW(plan.next.total)}${plan.next.principal > 0n ? ` (이자 ${formatKRW(plan.next.interest)})` : " 이자"}` : null,
+      a.maturityDate ? `${a.maturityDate.replaceAll("-", ".")} 만기` : null,
+      a.paymentAccountId ? nameById.get(a.paymentAccountId) : null,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+  };
 
   const groups = ACCOUNT_TYPE_ORDER.map((type) => ({ type, items: accounts.filter((a) => a.type === type) })).filter((g) => g.items.length);
   const ownerLabel = (owner: string | null) =>
@@ -79,6 +99,11 @@ export default async function AssetsPage({ searchParams }: { searchParams: Promi
                 <dd className="font-semibold"><Money value={netWorth.liabilities} /></dd>
               </div>
             </dl>
+            {netWorth.depositLoans > 0n ? (
+              <p className="-mt-2 text-xs text-muted-foreground">
+                보증금 대출 <Money value={netWorth.depositLoans} />은 보증금으로 묶여 있어 순자산에서 뺐어요.
+              </p>
+            ) : null}
           </CardContent>
         </Card>
         <Card>
@@ -134,6 +159,8 @@ export default async function AssetsPage({ searchParams }: { searchParams: Promi
                               .filter(Boolean)
                               .join(" · ")}
                           </div>
+                          {/* 대출 상환 정보는 길어서 줄을 따로 (좁은 화면에서 줄바꿈) */}
+                          {a.type === "LOAN" && loanLabel(a) ? <div className="text-xs text-muted-foreground">{loanLabel(a)}</div> : null}
                         </div>
                         <Money value={liability ? -a.balance : a.balance} className="text-sm font-semibold" />
                         <AccountMenu
@@ -151,6 +178,8 @@ export default async function AssetsPage({ searchParams }: { searchParams: Promi
                             interestRate: a.interestRate,
                             savingsProduct: a.savingsProduct,
                             savingsTier: a.savingsTier,
+                            loanRepayment: a.loanRepayment,
+                            depositLoan: a.depositLoan,
                             isArchived: a.isArchived,
                           }}
                           balance={a.balance}

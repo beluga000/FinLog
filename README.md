@@ -60,7 +60,7 @@ npm run dev                 # http://localhost:3000
 | 스크립트 | 내용 |
 |---|---|
 | `npm test` | 계산 로직 단위 테스트 (DB 불필요) |
-| `TEST_DATABASE_URL=... DATABASE_URL=... npm run test:db` | DB 통합 테스트 — 공개범위·가구 격리·정기거래(AC-3/4/9), 온보딩(AC-10/11), 홈·쓸 수 있는 돈·확인할 일·결산(AC-13~16, 19), 카드 결제일·부부 계좌 관리(AC-25~26), 보관한 계좌 삭제 |
+| `TEST_DATABASE_URL=... DATABASE_URL=... npm run test:db` | DB 통합 테스트 — 공개범위·가구 격리·정기거래(AC-3/4/9), 온보딩(AC-10/11), 홈·쓸 수 있는 돈·확인할 일·결산(AC-13~16, 19), 카드 결제일·부부 계좌 관리(AC-25~26), 보관한 계좌 삭제, 대출 계좌(보증금 대출·이자 자동 기록) |
 | `npm run typecheck` / `npm run lint` / `npm run build` | 정적 검사·빌드 |
 
 DB 테스트는 각자 만든 데이터만 지우므로 로컬 개발 DB로 돌려도 된다 (`TEST_DATABASE_URL=$DATABASE_URL`).
@@ -91,7 +91,7 @@ src/
 ├─ lib/finance           순수 계산 함수 + 테스트 (금액 BigInt, 월 복리, 공개범위, 월 경계, 목표 역산,
 │                        쓸 수 있는 돈 spendable · 월간 결산 제안 closing · 카드 문자 파서 card-message,
 │                        결제내역 캡처 card-capture·capture-import·merchant-match · 적금 만기 savings,
-│                        청년도약/미래적금 정책 savings-products · 공휴일 holidays)
+│                        청년도약/미래적금 정책 savings-products · 대출 상환 loan · 공휴일 holidays)
 ├─ features/ledger/capture  캡처 글자 인식 (tesseract.js, 엔진·언어 파일은 public/ocr — 설치 때 복사)
 ├─ lib/db                Prisma 클라이언트, 요청 단위 가구 컨텍스트
 └─ generated/prisma      Prisma 생성물 (git 제외)
@@ -115,6 +115,12 @@ src/
   청년도약·미래적금 정부기여금은 잔액에 넣지 않고 만기 예상액에 따로 더한다(기여금 이자는 무시). 정책 수치는 `savings-products.ts` 한 곳.
 - **계좌 보관·삭제**: 보관 시 내가 만든 자동이체만 함께 멈출 수 있다(배우자 규칙은 만든 사람만 수정).
   삭제는 보관한 계좌 중 거래 0건만 — 거래까지 지우면 과거 리포트가 바뀐다. 배우자 자동이체가 걸려 있으면 거부.
+- **대출 상환**: 상환 방식(만기일시·원리금균등·원금균등)·금리·만기일·납입일·이자/상환금 출금 계좌를 계좌에 둔다
+  (납입일·출금 계좌는 카드 결제일·대금 출금 계좌와 같은 칸). 매달 낼 돈은 처음 원금이 아니라 현재 잔액과 남은 납입 횟수로 다시 계산 —
+  중도상환해도 맞는다. 월 금리 = 연 금리/12 라 은행의 일할 이자와 몇백 원 다를 수 있다.
+- **보증금 대출**: 전세·월세 보증금 대출(`depositLoan`)은 보증금으로 묶여 내가 쓰는 돈이 아니므로 순자산·부채 합계에서 뺀다.
+  대신 보증금 자산에는 내 돈으로 낸 몫만 넣는다. 만기일시상환 대출은 매달 이자가 같아 계좌 추가 때 이자 지출(대출이자) 자동이체를 함께 만들어
+  고정비로 잡는다 — 원리금·원금균등은 금액이 매달 바뀌어 만들지 않는다.
 - **숫자 서체**: 숫자·구분자만 고정폭(`FinNum`, unicode-range), ₩·한글은 본문 서체 — 고정폭 서체에서 ₩가 W로 보이는 문제 방지.
 - **Prisma 생성기**: `prisma-client`(소스 생성)를 쓴다. 기존 `prisma-client-js` 는 Node 22가 한글이 들어간 경로에서
   package.json `imports`(`#main-entry-point`)를 해석하지 못해 런타임 오류가 난다.

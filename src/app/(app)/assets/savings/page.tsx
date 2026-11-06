@@ -254,6 +254,8 @@ export default async function SavingsPage() {
                               interestRate: a.interestRate,
                               savingsProduct: a.savingsProduct,
                               savingsTier: a.savingsTier,
+                              loanRepayment: a.loanRepayment,
+                              depositLoan: a.depositLoan,
                               isArchived: a.isArchived,
                             }}
                             balance={a.balance}

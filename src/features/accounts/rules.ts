@@ -1,3 +1,4 @@
+import { isLoanRepayment, type LoanRepayment } from "@/lib/finance/loan";
 import { isSavingsProduct, SAVINGS_PRODUCTS } from "@/lib/finance/savings-products";
 import type { AccountType, Visibility } from "@/lib/finance/types";
 
@@ -46,12 +47,15 @@ export function visibilityError(ownerUserId: string | null, viewerId: string, vi
   return null;
 }
 
-/** 카드 결제 정보 정리: 카드가 아니면 비운다 */
+/** 결제일·출금 계좌를 쓰는 계좌: 카드(결제일·대금 출금) · 대출(납입일·이자·상환금 출금) */
+export const BILLING_TYPES: AccountType[] = ["CREDIT_CARD", "LOAN"];
+
+/** 결제(납입) 정보 정리: 카드·대출이 아니면 비운다 */
 export function normalizeBilling(
   type: AccountType,
   input: { billingDay: number | null; paymentAccountId: string | null },
 ): { billingDay: number | null; paymentAccountId: string | null } {
-  if (type !== "CREDIT_CARD") return { billingDay: null, paymentAccountId: null };
+  if (!BILLING_TYPES.includes(type)) return { billingDay: null, paymentAccountId: null };
   return { billingDay: input.billingDay, paymentAccountId: input.paymentAccountId || null };
 }
 
@@ -79,17 +83,31 @@ export function normalizeSavings(
       savingsTier: string | null;
     }
   | { ok: false; error: string } {
-  if (type !== "SAVINGS") {
+  if (type !== "SAVINGS" && type !== "LOAN") {
     return { ok: true, openedOn: null, maturityDate: null, interestRate: null, savingsProduct: null, savingsTier: null };
   }
   const openedOn = input.openedOn || null;
   const maturityDate = input.maturityDate || null;
-  if (openedOn && maturityDate && maturityDate <= openedOn) return { ok: false, error: "만기일은 가입일보다 뒤여야 해요." };
+  const startLabel = type === "LOAN" ? "대출일" : "가입일";
+  if (openedOn && maturityDate && maturityDate <= openedOn) return { ok: false, error: `만기일은 ${startLabel}보다 뒤여야 해요.` };
   const interestRate = input.interestRatePct === null ? null : Math.round(input.interestRatePct * 10_000) / 1_000_000;
+  // 대출은 기간·금리만 — 정책형 적금 정보는 쓰지 않는다
+  if (type === "LOAN") return { ok: true, openedOn, maturityDate, interestRate, savingsProduct: null, savingsTier: null };
   const raw = input.savingsProduct || null;
   if (raw && !isSavingsProduct(raw)) return { ok: false, error: "상품 종류를 확인하세요." };
   const product = raw && isSavingsProduct(raw) ? raw : null;
   const tier = product ? input.savingsTier || null : null;
   if (product && tier && !SAVINGS_PRODUCTS[product].tiers.some((t) => t.key === tier)) return { ok: false, error: "기여금 구간을 확인하세요." };
   return { ok: true, openedOn, maturityDate, interestRate, savingsProduct: product, savingsTier: tier };
+}
+
+/** 대출 상환 방식·보증금 대출 여부 정리: 대출이 아니면 비운다 */
+export function normalizeLoan(
+  type: AccountType,
+  input: { loanRepayment: string | null; depositLoan: boolean },
+): { ok: true; loanRepayment: LoanRepayment | null; depositLoan: boolean } | { ok: false; error: string } {
+  if (type !== "LOAN") return { ok: true, loanRepayment: null, depositLoan: false };
+  const raw = input.loanRepayment || null;
+  if (raw && !isLoanRepayment(raw)) return { ok: false, error: "상환 방식을 확인하세요." };
+  return { ok: true, loanRepayment: raw && isLoanRepayment(raw) ? raw : null, depositLoan: input.depositLoan };
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeBilling, normalizeSavings, ownerChoiceOf, resolveOwner, visibilityError } from "./rules";
+import { normalizeBilling, normalizeLoan, normalizeSavings, ownerChoiceOf, resolveOwner, visibilityError } from "./rules";
 
 const ctx = { userId: "A", partnerId: "B" };
 
@@ -69,5 +69,30 @@ describe("예적금 상품 정보", () => {
 
   it("만기일이 가입일보다 앞서면 거절", () => {
     expect(normalizeSavings("SAVINGS", { openedOn: "2027-01-10", maturityDate: "2026-01-10", interestRatePct: null }).ok).toBe(false);
+  });
+});
+
+describe("대출 정보", () => {
+  it("납입일·출금 계좌·기간·금리를 대출에도 저장한다", () => {
+    expect(normalizeBilling("LOAN", { billingDay: 25, paymentAccountId: "bank" })).toEqual({ billingDay: 25, paymentAccountId: "bank" });
+    expect(normalizeSavings("LOAN", { openedOn: "2025-01-10", maturityDate: "2030-01-10", interestRatePct: 4.25, savingsProduct: "YOUTH_LEAP" })).toEqual({
+      ok: true,
+      openedOn: "2025-01-10",
+      maturityDate: "2030-01-10",
+      interestRate: 0.0425,
+      savingsProduct: null,
+      savingsTier: null,
+    });
+    expect(normalizeSavings("LOAN", { openedOn: "2030-01-10", maturityDate: "2025-01-10", interestRatePct: null })).toEqual({
+      ok: false,
+      error: "만기일은 대출일보다 뒤여야 해요.",
+    });
+  });
+
+  it("상환 방식·보증금 대출은 대출만, 모르는 상환 방식은 거절", () => {
+    expect(normalizeLoan("LOAN", { loanRepayment: "BULLET", depositLoan: true })).toEqual({ ok: true, loanRepayment: "BULLET", depositLoan: true });
+    expect(normalizeLoan("LOAN", { loanRepayment: null, depositLoan: false })).toEqual({ ok: true, loanRepayment: null, depositLoan: false });
+    expect(normalizeLoan("CHECKING", { loanRepayment: "BULLET", depositLoan: true })).toEqual({ ok: true, loanRepayment: null, depositLoan: false });
+    expect(normalizeLoan("LOAN", { loanRepayment: "WEEKLY", depositLoan: false }).ok).toBe(false);
   });
 });

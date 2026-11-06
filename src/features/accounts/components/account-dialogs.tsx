@@ -12,6 +12,8 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
 import { isLiability } from "@/lib/finance/balance";
+import { isLoanRepayment, LOAN_REPAYMENT_HINT, LOAN_REPAYMENT_LABEL, LOAN_REPAYMENTS, loanPlan, type LoanRepayment } from "@/lib/finance/loan";
+import { formatKRW } from "@/lib/finance/money";
 import { addMonthsExact, todayKST } from "@/lib/finance/period";
 import { isSavingsProduct, monthlyContribution, SAVINGS_PRODUCT_KEYS, SAVINGS_PRODUCTS, type SavingsProductKey } from "@/lib/finance/savings-products";
 import { institutionGroupsFor, isKnownInstitution } from "@/lib/institutions";
@@ -36,6 +38,10 @@ interface AccountValue {
   /** 정책형 적금 (청년도약계좌·청년미래적금) */
   savingsProduct: string | null;
   savingsTier: string | null;
+  /** 대출 상환 방식 */
+  loanRepayment: string | null;
+  /** 전세·월세 보증금 대출 (순자산에서 뺀다) */
+  depositLoan: boolean;
 }
 
 /** 폼이 고를 수 있는 것들 — 화면(서버)에서 한 번 만들어 넘긴다 */
@@ -58,11 +64,14 @@ function AccountForm({
   initial,
   env,
   defaultType,
+  balance,
   onDone,
 }: {
   initial?: AccountValue;
   env: AccountFormEnv;
   defaultType?: AccountType;
+  /** 수정할 때 현재 잔액 (대출 상환 미리보기용, 저장 형태 그대로 — 부채는 음수) */
+  balance?: bigint;
   onDone: () => void;
 }) {
   const { isCouple } = env;
@@ -85,6 +94,10 @@ function AccountForm({
   const [tier, setTier] = useState(initial?.savingsTier ?? "");
   const productInfo = product ? SAVINGS_PRODUCTS[product] : null;
   const tierInfo = productInfo?.tiers.find((t) => t.key === tier) ?? null;
+  const [repayment, setRepayment] = useState<LoanRepayment | "">(isLoanRepayment(initial?.loanRepayment) ? initial.loanRepayment : "");
+  const [depositLoan, setDepositLoan] = useState(initial?.depositLoan ?? false);
+  // 새 만기일시상환 대출: 매달 이자 자동 기록 (기본 켬)
+  const [autoInterest, setAutoInterest] = useState(true);
   // 정책형 상품은 가입일만 넣으면 만기일을 채운다 (직접 넣은 만기일은 덮지 않는다)
   const fillMaturity = (p: SavingsProductKey | "", opened: string) => {
     if (p && opened && !maturityDate) setMaturityDate(addMonthsExact(opened, SAVINGS_PRODUCTS[p].termMonths));
@@ -102,33 +115,43 @@ function AccountForm({
     setError(null);
     const card = type === "CREDIT_CARD";
     const savings = type === "SAVINGS";
+    const loan = type === "LOAN";
+    // 결제일·출금 계좌 = 카드·대출 / 기간·금리 = 예적금·대출
+    const billing = card || loan;
+    const term = savings || loan;
     const rate = ratePct.trim() === "" ? null : Number(ratePct);
-    if (savings && rate !== null && !Number.isFinite(rate)) return setError("금리는 숫자로 입력하세요.");
+    if (term && rate !== null && !Number.isFinite(rate)) return setError("금리는 숫자로 입력하세요.");
     const payload = {
       name,
       type,
       institution: institution || null,
       owner,
       defaultVisibility: visibility,
-      billingDay: card ? billingDay : null,
-      paymentAccountId: card ? paymentAccountId || null : null,
-      openedOn: savings ? openedOn || null : null,
-      maturityDate: savings ? maturityDate || null : null,
-      interestRatePct: savings ? rate : null,
+      billingDay: billing ? billingDay : null,
+      paymentAccountId: billing ? paymentAccountId || null : null,
+      openedOn: term ? openedOn || null : null,
+      maturityDate: term ? maturityDate || null : null,
+      interestRatePct: term ? rate : null,
       savingsProduct: savings ? product || null : null,
       savingsTier: savings && product ? tier || null : null,
+      loanRepayment: loan ? repayment || null : null,
+      depositLoan: loan ? depositLoan : false,
     };
     const withAutoSave = savings && !initial?.id && monthly !== "" && BigInt(monthly) > 0n;
     if (withAutoSave && !fromId) return setError("자동이체 출금 계좌를 고르세요.");
     // 납입일을 안 고르면 가입일의 날짜, 가입일도 없으면 오늘 날짜
     const day = payDay ?? Number((openedOn || todayKST()).slice(8, 10));
     const autoSave = withAutoSave ? { amount: monthly, dayOfMonth: day, fromAccountId: fromId } : null;
+    // 이자 자동 기록: 만기일시상환 + 출금 계좌 + 금리가 있을 때만 (없으면 조용히 건너뛴다)
+    const withInterest = loan && !initial?.id && autoInterest && repayment === "BULLET" && !!paymentAccountId && rate !== null;
     start(async () => {
       const r = initial?.id
         ? await updateAccount(initial.id, payload)
-        : await createAccount({ ...payload, openingBalance: opening || "0", autoSave });
+        : await createAccount({ ...payload, openingBalance: opening || "0", autoSave, autoInterest: withInterest });
       if (!r.ok) return setError(r.error);
-      toast.success(initial?.id ? "계좌를 수정했어요" : autoSave ? "계좌와 매달 자동이체를 추가했어요" : "계좌를 추가했어요");
+      toast.success(
+        initial?.id ? "계좌를 수정했어요" : autoSave ? "계좌와 매달 자동이체를 추가했어요" : withInterest ? "대출과 매달 이자 기록을 추가했어요" : "계좌를 추가했어요",
+      );
       onDone();
     });
   }
@@ -231,6 +254,30 @@ function AccountForm({
           </Field>
           <p className="col-span-2 -mt-2 text-xs text-muted-foreground">결제일이 다가오면 홈의 확인할 일에서 대금과 통장 잔액을 알려 드려요.</p>
         </div>
+      ) : null}
+      {type === "LOAN" ? (
+        <LoanFields
+          env={env}
+          selfId={initial?.id}
+          balance={initial?.id ? (balance === undefined ? null : -balance) : opening ? BigInt(opening) : null}
+          repayment={repayment}
+          setRepayment={setRepayment}
+          ratePct={ratePct}
+          setRatePct={setRatePct}
+          openedOn={openedOn}
+          setOpenedOn={setOpenedOn}
+          maturityDate={maturityDate}
+          setMaturityDate={setMaturityDate}
+          payDay={billingDay}
+          setPayDay={setBillingDay}
+          paymentAccountId={paymentAccountId}
+          setPaymentAccountId={setPaymentAccountId}
+          depositLoan={depositLoan}
+          setDepositLoan={setDepositLoan}
+          isNew={!initial?.id}
+          autoInterest={autoInterest}
+          setAutoInterest={setAutoInterest}
+        />
       ) : null}
       {type === "SAVINGS" ? (
         <div className="grid grid-cols-2 gap-3">
@@ -377,6 +424,179 @@ function AccountForm({
         <Button type="submit" size="lg" disabled={pending}>{pending ? "저장 중…" : "저장"}</Button>
       </DialogFooter>
     </form>
+  );
+}
+
+/** 대출 기간 선택지 (년) */
+const LOAN_TERM_YEARS = [1, 2, 3, 4, 5, 7, 10, 15, 20, 30, 40];
+
+/** 대출: 상환 방식·금리·기간·납입일·이자/상환금 출금 계좌 + 다음 납입 미리보기 */
+function LoanFields(p: {
+  env: AccountFormEnv;
+  selfId?: string;
+  /** 남은 원금 (양수). 모르면 null */
+  balance: bigint | null;
+  repayment: LoanRepayment | "";
+  setRepayment: (v: LoanRepayment | "") => void;
+  ratePct: string;
+  setRatePct: (v: string) => void;
+  openedOn: string;
+  setOpenedOn: (v: string) => void;
+  maturityDate: string;
+  setMaturityDate: (v: string) => void;
+  payDay: number | null;
+  setPayDay: (v: number | null) => void;
+  paymentAccountId: string;
+  setPaymentAccountId: (v: string) => void;
+  depositLoan: boolean;
+  setDepositLoan: (v: boolean) => void;
+  isNew: boolean;
+  autoInterest: boolean;
+  setAutoInterest: (v: boolean) => void;
+}) {
+  // 대출 기간(년) — 대출일 + 기간으로 만기일을 채운다. 저장된 만기일이 딱 맞는 햇수가 아니면 직접 입력으로 연다
+  const [term, setTerm] = useState<number | "custom" | "">(() => {
+    if (!p.maturityDate) return "";
+    if (!p.openedOn) return "custom";
+    return LOAN_TERM_YEARS.find((y) => addMonthsExact(p.openedOn, y * 12) === p.maturityDate) ?? "custom";
+  });
+  const rate = p.ratePct.trim() === "" ? null : Number(p.ratePct);
+  const plan =
+    p.repayment && p.balance !== null && rate !== null && Number.isFinite(rate)
+      ? loanPlan(
+          { balance: p.balance, annualRate: rate / 100, repayment: p.repayment, payDay: p.payDay, maturityDate: p.maturityDate || null },
+          todayKST(),
+        )
+      : null;
+  return (
+    <div className="grid grid-cols-2 gap-3">
+      <label className="col-span-2 flex items-start gap-2 rounded-lg border p-3 text-sm">
+        <input
+          type="checkbox"
+          checked={p.depositLoan}
+          onChange={(e) => {
+            p.setDepositLoan(e.target.checked);
+            // 전세대출은 대부분 만기일시상환
+            if (e.target.checked && !p.repayment) p.setRepayment("BULLET");
+          }}
+          className="mt-0.5 size-4"
+        />
+        <span>
+          전세·월세 보증금 대출
+          <span className="block text-xs text-muted-foreground">
+            보증금으로 묶여 있어 순자산에서 빼고, 이자만 고정비로 봐요. 보증금을 &lsquo;부동산·보증금&rsquo;으로 등록했다면 내 돈으로 낸 몫만 넣어 주세요.
+          </span>
+        </span>
+      </label>
+      <Field label="상환 방식" htmlFor="acc-repay" className="col-span-2" hint={p.repayment ? LOAN_REPAYMENT_HINT[p.repayment] : undefined}>
+        <NativeSelect id="acc-repay" value={p.repayment} onChange={(e) => p.setRepayment(e.target.value as LoanRepayment | "")}>
+          <option value="">모름 · 선택 안 함</option>
+          {LOAN_REPAYMENTS.map((k) => (
+            <option key={k} value={k}>{LOAN_REPAYMENT_LABEL[k]}</option>
+          ))}
+        </NativeSelect>
+      </Field>
+      <Field label="연 금리 %" htmlFor="acc-loan-rate">
+        <Input
+          id="acc-loan-rate"
+          inputMode="decimal"
+          value={p.ratePct}
+          maxLength={6}
+          onChange={(e) => p.setRatePct(e.target.value.replace(/[^\d.]/g, ""))}
+          placeholder="예: 4.5"
+          className="h-9"
+        />
+      </Field>
+      <Field label="납입일" htmlFor="acc-loan-day">
+        <NativeSelect id="acc-loan-day" value={p.payDay ?? ""} onChange={(e) => p.setPayDay(e.target.value ? Number(e.target.value) : null)}>
+          <option value="">모름</option>
+          {BILLING_DAYS.map((d) => (
+            <option key={d} value={d}>매월 {d}일</option>
+          ))}
+        </NativeSelect>
+      </Field>
+      <Field label="대출일" htmlFor="acc-loan-opened">
+        <Input
+          id="acc-loan-opened"
+          type="date"
+          value={p.openedOn}
+          onChange={(e) => {
+            p.setOpenedOn(e.target.value);
+            if (term !== "custom" && term !== "" && e.target.value) p.setMaturityDate(addMonthsExact(e.target.value, term * 12));
+          }}
+          className="h-9"
+        />
+      </Field>
+      <Field label="대출 기간" htmlFor="acc-loan-term">
+        <NativeSelect
+          id="acc-loan-term"
+          value={term}
+          onChange={(e) => {
+            const v = e.target.value === "custom" ? "custom" : e.target.value === "" ? "" : Number(e.target.value);
+            setTerm(v);
+            if (v === "") p.setMaturityDate("");
+            else if (v !== "custom" && p.openedOn) p.setMaturityDate(addMonthsExact(p.openedOn, v * 12));
+          }}
+        >
+          <option value="">모름</option>
+          {LOAN_TERM_YEARS.map((y) => (
+            <option key={y} value={y}>{y}년</option>
+          ))}
+          <option value="custom">만기일 직접 입력</option>
+        </NativeSelect>
+      </Field>
+      {term === "custom" ? (
+        <Field label="만기일" htmlFor="acc-loan-maturity" className="col-span-2">
+          <Input id="acc-loan-maturity" type="date" value={p.maturityDate} onChange={(e) => p.setMaturityDate(e.target.value)} className="h-9" />
+        </Field>
+      ) : term !== "" ? (
+        <p className="col-span-2 -mt-1 text-xs text-muted-foreground">
+          {p.maturityDate ? `만기 ${p.maturityDate.replaceAll("-", ".")}` : "대출일을 넣으면 만기일을 계산해요."}
+        </p>
+      ) : null}
+      <Field label="이자·상환금 출금 계좌" htmlFor="acc-loan-pay" className="col-span-2">
+        <NativeSelect id="acc-loan-pay" value={p.paymentAccountId} onChange={(e) => p.setPaymentAccountId(e.target.value)}>
+          <option value="">선택 안 함</option>
+          {p.env.paymentOptions
+            .filter((o) => o.id !== p.selfId)
+            .map((o) => (
+              <option key={o.id} value={o.id}>{o.name}</option>
+            ))}
+        </NativeSelect>
+      </Field>
+      {plan ? (
+        <div className="col-span-2 grid gap-0.5 rounded-lg bg-muted/50 p-3 text-sm">
+          <div className="flex items-baseline justify-between">
+            <span className="text-muted-foreground">{plan.next.date ? `다음 납입 ${plan.next.date.slice(5).replace("-", "/")}` : "매달 이자"}</span>
+            <span className="font-semibold">{formatKRW(plan.next.total)}</span>
+          </div>
+          <div className="text-xs text-muted-foreground">
+            원금 {formatKRW(plan.next.principal)} + 이자 {formatKRW(plan.next.interest)}
+            {plan.remainingCount !== null && plan.totalInterest !== null
+              ? ` · 남은 ${plan.remainingCount}회 · 남은 이자 약 ${formatKRW(plan.totalInterest)}`
+              : ""}
+          </div>
+        </div>
+      ) : null}
+      {p.isNew && p.repayment === "BULLET" ? (
+        <label className="col-span-2 flex items-start gap-2 text-sm">
+          <input type="checkbox" checked={p.autoInterest} onChange={(e) => p.setAutoInterest(e.target.checked)} className="mt-0.5 size-4" />
+          <span>
+            매달 이자 자동 기록
+            <span className="block text-xs text-muted-foreground">
+              {p.paymentAccountId && rate !== null
+                ? `납입일마다 출금 계좌에서 이자${plan ? ` ${formatKRW(plan.next.interest)}` : ""}가 지출(대출이자)로 기록되고 고정비에 잡혀요.`
+                : "금리와 이자·상환금 출금 계좌를 넣으면 만들어 드려요."}
+            </span>
+          </span>
+        </label>
+      ) : null}
+      {plan ? null : (
+        <p className="col-span-2 -mt-1 text-xs text-muted-foreground">
+          상환 방식·금리·만기일을 넣으면 매달 낼 원금과 이자를 계산해 드려요. 남은 원금은 현재 잔액으로 계산해요.
+        </p>
+      )}
+    </div>
   );
 }
 
@@ -650,7 +870,7 @@ export function AccountMenu({
             <DialogDescription className="sr-only">계좌 정보를 변경합니다.</DialogDescription>
           </DialogHeader>
           {dialog === "balance" ? <BalanceForm id={account.id} type={account.type} current={balance} onDone={() => setDialog(null)} /> : null}
-          {dialog === "edit" ? <AccountForm initial={account} env={env} onDone={() => setDialog(null)} /> : null}
+          {dialog === "edit" ? <AccountForm initial={account} env={env} balance={balance} onDone={() => setDialog(null)} /> : null}
           {dialog === "archive" ? <ArchiveForm id={account.id} name={account.name} onDone={() => setDialog(null)} /> : null}
         </DialogContent>
       </Dialog>

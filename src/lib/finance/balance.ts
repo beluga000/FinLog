@@ -78,18 +78,27 @@ export interface NetWorth {
   assets: bigint;
   liabilities: bigint;
   netWorth: bigint;
+  /** 순자산에서 뺀 보증금 대출 잔액 (양수) */
+  depositLoans: bigint;
 }
 
+/**
+ * 순자산 = 자산 − 부채.
+ * 전세·월세 보증금 대출(depositLoan)은 보증금으로 묶여 있어 내가 쓰는 돈이 아니므로 부채에서 뺀다
+ * — 대신 보증금 자산에는 내 돈으로 낸 몫만 넣는다(대출로 낸 몫까지 넣으면 순자산이 부풀려진다).
+ */
 export function summarizeNetWorth(
-  accounts: { id: string; type: AccountType }[],
+  accounts: { id: string; type: AccountType; depositLoan?: boolean }[],
   balances: Map<string, bigint>,
 ): NetWorth {
   let assets = 0n;
   let liabilities = 0n;
+  let depositLoans = 0n;
   for (const a of accounts) {
     const b = balances.get(a.id) ?? 0n;
-    if (isLiability(a.type)) liabilities += -b;
+    if (a.type === "LOAN" && a.depositLoan) depositLoans += -b;
+    else if (isLiability(a.type)) liabilities += -b;
     else assets += b;
   }
-  return { assets, liabilities, netWorth: assets - liabilities };
+  return { assets, liabilities, netWorth: assets - liabilities, depositLoans };
 }

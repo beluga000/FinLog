@@ -32,17 +32,21 @@ export interface AccountRow {
   ownerUserId: string | null;
   defaultVisibility: Visibility;
   isArchived: boolean;
-  /** 카드 결제일 (CREDIT_CARD) */
+  /** 카드 결제일 · 대출 납입일 (CREDIT_CARD · LOAN) */
   billingDay: number | null;
-  /** 카드 대금 출금 계좌 (CREDIT_CARD) */
+  /** 카드 대금 · 대출 이자·상환금 출금 계좌 (CREDIT_CARD · LOAN) */
   paymentAccountId: string | null;
-  /** 예적금 가입일·만기일·연 금리 (SAVINGS) */
+  /** 예적금 가입일 / 대출일 · 만기일 · 연 금리 (SAVINGS · LOAN) */
   openedOn: DateStr | null;
   maturityDate: DateStr | null;
   interestRate: number | null;
   /** 정책형 적금 종류·기여금 구간 (SAVINGS) */
   savingsProduct: string | null;
   savingsTier: string | null;
+  /** 대출 상환 방식 (LOAN) */
+  loanRepayment: string | null;
+  /** 전세·월세 보증금 대출 — 순자산에서 뺀다 (LOAN) */
+  depositLoan: boolean;
 }
 
 const accountSelect = {
@@ -60,6 +64,8 @@ const accountSelect = {
   interestRate: true,
   savingsProduct: true,
   savingsTier: true,
+  loanRepayment: true,
+  depositLoan: true,
 } satisfies Prisma.AccountSelect;
 
 /** 뷰 스코프에서 보이는 계좌 */
