@@ -10,7 +10,7 @@ DB: Neon Postgres (싱가포르, `ap-southeast-1`) · 함수 리전: Vercel `sin
 
 ## 한 번에: 운영 DB 마이그레이션 + 운영 배포
 
-커밋까지 끝났으면(2·3단계) 4~6단계는 스크립트 하나로 한다 — `scripts/deploy-prod.sh`.
+커밋까지 끝났으면(2·3단계) 4~6단계는 스크립트 하나로 한다 — `scripts/deploy-prod.mjs`.
 
 ```bash
 npm run deploy:prod -- --check          # 1) 먼저 상태만 본다 — 아무것도 바꾸지 않음
