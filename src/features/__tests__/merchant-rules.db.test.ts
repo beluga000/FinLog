@@ -14,7 +14,7 @@ vi.mock("@/lib/db/context", () => ({
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
 vi.mock("next/headers", () => ({ cookies: async () => ({ get: () => undefined, delete: () => {} }) }));
 
-import { deleteMerchantRule, getMerchantRules, inspectCapturedExpenses, markNotDuplicate, saveMerchantRule } from "@/features/ledger/actions";
+import { deleteMerchantRule, getMerchantRules, getMemoHints, inspectCapturedExpenses, markNotDuplicate, saveMerchantRule } from "@/features/ledger/actions";
 import { createHouseholdWithDefaults } from "@/features/household/setup";
 import { prisma, toDbDate } from "@/lib/db/prisma";
 
@@ -121,5 +121,26 @@ describe("같은 결제 의심 — 다른 결제예요", () => {
     expect(flags).toEqual({ [mine.id]: true, [shared.id]: true, [hidden.id]: false });
     expect((await markNotDuplicate(["no-such-id"])).ok).toBe(false);
     expect((await markNotDuplicate([])).ok).toBe(false);
+  });
+});
+
+describe("메모로 카테고리 — 지난 메모", () => {
+  it("간편결제·쇼핑몰에 쓴 메모만, 최근 것 우선, 배우자 비공개는 빼고", async () => {
+    const memoTx = (by: string, merchant: string, memo: string, categoryId: string, date: string) =>
+      prisma.transaction.create({
+        data: { householdId: hid, createdByUserId: by, type: "EXPENSE", date: toDbDate(date), amount: 3_000n, merchant, memo, categoryId, fromAccountId: card, visibility: "SHARED" },
+      });
+    await memoTx(A, "네이버페이", "휴지 · 3개월 할부", living, "2026-10-01");
+    await memoTx(A, "쿠팡", "휴지", food, "2026-10-05"); // 더 최근
+    await memoTx(A, "스타벅스", "케이크", snack, "2026-10-06"); // 일반 가맹점 메모는 보지 않는다
+    const hidden = await memoTx(B, "네이버페이", "비밀선물", living, "2026-10-07");
+    await prisma.transaction.update({ where: { id: hidden.id }, data: { visibility: "PRIVATE" } });
+    as(A);
+    const hints = await getMemoHints();
+    expect(hints.find((h) => h.memoKey === "휴지")?.categoryId).toBe(food);
+    expect(hints.some((h) => h.memoKey === "케이크")).toBe(false);
+    expect(hints.some((h) => h.memoKey === "비밀선물")).toBe(false);
+    as(B);
+    expect((await getMemoHints()).some((h) => h.memoKey === "비밀선물")).toBe(true);
   });
 });

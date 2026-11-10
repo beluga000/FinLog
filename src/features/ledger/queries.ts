@@ -4,7 +4,8 @@ import type { Prisma } from "@/generated/prisma/client";
 import { fromDbDate, prisma, toDbDate } from "@/lib/db/prisma";
 import type { HouseholdContext } from "@/lib/db/context";
 import { canSeeAccount, scopeTransactions, txAccess, type SummaryTx, type ViewScope } from "@/lib/finance/visibility";
-import type { MerchantRule } from "@/lib/finance/merchant-rules";
+import { isGenericMerchant } from "@/lib/finance/merchant-match";
+import { memoKey, type MemoHint, type MerchantRule } from "@/lib/finance/merchant-rules";
 import type { AccountType, BudgetBucket, DateStr, TxType, Visibility } from "@/lib/finance/types";
 
 type Ctx = Pick<HouseholdContext, "householdId" | "userId">;
@@ -366,6 +367,38 @@ export async function queryMerchantSuggestions(ctx: Ctx, type: TxType): Promise<
     .sort((a, b) => b.count - a.count || a.order - b.order)
     .slice(0, MERCHANT_MAX)
     .map((v) => v.s);
+}
+
+const MEMO_SCAN = 400;
+const MEMO_MAX = 100;
+
+/**
+ * 네이버페이·쿠팡 같은 곳에 쓴 메모 → 카테고리 (최근 것 우선, 메모마다 하나).
+ * 자동완성과 같은 범위 — 내 기록과 배우자의 '공유' 기록만.
+ */
+export async function queryMemoHints(ctx: Ctx): Promise<MemoHint[]> {
+  const rows = await prisma.transaction.findMany({
+    where: {
+      householdId: ctx.householdId,
+      deletedAt: null,
+      type: "EXPENSE",
+      memo: { not: null },
+      merchant: { not: null },
+      categoryId: { not: null },
+      OR: [{ createdByUserId: ctx.userId }, { visibility: "SHARED" }],
+    },
+    orderBy: [{ date: "desc" }, { createdAt: "desc" }],
+    take: MEMO_SCAN,
+    select: { merchant: true, memo: true, categoryId: true },
+  });
+  const byKey = new Map<string, MemoHint>();
+  for (const r of rows) {
+    if (!isGenericMerchant(r.merchant)) continue;
+    const k = memoKey(r.memo);
+    if (k.length >= 2 && !byKey.has(k)) byKey.set(k, { memoKey: k, categoryId: r.categoryId! });
+    if (byKey.size >= MEMO_MAX) break;
+  }
+  return [...byKey.values()];
 }
 
 /** 가구 가맹점 규칙 (가구 공유) — 긴 키부터 (지점 규칙이 브랜드 규칙보다 먼저 맞도록 findRule 이 다시 고른다) */

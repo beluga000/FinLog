@@ -9,7 +9,7 @@ import { requireHousehold, writeAudit, type HouseholdContext } from "@/lib/db/co
 import { fromDbDate, prisma, toDbDate } from "@/lib/db/prisma";
 import { importKeys } from "@/lib/finance/capture-import";
 import { addDays, getMonthKey, getMonthRange, inRange, todayKST } from "@/lib/finance/period";
-import { canHaveRule, findRule, isNearAmount, merchantKey, resolveCategory, type MerchantRule } from "@/lib/finance/merchant-rules";
+import { canHaveRule, findRule, isNearAmount, merchantKey, resolveCategory, type MemoHint, type MerchantRule } from "@/lib/finance/merchant-rules";
 import { lastRunAfterScheduleChange } from "@/lib/finance/recurring";
 import { TX_TYPES_ORDER } from "@/lib/finance/tx-rules";
 import type { TxType } from "@/lib/finance/types";
@@ -17,7 +17,7 @@ import { txAccess } from "@/lib/finance/visibility";
 import { recurringInputSchema, type ActionResult } from "./schema";
 import { materializeRecurring, prefetchTxLookup, resolveTxInput } from "./service";
 import { SHARED_TEXT_COOKIE } from "./shared-text";
-import { getCategories, queryMerchantRules, queryMerchantSuggestions, type MerchantSuggestion, type RecurringTemplate } from "./queries";
+import { getCategories, queryMemoHints, queryMerchantRules, queryMerchantSuggestions, type MerchantSuggestion, type RecurringTemplate } from "./queries";
 
 function done() {
   revalidatePath("/", "layout");
@@ -327,6 +327,12 @@ async function inspectExpenses(
     const categoryId = hit?.source === "rule" ? hit.categoryId : (merchant && categoryOf.get(merchant)) || hit?.categoryId || null;
     return { duplicate: k >= 0 ? existing[k] : null, categoryId };
   });
+}
+
+/** 네이버페이·쿠팡에 쓴 메모 → 카테고리 — 기록 창·캡처가 메모를 쓸 때 맞춰 본다 */
+export async function getMemoHints(): Promise<MemoHint[]> {
+  const ctx = await requireHousehold();
+  return queryMemoHints(ctx);
 }
 
 /** 가구 가맹점 규칙 — 기록 창이 한 번 받아 두고 사용처를 쓸 때마다 맞춰 본다 */

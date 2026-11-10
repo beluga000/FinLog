@@ -13,7 +13,8 @@ import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
 import { LIABILITY_TYPES, SAVING_DESTINATION_TYPES } from "@/lib/finance/balance";
 import type { ParsedCardMessage } from "@/lib/finance/card-message";
-import { canHaveRule, resolveCategory, type MerchantRule } from "@/lib/finance/merchant-rules";
+import { isGenericMerchant } from "@/lib/finance/merchant-match";
+import { canHaveRule, resolveCategory, type MemoHint, type MerchantRule } from "@/lib/finance/merchant-rules";
 import { addDays, todayKST } from "@/lib/finance/period";
 import { TX_TYPE_META, TX_TYPES_ORDER, validateTxShape } from "@/lib/finance/tx-rules";
 import type { AccountType, TxType, Visibility } from "@/lib/finance/types";
@@ -24,6 +25,7 @@ import {
   updateRecurringRule,
   createTransaction,
   deleteTransaction,
+  getMemoHints,
   getMerchantRules,
   getMerchantSuggestions,
   inspectPastedExpense,
@@ -136,6 +138,16 @@ function loadMerchantRules() {
     return [];
   });
   return rulesCache;
+}
+
+/** 네이버페이·쿠팡 메모 → 카테고리 — 기록을 저장하면 비운다 (방금 쓴 메모도 다음에 맞도록) */
+let memoCache: Promise<MemoHint[]> | null = null;
+function loadMemoHints() {
+  memoCache ??= getMemoHints().catch(() => {
+    memoCache = null;
+    return [];
+  });
+  return memoCache;
 }
 
 function dateLabel(date: string) {
@@ -309,15 +321,17 @@ function TxForm({
   };
   // 가맹점 규칙 (가구 공유) — 지출만
   const [rules, setRules] = useState<MerchantRule[]>([]);
+  const [memoHints, setMemoHints] = useState<MemoHint[]>([]);
   useEffect(() => {
     let alive = true;
     void loadMerchantRules().then((list) => alive && setRules(list));
+    void loadMemoHints().then((list) => alive && setMemoHints(list));
     return () => {
       alive = false;
     };
   }, []);
   // 사용처로 자동으로 고른 카테고리의 출처 (안내 문구용)
-  const [autoSource, setAutoSource] = useState<"rule" | "brand" | null>(null);
+  const [autoSource, setAutoSource] = useState<"rule" | "brand" | "memo" | null>(null);
   // "앞으로 이 사용처는 이 카테고리로" — null 이면 기본값 (수정 중인 거래는 켬, 새 기록은 끔)
   const [saveRule, setSaveRule] = useState<boolean | null>(null);
   const suggestionCache = useRef(new Map<TxType, MerchantSuggestion[]>());
@@ -403,7 +417,8 @@ function TxForm({
   }
 
   // 사용처를 쓰면 규칙 → (지난 기록이 없을 때만) 브랜드 사전으로 카테고리를 고른다. 직접 고른 뒤에는 건드리지 않는다
-  const ruleHit = type === "EXPENSE" ? resolveCategory(merchant, rules, categories) : null;
+  // 네이버페이·쿠팡처럼 품목을 모르는 곳은 메모(무엇을 샀는지)로 고른다
+  const ruleHit = type === "EXPENSE" ? resolveCategory(merchant, rules, categories, { memo, hints: memoHints }) : null;
   const ruleHitKey = ruleHit ? `${ruleHit.source}:${ruleHit.categoryId}` : "";
   useEffect(() => {
     if (categoryTouched || !ruleHit) return setAutoSource(null);
@@ -495,6 +510,7 @@ function TxForm({
         result = await createTransaction(tx);
       }
       if (!result.ok) return setError(result.error);
+      if (mode === "tx" && tx.memo) memoCache = null;
       if (willSaveRule && tx.categoryId) {
         const saved = await saveMerchantRule({ merchant: merchant.trim(), categoryId: tx.categoryId, applyToPast: true });
         if (saved.ok) {
@@ -705,7 +721,11 @@ function TxForm({
             })}
           </NativeSelect>
           {autoSource && !categoryTouched ? (
-            <p className="text-xs text-muted-foreground">{autoSource === "rule" ? "가맹점 규칙으로 골랐어요" : "가맹점 이름으로 골랐어요 · 다르면 바꿔 주세요"}</p>
+            <p className="text-xs text-muted-foreground">{autoSource === "rule"
+                ? "가맹점 규칙으로 골랐어요"
+                : autoSource === "memo"
+                  ? "메모로 골랐어요 · 다르면 바꿔 주세요"
+                  : "가맹점 이름으로 골랐어요 · 다르면 바꿔 주세요"}</p>
           ) : null}
           {offerRule ? (
             <label className="flex items-start gap-2 rounded-lg bg-muted px-3 py-2 text-sm">
@@ -750,7 +770,14 @@ function TxForm({
           ) : null}
 
           <Field label="메모" htmlFor="memo">
-            <Input id="memo" value={memo} maxLength={500} onChange={(e) => setMemo(e.target.value)} className="h-9" placeholder="선택 입력" />
+            <Input
+              id="memo"
+              value={memo}
+              maxLength={500}
+              onChange={(e) => setMemo(e.target.value)}
+              className="h-9"
+              placeholder={type === "EXPENSE" && isGenericMerchant(merchant) ? "무엇을 샀나요? 쓰면 카테고리를 골라 드려요" : "선택 입력"}
+            />
           </Field>
 
           {type === "EXPENSE" && mode === "tx" ? (

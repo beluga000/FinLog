@@ -23,7 +23,13 @@ export interface CategoryRef {
   parentId?: string | null;
 }
 
-export type CategoryHit = { categoryId: string; source: "rule" | "brand"; rule?: MerchantRule };
+export type CategoryHit = { categoryId: string; source: "rule" | "brand" | "memo"; rule?: MerchantRule };
+
+/** 네이버페이·쿠팡 같은 곳에 이 메모로 지난번 고른 카테고리 (가구 기록에서) */
+export interface MemoHint {
+  memoKey: string;
+  categoryId: string;
+}
 
 /** 규칙 앞부분 일치는 이 길이 이상만 — "CU" 같은 두 글자 규칙이 아무 영문 이름에나 붙지 않게 지점 이름은 한글로 이어져야 한다 */
 const PREFIX_MIN = 2;
@@ -86,6 +92,56 @@ function categoryByNames(names: string[], categories: readonly CategoryRef[]): s
   return null;
 }
 
+/** 메모 낱말 → 카테고리 (네이버페이·쿠팡에서 무엇을 샀는지) — 앞의 묶음이 먼저 */
+const ITEM_WORDS: { words: string[]; categories: string[] }[] = [
+  { words: ["기저귀", "분유", "물티슈", "젖병", "이유식", "아기", "유아", "아동"], categories: ["육아"] },
+  { words: ["사료", "간식캔", "모래", "배변", "강아지", "고양이", "펫"], categories: ["반려동물"] },
+  { words: ["영양제", "비타민", "유산균", "오메가", "마스크"], categories: ["병원·약국", "의료·건강"] },
+  { words: ["생수", "쌀", "라면", "계란", "달걀", "우유", "과일", "고기", "삼겹", "닭가슴", "김치", "두부", "채소", "커피믹스", "원두", "식품"], categories: ["장보기", "식비"] },
+  { words: ["휴지", "화장지", "키친타월", "세제", "섬유유연제", "샴푸", "린스", "바디워시", "치약", "칫솔", "비누", "수건", "쓰레기봉투", "지퍼백", "건전지", "전구"], categories: ["생활용품"] },
+  { words: ["도서", "문제집", "교재", "강의", "인강"], categories: ["교육"] },
+  { words: ["티셔츠", "셔츠", "바지", "청바지", "원피스", "자켓", "재킷", "패딩", "코트", "니트", "양말", "속옷", "신발", "운동화", "가방", "모자"], categories: ["쇼핑·의류"] },
+  { words: ["영화", "공연", "티켓", "콘서트", "뮤지컬"], categories: ["공연·영화", "문화·여가"] },
+  { words: ["숙소", "호텔", "펜션", "항공", "비행기", "기차표", "여행"], categories: ["여행", "문화·여가"] },
+  { words: ["구독", "멤버십"], categories: ["구독서비스", "구독"] },
+];
+const ITEM_INDEX = ITEM_WORDS.flatMap(({ words, categories }) => words.map((w) => ({ key: merchantKey(w), categories })));
+
+/** 메모 비교 키 — 캡처가 붙이는 "· 3개월 할부"는 뗀다 */
+export function memoKey(memo: string | null | undefined): string {
+  return merchantKey((memo ?? "").replace(/·?\s*\d+개월\s*할부/g, ""));
+}
+
+/**
+ * 메모로 고른 지출 카테고리 — 이름만으로 품목을 모르는 가맹점(네이버페이·쿠팡)에서 쓴다.
+ * 1) 가구 기록에 같은 메모 → 그 카테고리, 메모 안에 지난 메모가 들어 있으면(긴 것 먼저) 그 카테고리
+ * 2) 메모 안 브랜드(세 글자 이상 — "CU"가 아무 영문에 붙지 않게) → 3) 품목 낱말
+ */
+export function guessByMemo(memo: string | null | undefined, hints: readonly MemoHint[], categories: readonly CategoryRef[]): string | null {
+  const k = memoKey(memo);
+  if (k.length < 2) return null;
+  const usable = (id: string) => categories.some((c) => c.id === id && c.txType === "EXPENSE");
+  const exact = hints.find((h) => h.memoKey === k && usable(h.categoryId));
+  if (exact) return exact.categoryId;
+  const inside = hints
+    .filter((h) => h.memoKey.length >= 2 && k.includes(h.memoKey) && usable(h.categoryId))
+    .sort((a, b) => b.memoKey.length - a.memoKey.length)[0];
+  if (inside) return inside.categoryId;
+  for (const b of BRAND_INDEX) {
+    if (b.key.length >= 3 && k.includes(b.key)) {
+      const id = categoryByNames(b.categories, categories);
+      if (id) return id;
+    }
+  }
+  for (const w of ITEM_INDEX) {
+    if (k.includes(w.key)) {
+      const id = categoryByNames(w.categories, categories);
+      if (id) return id;
+    }
+  }
+  return null;
+}
+
 /** 브랜드 사전으로 고른 지출 카테고리 (없으면 null) */
 export function guessByBrand(merchant: string, categories: readonly CategoryRef[]): string | null {
   if (isGenericMerchant(merchant)) return null;
@@ -100,10 +156,19 @@ export function guessByBrand(merchant: string, categories: readonly CategoryRef[
   return null;
 }
 
-/** 규칙 → 브랜드 사전 순. 지금 있는 지출 카테고리만 돌려준다 */
-export function resolveCategory(merchant: string | null | undefined, rules: readonly MerchantRule[], categories: readonly CategoryRef[]): CategoryHit | null {
+/** 규칙 → 브랜드 사전 순. 네이버페이·쿠팡처럼 품목을 모르는 곳은 메모로. 지금 있는 지출 카테고리만 돌려준다 */
+export function resolveCategory(
+  merchant: string | null | undefined,
+  rules: readonly MerchantRule[],
+  categories: readonly CategoryRef[],
+  memo?: { memo: string | null | undefined; hints: readonly MemoHint[] },
+): CategoryHit | null {
   const name = merchant?.trim();
-  if (!name || isGenericMerchant(name)) return null;
+  if (!name) return null;
+  if (isGenericMerchant(name)) {
+    const byMemo = memo ? guessByMemo(memo.memo, memo.hints, categories) : null;
+    return byMemo ? { categoryId: byMemo, source: "memo" } : null;
+  }
   const rule = findRule(name, rules);
   if (rule && categories.some((c) => c.id === rule.categoryId && c.txType === "EXPENSE")) return { categoryId: rule.categoryId, source: "rule", rule };
   const brand = guessByBrand(name, categories);

@@ -13,8 +13,9 @@ import { NativeSelect } from "@/components/ui/native-select";
 import { mergeCaptureResults, mergeRejected, matchIssuerAccount } from "@/lib/finance/capture-import";
 import type { CaptureResult } from "@/lib/finance/card-capture";
 import { isGenericMerchant, matchMerchant } from "@/lib/finance/merchant-match";
+import { guessByMemo, type MemoHint } from "@/lib/finance/merchant-rules";
 import { todayKST } from "@/lib/finance/period";
-import { createTransactionsBulk, getMerchantSuggestions, inspectCapturedExpenses, type PastedExpenseInfo } from "../actions";
+import { createTransactionsBulk, getMemoHints, getMerchantSuggestions, inspectCapturedExpenses, type PastedExpenseInfo } from "../actions";
 import type { CategoryRow, MerchantSuggestion } from "../queries";
 import type { AccountOption } from "./tx-form";
 import { readLastAccounts, rememberAccount, rememberCategory } from "./last-used";
@@ -40,6 +41,8 @@ interface Row {
   note: string;
   /** 메모 칸을 펼쳤는지 (간편결제·쇼핑몰은 처음부터 펼친다) */
   noteOpen: boolean;
+  /** 카테고리를 메모로 골랐는지 — 직접 고르면 메모를 고쳐도 바꾸지 않는다 */
+  autoCategory: boolean;
 }
 
 type Phase = { kind: "pick" } | { kind: "working"; text: string } | { kind: "review" };
@@ -67,6 +70,7 @@ export function CaptureImport({
   const [error, setError] = useState<string | null>(null);
   const [saving, startSaving] = useTransition();
   const suggestions = useRef<Promise<MerchantSuggestion[]> | null>(null);
+  const [memoHints, setMemoHints] = useState<MemoHint[]>([]);
 
   const payAccounts = useMemo(() => accounts.filter((a) => a.type !== "LOAN"), [accounts]);
   const expenseCategories = useMemo(() => categories.filter((c) => c.txType === "EXPENSE"), [categories]);
@@ -74,6 +78,8 @@ export function CaptureImport({
   useEffect(() => {
     // 사용처 보정에 쓸 과거 기록 — 인식이 끝나기 전에 미리 받아 둔다
     suggestions.current = getMerchantSuggestions("EXPENSE").catch(() => []);
+    // 네이버페이·쿠팡 메모 → 카테고리
+    void getMemoHints().then(setMemoHints, () => {});
     // 인식 엔진은 무거우니 화면을 닫으면 내린다
     return () => {
       void import("../capture/ocr").then((m) => m.disposeOcr());
@@ -143,6 +149,7 @@ export function CaptureImport({
           duplicate: dup,
           note: "",
           noteOpen: generic,
+          autoCategory: false,
         };
       }),
     );
@@ -151,6 +158,11 @@ export function CaptureImport({
   }
 
   const update = (key: number, patch: Partial<Row>) => setRows((rs) => rs.map((r) => (r.key === key ? { ...r, ...patch } : r)));
+  /** 메모를 쓰면 (간편결제·쇼핑몰이고 카테고리를 직접 고르지 않았을 때) 메모로 카테고리를 고른다 */
+  const updateNote = (r: Row, note: string) => {
+    const guess = isGenericMerchant(r.merchant) && (!r.categoryId || r.autoCategory) ? guessByMemo(note, memoHints, expenseCategories) : null;
+    update(r.key, guess ? { note, categoryId: guess, autoCategory: true } : { note });
+  };
   const selected = rows.filter((r) => r.checked);
   const missingCategory = rows.filter((r) => r.checked && !r.categoryId);
 
@@ -328,7 +340,7 @@ export function CaptureImport({
                 aria-label="무엇을 샀나요"
                 placeholder="무엇을 샀나요? 예: 샴푸, 휴지"
                 autoComplete="off"
-                onChange={(e) => update(r.key, { note: e.target.value })}
+                onChange={(e) => updateNote(r, e.target.value)}
                 className="h-9"
               />
             ) : (
@@ -344,7 +356,7 @@ export function CaptureImport({
               <NativeSelect
                 value={r.categoryId}
                 aria-label="카테고리"
-                onChange={(e) => update(r.key, { categoryId: e.target.value })}
+                onChange={(e) => update(r.key, { categoryId: e.target.value, autoCategory: false })}
                 className={cn("h-9", r.checked && !r.categoryId && "border-warning")}
               >
                 <option value="">카테고리</option>
