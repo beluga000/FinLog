@@ -1,9 +1,11 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { ArrowDown, ArrowUp } from "lucide-react";
+import { ArrowDown, ArrowUp, Check, MoreHorizontal, Pause, Pencil, Play, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { applyGoalAlternative, deleteGoal, moveGoalPriority, setGoalCommit, setGoalStatus } from "../actions";
 import type { GoalClaims } from "../queries";
 import { GoalFormDialog, type GoalAccount, type GoalFormValue } from "./goal-form";
@@ -76,6 +78,7 @@ export function ApplyAlternativeButton({
   );
 }
 
+/** 목표 관리 — 제목 옆 "⋯" 메뉴 (수정·달성 처리·일시정지/다시 진행·삭제). 자주 쓰지 않아 화면에 늘어놓지 않는다 */
 export function GoalMenu({
   goal,
   accounts,
@@ -91,31 +94,54 @@ export function GoalMenu({
   const [editing, setEditing] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   return (
-    <div className="flex flex-wrap gap-2">
-      <Button variant="outline" onClick={() => setEditing(true)}>수정</Button>
-      {goal.status === "ACTIVE" ? (
-        <>
-          <Button variant="outline" disabled={pending} onClick={() => run(() => setGoalStatus(goal.id, "ACHIEVED"), "축하해요! 달성 처리했어요")}>
-            달성 처리
-          </Button>
-          <Button variant="ghost" disabled={pending} onClick={() => run(() => setGoalStatus(goal.id, "PAUSED"))}>
-            일시정지
-          </Button>
-        </>
-      ) : (
-        <Button variant="outline" disabled={pending} onClick={() => run(() => setGoalStatus(goal.id, "ACTIVE"))}>
-          다시 진행
-        </Button>
-      )}
-      {confirmDelete ? (
-        <span className="inline-flex items-center gap-1">
-          <Button variant="destructive" disabled={pending} onClick={() => run(() => deleteGoal(goal.id))}>정말 삭제</Button>
-          <Button variant="ghost" onClick={() => setConfirmDelete(false)}>취소</Button>
-        </span>
-      ) : (
-        <Button variant="ghost" className="text-destructive" onClick={() => setConfirmDelete(true)}>삭제</Button>
-      )}
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger render={<Button variant="outline" size="icon" aria-label="목표 관리" disabled={pending} />}>
+          <MoreHorizontal />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="min-w-36">
+          <DropdownMenuItem onClick={() => setEditing(true)}>
+            <Pencil /> 수정
+          </DropdownMenuItem>
+          {goal.status === "ACTIVE" ? (
+            <>
+              <DropdownMenuItem onClick={() => run(() => setGoalStatus(goal.id, "ACHIEVED"), "축하해요! 달성 처리했어요")}>
+                <Check /> 달성 처리
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => run(() => setGoalStatus(goal.id, "PAUSED"), "일시정지했어요")}>
+                <Pause /> 일시정지
+              </DropdownMenuItem>
+            </>
+          ) : (
+            <DropdownMenuItem onClick={() => run(() => setGoalStatus(goal.id, "ACTIVE"), "다시 진행해요")}>
+              <Play /> 다시 진행
+            </DropdownMenuItem>
+          )}
+          <DropdownMenuSeparator />
+          <DropdownMenuItem variant="destructive" onClick={() => setConfirmDelete(true)}>
+            <Trash2 /> 삭제
+          </DropdownMenuItem>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <Dialog open={confirmDelete} onOpenChange={setConfirmDelete}>
+        <DialogContent className="sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle>&lsquo;{goal.name}&rsquo; 삭제</DialogTitle>
+            <DialogDescription>
+              목표와 계획이 지워져요. 연결 계좌와 가계부 기록은 그대로 남아요. 잠시 멈추려면 삭제 대신 일시정지를 쓰세요.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setConfirmDelete(false)} disabled={pending}>
+              취소
+            </Button>
+            <Button variant="destructive" disabled={pending} onClick={() => run(() => deleteGoal(goal.id))}>
+              삭제
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <GoalFormDialog open={editing} onOpenChange={setEditing} accounts={accounts} netWorth={netWorth} claims={claims} initial={goal} />
-    </div>
+    </>
   );
 }

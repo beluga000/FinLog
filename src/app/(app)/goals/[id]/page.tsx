@@ -10,6 +10,7 @@ import { GoalProgressDetail } from "@/features/goals/components/goal-progress";
 import { CommitButton, GoalMenu } from "@/features/goals/components/goal-controls";
 import { FastTrackBadge, GoalEta, GoalPace } from "@/features/goals/components/goal-status";
 import { GoalWhatIf } from "@/features/goals/components/goal-what-if";
+import { LinkedAccounts } from "@/features/goals/components/linked-accounts";
 import { getAutoSaveSetup, getGoalHistory, getGoalsOverview } from "@/features/goals/queries";
 import { requireHousehold } from "@/lib/db/context";
 import { formatPercent } from "@/lib/finance/money";
@@ -36,10 +37,29 @@ export default async function GoalDetailPage({ params }: { params: Promise<{ id:
 
       <div className="grid gap-2">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <h1 className="text-2xl font-bold">{goal.name}</h1>
-          <span className="text-sm text-muted-foreground">
-            {goal.targetDate.replaceAll("-", ".")}까지 · {e.monthsLeft}개월 남음
-          </span>
+          <div className="grid gap-0.5">
+            <h1 className="text-2xl font-bold">{goal.name}</h1>
+            <span className="text-sm text-muted-foreground">
+              {goal.targetDate.replaceAll("-", ".")}까지 · {e.monthsLeft}개월 남음
+            </span>
+          </div>
+          <GoalMenu
+            goal={{
+              id: goal.id,
+              name: goal.name,
+              targetAmount: goal.targetAmount,
+              targetIsReal: goal.targetIsReal,
+              targetDate: goal.targetDate,
+              expectedReturn: goal.expectedReturn,
+              linkedAccountIds: goal.linkedAccountIds,
+              monthlyCommit: goal.monthlyCommit,
+              current: goal.current,
+              status: goal.status,
+            }}
+            accounts={accounts}
+            netWorth={netWorth}
+            claims={claims}
+          />
         </div>
         <div className="text-3xl font-black tabular">
           <Money value={goal.current} /> <span className="text-base font-medium text-muted-foreground">/ <Money value={goal.targetAmount} /></span>
@@ -67,10 +87,11 @@ export default async function GoalDetailPage({ params }: { params: Promise<{ id:
           </span>
           <span className="text-muted-foreground">진척 {formatPercent(e.progress, 0)}</span>
         </div>
+        <LinkedAccounts accounts={accounts.filter((a) => goal.linkedAccountIds.includes(a.id))} />
         <p className="text-xs text-muted-foreground">
-          {goal.usesNetWorth ? "연결 계좌가 없어 순자산을 기준으로 계산해요." : `연결 계좌: ${goal.linkedAccountNames.join(", ")}`}
-          {goal.targetIsReal ? ` · 오늘 가치 기준 (목표 시점 명목 ${Math.round(e.required.nominalTarget / 1e4).toLocaleString("ko-KR")}만원)` : ""}
-          {` · 기대수익률 연 ${(goal.expectedReturn * 100).toFixed(1)}%`}
+          {goal.usesNetWorth ? "연결 계좌가 없어 순자산을 기준으로 계산해요 · " : ""}
+          {goal.targetIsReal ? `오늘 가치 기준 (목표 시점 명목 ${Math.round(e.required.nominalTarget / 1e4).toLocaleString("ko-KR")}만원) · ` : ""}
+          {`기대수익률 연 ${(goal.expectedReturn * 100).toFixed(1)}%`}
         </p>
       </div>
 
@@ -147,23 +168,6 @@ export default async function GoalDetailPage({ params }: { params: Promise<{ id:
         }}
       />
 
-      <GoalMenu
-        goal={{
-          id: goal.id,
-          name: goal.name,
-          targetAmount: goal.targetAmount,
-          targetIsReal: goal.targetIsReal,
-          targetDate: goal.targetDate,
-          expectedReturn: goal.expectedReturn,
-          linkedAccountIds: goal.linkedAccountIds,
-          monthlyCommit: goal.monthlyCommit,
-          current: goal.current,
-          status: goal.status,
-        }}
-        accounts={accounts}
-        netWorth={netWorth}
-        claims={claims}
-      />
       <p className="text-xs text-muted-foreground">투자 권유가 아닌 참고용 시뮬레이션이며, 과거 수익률이 미래 수익을 보장하지 않습니다.</p>
     </div>
   );
