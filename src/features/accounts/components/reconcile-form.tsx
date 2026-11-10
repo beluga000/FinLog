@@ -36,7 +36,7 @@ function lastLabel(last: DateStr | null, today: DateStr): string {
 /** 만원 단위 + 부호 (compact 표시는 + 를 붙이지 않는다) */
 function Signed({ value, tone }: { value: bigint; tone?: "delta" }) {
   return (
-    <span className={cn(tone === "delta" && value > 0n && "text-good", tone === "delta" && value < 0n && "text-critical")}>
+    <span className={cn(tone === "delta" && value > 0n && "text-good", tone === "delta" && value < 0n && "text-warning")}>
       {value > 0n ? "+" : ""}
       <Money value={value} compact />
     </span>

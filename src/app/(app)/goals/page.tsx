@@ -40,7 +40,7 @@ export default async function GoalsPage() {
           </div>
           <div>
             <div className="text-xs text-muted-foreground">목표들이 필요로 하는 금액</div>
-            <div className={cn("text-lg font-bold", over && "text-critical")}><Money value={totalDemand} /></div>
+            <div className={cn("text-lg font-bold", over && "text-warning")}><Money value={totalDemand} /></div>
             <div className="text-xs text-muted-foreground">{over ? "저축 가능액보다 많아요 — 우선순위가 낮은 목표가 밀려요" : "저축 가능액 안에서 감당 가능"}</div>
           </div>
           {capacity.avgSurplus > 0 ? (

@@ -158,7 +158,7 @@ export default async function ReportsPage({
                 <CardTitle>수입은 어디로 갔나</CardTitle>
               </CardHeader>
               <CardContent>
-                <IncomeFlowBar stats={cur} pendingIncome={planned?.income ?? 0n} />
+                <IncomeFlowBar stats={cur} pendingIncome={planned?.income ?? 0n} expenseHref={`/ledger?month=${month}&type=expense`} />
               </CardContent>
             </Card>
             <Card>
@@ -166,7 +166,7 @@ export default async function ReportsPage({
                 <CardTitle>50 / 30 / 20 비교</CardTitle>
               </CardHeader>
               <CardContent>
-                <BucketCompare stats={cur} />
+                <BucketCompare stats={cur} expenseHref={`/ledger?month=${month}&type=expense`} />
               </CardContent>
             </Card>
           </div>
@@ -194,7 +194,7 @@ export default async function ReportsPage({
                             <span className="mr-1.5 text-xs text-muted-foreground tabular">{i + 1}</span>
                             {c.name}
                           </span>
-                          <Money value={c.amount} className="font-semibold" />
+                          <Money value={c.amount} compact className="font-semibold" />
                         </div>
                         <div className="h-1.5 rounded-full bg-muted">
                           <div className="h-1.5 rounded-full" style={{ width: `${(c.share ?? 0) * 100}%`, background: "var(--chart-2)" }} />

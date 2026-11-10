@@ -203,7 +203,7 @@ export default async function SavingsPage() {
                 </div>
               </dl>
               {overdue.length ? (
-                <p className="text-xs text-critical">
+                <p className="text-xs text-warning">
                   {overdue.map((i) => i.account?.name).join(", ")} 만기가 지났는데 자동이체가 계속 기록돼요. 해지했다면 자동이체를 중지하거나 종료일을 넣어 주세요.
                 </p>
               ) : null}
@@ -273,7 +273,7 @@ export default async function SavingsPage() {
                             {a.openedOn ? `${dotted(a.openedOn)} ~ ` : ""}
                             {dotted(a.maturityDate)} 만기
                           </span>
-                          <span className={item.dDay !== null && item.dDay < 0 ? "font-semibold text-critical" : "font-semibold"}>
+                          <span className={item.dDay !== null && item.dDay < 0 ? "font-semibold text-warning" : "font-semibold"}>
                             {item.dDay === null ? null : item.dDay < 0 ? "만기 지남" : item.dDay === 0 ? "오늘 만기" : `D-${item.dDay}`}
                           </span>
                         </div>

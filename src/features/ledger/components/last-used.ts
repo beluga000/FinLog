@@ -43,3 +43,27 @@ export function rememberCategory(type: TxType, id: string | null) {
     /* 저장 불가 환경 무시 */
   }
 }
+
+/** 유형별 최근 금액 (최신이 앞, 중복 없이) — 기록 창 금액 칸 아래 칩. 커피·교통비처럼 같은 금액을 자주 쓴다 */
+const RECENT_AMOUNT_KEY = "finlog:recent-amounts";
+const RECENT_AMOUNT_MAX = 4;
+
+export function readRecentAmounts(type: TxType): string[] {
+  try {
+    const all = JSON.parse(localStorage.getItem(RECENT_AMOUNT_KEY) ?? "{}") as Record<string, string[]>;
+    return (all[type] ?? []).filter((a) => /^\d{1,13}$/.test(a));
+  } catch {
+    return [];
+  }
+}
+
+export function rememberAmount(type: TxType, amount: string) {
+  if (!/^\d{1,13}$/.test(amount) || amount === "0") return;
+  try {
+    const all = JSON.parse(localStorage.getItem(RECENT_AMOUNT_KEY) ?? "{}") as Record<string, string[]>;
+    const next = [amount, ...(all[type] ?? []).filter((a) => a !== amount)].slice(0, RECENT_AMOUNT_MAX);
+    localStorage.setItem(RECENT_AMOUNT_KEY, JSON.stringify({ ...all, [type]: next }));
+  } catch {
+    /* 저장 불가 환경 무시 */
+  }
+}

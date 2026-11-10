@@ -187,7 +187,7 @@ export function GoalWhatIf({ goal, today }: { goal: WhatIfGoal; today: DateStr }
                     : etaLabel(today, plan.projectedMonths)}
               </dd>
               {shift !== null && shift !== 0 && changed ? (
-                <dd className={cn("text-xs", shift > 0 ? "text-good" : "text-critical")}>
+                <dd className={cn("text-xs", shift > 0 ? "text-good" : "text-warning")}>
                   지금 계획보다 {Math.abs(shift)}개월 {shift > 0 ? "빨라요" : "늦어요"}
                 </dd>
               ) : null}
@@ -197,7 +197,8 @@ export function GoalWhatIf({ goal, today }: { goal: WhatIfGoal; today: DateStr }
               <dd
                 className={cn(
                   "font-semibold",
-                  plan.aheadMonths === null || plan.aheadMonths < 0 ? "text-critical" : "text-good",
+                  // 닿지 않으면 빨강, 늦기만 하면 주황 (목표 상태 한 줄과 같은 기준)
+                  plan.aheadMonths === null ? "text-critical" : plan.aheadMonths < 0 ? "text-warning" : "text-good",
                 )}
               >
                 {plan.required.alreadyAchievable

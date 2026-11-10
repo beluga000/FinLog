@@ -69,7 +69,7 @@ export function PrimaryGoalCard({ goals }: { goals: GoalView[] }) {
       <CardContent className="grid gap-3">
         <div className="flex flex-wrap items-baseline gap-x-2">
           {/* 지금 모인 돈은 가려 두고 눌러야 보인다 — 목표 금액·진척률은 그대로 */}
-          <HiddenMoney value={Number(primary.current)} label="지금 모인 돈" className="text-2xl font-bold" />
+          <HiddenMoney value={Number(primary.current)} label="지금 모인 돈" className="text-2xl font-bold" compact />
           <span className="text-sm text-muted-foreground">
             / <Money value={primary.targetAmount} compact />
           </span>
@@ -167,9 +167,14 @@ export function SpendableCard({
         </div>
         <p className="text-sm text-muted-foreground">
           {s.overspent ? (
-            <span className="font-medium text-critical">
-              이번 달 <Money value={-s.remaining} compact /> 초과
-            </span>
+            <>
+              <span className="font-medium text-critical">
+                이번 달 <Money value={-s.remaining} compact /> 초과
+              </span>{" "}
+              <Link href="/ledger?type=expense" className="font-medium text-foreground underline-offset-2 hover:underline">
+                지출 보기 →
+              </Link>
+            </>
           ) : (
             <>
               이번 달 남은 돈 <Money value={s.remaining} compact className="font-semibold text-foreground" />
@@ -189,7 +194,9 @@ export function SpendableCard({
                   <Money value={s.livingBudget} compact /> 중 {formatPercent(ratio, 0)}
                 </>
               ) : (
-                <span className="text-critical">고정비·저축이 수입보다 많아요</span>
+                <Link href="/ledger/recurring" className="text-critical underline-offset-2 hover:underline">
+                  고정비·저축이 수입보다 많아요 →
+                </Link>
               )}
             </span>
           </div>
@@ -239,7 +246,7 @@ export function MonthEndSurplusCard({
   return (
     <section className="grid gap-2 rounded-xl bg-brand-soft p-4" aria-label="이번 달 남은 돈">
       <p className="text-sm text-muted-foreground">이번 달 {daysLeft}일 남았어요 · 지금 남은 돈</p>
-      <Money value={amount} className="text-2xl font-bold" />
+      <Money value={amount} compact className="text-2xl font-bold" />
       <p className="text-sm text-muted-foreground">그냥 두면 다음 달 생활비와 섞여요. {goalName} 계좌로 옮겨 두면 목표가 빨라져요.</p>
       <div className="flex flex-wrap gap-2">{action}</div>
     </section>
@@ -275,7 +282,7 @@ export function SavingCard({
       <CardContent className="grid gap-2">
         <div className="flex items-baseline justify-between gap-2">
           <span>
-            <Money value={actual} className="text-lg font-bold" />
+            <Money value={actual} compact className="text-lg font-bold" />
             {target > 0n ? (
               <span className="text-sm text-muted-foreground">
                 {" "}

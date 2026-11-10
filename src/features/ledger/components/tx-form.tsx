@@ -33,7 +33,7 @@ import {
   type SpendableChange,
 } from "../actions";
 import type { CategoryRow, MerchantSuggestion, RecurringTemplate, TxRow } from "../queries";
-import { readLastAccounts, readRecentCategories, rememberAccount, rememberCategory } from "./last-used";
+import { readLastAccounts, readRecentAmounts, readRecentCategories, rememberAccount, rememberAmount, rememberCategory } from "./last-used";
 import { CaptureImport } from "./capture-import";
 import { PasteMessage } from "./paste-message";
 
@@ -293,6 +293,8 @@ function TxForm({
   const [showAllTypes, setShowAllTypes] = useState(false);
   const [recent, setRecent] = useState<Record<string, string[]>>({});
   useEffect(() => setRecent(readRecentCategories()), []);
+  const [recentAmounts, setRecentAmounts] = useState<string[]>([]);
+  useEffect(() => setRecentAmounts(readRecentAmounts(type)), [type]);
   // 사용처 자동완성 — 유형별로 한 번만 불러온다
   const [suggestions, setSuggestions] = useState<MerchantSuggestion[]>([]);
   const [merchantFocused, setMerchantFocused] = useState(false);
@@ -503,7 +505,10 @@ function TxForm({
       }
       rememberAccount(`${type}:from`, tx.fromAccountId);
       rememberAccount(`${type}:to`, tx.toAccountId);
-      if (mode === "tx") rememberCategory(type, tx.categoryId);
+      if (mode === "tx") {
+        rememberCategory(type, tx.categoryId);
+        rememberAmount(type, tx.amount);
+      }
       const change = result.data && "spendable" in result.data ? result.data.spendable : null;
       if (change) return onSaved(change);
       toast.success(mode === "recurring" ? (rule ? "정기 거래를 수정했어요" : "정기 거래를 등록했어요") : initial ? "수정했어요" : "기록했어요");
@@ -589,7 +594,23 @@ function TxForm({
       ) : null}
 
       <Field label="금액" htmlFor="amount">
-        <AmountInput id="amount" value={amount} onChange={setAmount} quickAdd={[10_000, 50_000, 100_000]} autoFocus={!initial} />
+        <AmountInput id="amount" value={amount} onChange={setAmount} quickAdd={[1_000, 5_000, 10_000, 50_000]} autoFocus={!initial} />
+        {/* 최근 금액 — 새 기록에서 금액이 비어 있을 때만 (누르면 그 금액으로 채운다) */}
+        {!initial && mode === "tx" && !amount && recentAmounts.length ? (
+          <div className="flex flex-wrap items-center gap-1.5" aria-label="최근 금액">
+            <span className="text-xs text-muted-foreground">최근</span>
+            {recentAmounts.map((a) => (
+              <button
+                key={a}
+                type="button"
+                onClick={() => setAmount(a)}
+                className="rounded-full border border-dashed px-2.5 py-0.5 text-xs tabular text-muted-foreground hover:border-solid hover:bg-muted hover:text-foreground"
+              >
+                {Number(a).toLocaleString("ko-KR")}
+              </button>
+            ))}
+          </div>
+        ) : null}
       </Field>
 
       {type !== "ADJUSTMENT" ? (
@@ -835,7 +856,8 @@ function TxForm({
         </p>
       ) : null}
 
-      <DialogFooter className="gap-2">
+      {/* 저장 버튼은 화면 아래 고정 — 긴 입력 창에서도 엄지로 바로 누른다 */}
+      <DialogFooter className="sticky bottom-0 z-10 gap-2 bg-popover pb-[max(1rem,env(safe-area-inset-bottom))]">
         {initial ? (
           <Button type="button" variant="destructive" onClick={remove} disabled={pending} className="sm:mr-auto">
             삭제

@@ -44,6 +44,19 @@ export function MetricCard({
   return href ? <Link href={href} className="block">{body}</Link> : body;
 }
 
+/** 경고 문장 끝에 붙이는 다음 행동 — 이 달 지출 내역으로 */
+function ExpenseLink({ href, label = "지출 내역 보기" }: { href?: string; label?: string }) {
+  if (!href) return null;
+  return (
+    <>
+      {" "}
+      <Link href={href} className="font-medium text-foreground underline-offset-2 hover:underline">
+        {label} →
+      </Link>
+    </>
+  );
+}
+
 export function DeltaLine({ delta, invert, label = "전월 대비" }: { delta: Delta; invert?: boolean; label?: string }) {
   if (delta.diff === 0n) return <div className="text-xs text-muted-foreground">{label} 변화 없음</div>;
   const up = delta.diff > 0n;
@@ -52,7 +65,8 @@ export function DeltaLine({ delta, invert, label = "전월 대비" }: { delta: D
   return (
     <div className="flex items-center gap-1 text-xs text-muted-foreground">
       {label}
-      <span className={cn("inline-flex items-center font-medium", good ? "text-good" : "text-critical")}>
+      {/* 전월 대비 증감은 비교일 뿐 — 나빠진 쪽도 빨강 대신 주황 */}
+      <span className={cn("inline-flex items-center font-medium", good ? "text-good" : "text-warning")}>
         <Icon className="size-3.5" aria-hidden />
         <Money value={delta.diff < 0n ? -delta.diff : delta.diff} compact />
         {delta.rate !== null ? ` (${formatPercent(Math.abs(delta.rate), 0)})` : ""}
@@ -66,7 +80,7 @@ export function DeltaLine({ delta, invert, label = "전월 대비" }: { delta: D
  * 수입이 어디로 갔나: 지출 / 저축 / 남은 돈 — 100% 누적 막대 (2px 간격).
  * pendingIncome: 진행 중인 달에 아직 들어오지 않은 정기 수입 — 월급날 전 "더 썼어요" 경고를 막는다.
  */
-export function IncomeFlowBar({ stats, pendingIncome = 0n }: { stats: MonthlyStats; pendingIncome?: bigint }) {
+export function IncomeFlowBar({ stats, pendingIncome = 0n, expenseHref }: { stats: MonthlyStats; pendingIncome?: bigint; expenseHref?: string }) {
   const income = Number(stats.income);
   const parts = [
     { label: "지출", value: Number(stats.expense), color: "var(--chart-2)" },
@@ -104,17 +118,21 @@ export function IncomeFlowBar({ stats, pendingIncome = 0n }: { stats: MonthlySta
         </p>
       ) : pendingIncome > 0n ? (
         <p className="text-xs text-critical">
-          들어올 수입 <Money value={pendingIncome} compact />까지 더해도 <Money value={-(stats.remaining + pendingIncome)} /> 더 썼어요.
+          들어올 수입 <Money value={pendingIncome} compact />까지 더해도 <Money value={-(stats.remaining + pendingIncome)} compact /> 더 썼어요.
+          <ExpenseLink href={expenseHref} />
         </p>
       ) : (
-        <p className="text-xs text-critical">수입보다 <Money value={-stats.remaining} /> 더 썼어요.</p>
+        <p className="text-xs text-critical">
+          수입보다 <Money value={-stats.remaining} compact /> 더 썼어요.
+          <ExpenseLink href={expenseHref} />
+        </p>
       )}
     </div>
   );
 }
 
 /** 50/30/20 비교 — 실제 비율 막대 + 기준선 */
-export function BucketCompare({ stats }: { stats: MonthlyStats }) {
+export function BucketCompare({ stats, expenseHref }: { stats: MonthlyStats; expenseHref?: string }) {
   const rows = [
     { key: "NEEDS", label: "필수 지출", target: 0.5, actual: stats.bucketRatios.NEEDS, amount: stats.buckets.NEEDS, good: "under" },
     { key: "WANTS", label: "선택 지출", target: 0.3, actual: stats.bucketRatios.WANTS, amount: stats.buckets.WANTS + stats.buckets.UNCLASSIFIED, good: "under" },
@@ -142,8 +160,9 @@ export function BucketCompare({ stats }: { stats: MonthlyStats }) {
               />
               <div className="absolute -top-1 h-4 w-0.5 bg-foreground/60" style={{ left: `${r.target * 100}%` }} aria-hidden />
             </div>
-            <div className={cn("text-xs", ok ? "text-muted-foreground" : "text-critical")}>
+            <div className={cn("text-xs", ok ? "text-muted-foreground" : "text-warning")}>
               <Money value={r.amount} compact /> · {ok ? "기준 충족" : r.good === "under" ? "기준 초과" : "기준 미달"}
+              {!ok && r.good === "under" && expenseHref ? <ExpenseLink href={expenseHref} label="어디에 썼나 보기" /> : null}
             </div>
           </div>
         );

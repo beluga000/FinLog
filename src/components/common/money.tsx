@@ -23,7 +23,7 @@ export function Money({
         "tabular",
         tone === "muted" && "text-muted-foreground",
         tone === "delta" && n > 0n && "text-good",
-        tone === "delta" && n < 0n && "text-critical",
+        tone === "delta" && n < 0n && "text-warning",
         className,
       )}
       title={formatKRW(n)}

@@ -46,7 +46,7 @@ export function ClosingCard({ closing: c, surplusAction }: { closing: MonthlyClo
               ) : null}
             </dd>
             {savingRatio !== null ? (
-              <dd className={cn("text-xs", savingRatio >= 1 ? "text-good" : "text-critical")}>
+              <dd className={cn("text-xs", savingRatio >= 1 ? "text-good" : "text-warning")}>
                 {savingRatio >= 1 ? "달성" : `${formatPercent(savingRatio, 0)} 달성`}
               </dd>
             ) : null}
