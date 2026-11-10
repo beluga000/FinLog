@@ -243,6 +243,7 @@ model Transaction {
   updatedAt       DateTime       @updatedAt
   deletedAt       DateTime?
   needsReview     Boolean        @default(false) // v3 §2-10: 정기 규칙으로 생성된 거래 → 홈 "확인할 일"
+  notDuplicate    Boolean        @default(false) // 가계부 "같은 결제일까요?"에 "다른 결제예요" — 다시 의심하지 않는다
   household       Household      @relation(fields: [householdId], references: [id], onDelete: Cascade)
   fromAccount     Account?       @relation("fromAccount", fields: [fromAccountId], references: [id])
   toAccount       Account?       @relation("toAccount", fields: [toAccountId], references: [id])

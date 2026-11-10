@@ -118,3 +118,56 @@ export function isNearAmount(a: bigint, b: bigint): boolean {
   const lo = a > b ? b : a;
   return lo > 0n && Number(hi - lo) <= Number(hi) * NEAR_AMOUNT_RATIO;
 }
+
+export interface DupCandidate {
+  id: string;
+  type: string;
+  date: string;
+  merchant: string | null;
+  amount: bigint;
+  /** "다른 결제예요"로 의심을 끈 기록 */
+  notDuplicate: boolean;
+}
+
+/**
+ * 가계부 목록의 같은 결제 의심 묶음 — 같은 날·같은 가맹점 지출 중 금액이 거의 같은 것끼리.
+ * 묶음 전체가 "다른 결제예요"면 빼고, 나중에 비슷한 기록이 또 생기면 그 기록과 함께 다시 의심한다.
+ * 반환: 기록 id → 같은 묶음의 id 전부(자기 포함, 목록 순서).
+ */
+export function findSuspectedDuplicates(rows: readonly DupCandidate[]): Map<string, string[]> {
+  const parent = new Map<string, string>();
+  const root = (id: string): string => {
+    let r = id;
+    while (parent.get(r) !== r) r = parent.get(r)!;
+    parent.set(id, r);
+    return r;
+  };
+  const byDay = new Map<string, DupCandidate[]>();
+  for (const t of rows) {
+    const name = t.merchant?.trim();
+    if (t.type !== "EXPENSE" || !name) continue;
+    parent.set(t.id, t.id);
+    const day = `${t.date}\u0000${merchantKey(name)}`;
+    byDay.set(day, [...(byDay.get(day) ?? []), t]);
+  }
+  for (const same of byDay.values()) {
+    for (let i = 0; i < same.length; i++) {
+      for (let j = i + 1; j < same.length; j++) {
+        if (isNearAmount(same[i].amount, same[j].amount)) parent.set(root(same[j].id), root(same[i].id));
+      }
+    }
+  }
+  const groups = new Map<string, DupCandidate[]>();
+  for (const t of rows) {
+    if (!parent.has(t.id)) continue;
+    const r = root(t.id);
+    groups.set(r, [...(groups.get(r) ?? []), t]);
+  }
+  const out = new Map<string, string[]>();
+  for (const g of groups.values()) {
+    if (g.length < 2 || g.every((t) => t.notDuplicate)) continue;
+    const ids = g.map((t) => t.id);
+    for (const id of ids) out.set(id, ids);
+  }
+  return out;
+}

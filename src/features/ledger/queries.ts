@@ -133,6 +133,7 @@ export interface TxRow {
   isFixed: boolean;
   createdByUserId: string;
   recurringRuleId: string | null;
+  notDuplicate: boolean;
 }
 
 const txInclude = {
@@ -161,6 +162,7 @@ function toRow(t: TxWithRel): TxRow {
     isFixed: t.isFixed,
     createdByUserId: t.createdByUserId,
     recurringRuleId: t.recurringRuleId,
+    notDuplicate: t.notDuplicate,
   };
 }
 

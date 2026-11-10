@@ -1,10 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState, useTransition } from "react";
 import { EyeOff, Lock, Repeat } from "lucide-react";
+import { toast } from "sonner";
 import { cn } from "cn";
 import { Money } from "@/components/common/money";
+import { findSuspectedDuplicates } from "@/lib/finance/merchant-rules";
 import { TX_TYPE_META } from "@/lib/finance/tx-rules";
+import { markNotDuplicate } from "../actions";
 import type { CategoryRow, TxRow } from "../queries";
 import type { AccountOption } from "./tx-form";
 import { LazyTxFormDialog } from "./tx-form-lazy";
@@ -47,6 +50,18 @@ export function TxList({
   partnerName: string;
 }) {
   const [editing, setEditing] = useState<TxRow | null>(null);
+  const [pending, startTransition] = useTransition();
+  const duplicates = useMemo(() => findSuspectedDuplicates(items), [items]);
+  // 묶음 안내·버튼은 목록에서 처음 나오는 기록 아래 한 번만
+  const shown = new Set<string>();
+
+  function notDuplicate(ids: string[]) {
+    startTransition(async () => {
+      const r = await markNotDuplicate(ids);
+      if (r.ok) toast.success("다른 결제로 기억할게요");
+      else toast.error(r.error);
+    });
+  }
   const groups = new Map<string, TxRow[]>();
   for (const tx of items) groups.set(tx.date, [...(groups.get(tx.date) ?? []), tx]);
 
@@ -69,6 +84,9 @@ export function TxList({
                 {txs.map((tx) => {
                   const s = signed(tx);
                   const partner = tx.createdByUserId !== viewerId;
+                  const group = duplicates.get(tx.id);
+                  const firstOfGroup = !!group && !shown.has(group[0]);
+                  if (group) shown.add(group[0]);
                   return (
                     <li key={tx.id}>
                       <button
@@ -80,6 +98,9 @@ export function TxList({
                           <div className="flex items-center gap-1.5 truncate text-sm font-medium">
                             {tx.categoryName ?? TX_TYPE_META[tx.type].label}
                             {tx.merchant ? <span className="truncate font-normal text-muted-foreground">· {tx.merchant}</span> : null}
+                            {group ? (
+                              <span className="shrink-0 rounded bg-warning/15 px-1 text-xs font-medium text-warning">같은 결제?</span>
+                            ) : null}
                           </div>
                           <div className="flex items-center gap-1.5 truncate text-xs text-muted-foreground">
                             {tx.recurringRuleId ? <Repeat className="size-3" aria-label="정기 거래" /> : null}
@@ -93,6 +114,21 @@ export function TxList({
                         </div>
                         <Money value={s.value} className={cn("shrink-0 text-sm font-semibold", s.className)} />
                       </button>
+                      {firstOfGroup ? (
+                        <div className="flex items-center gap-2 border-t border-dashed bg-warning/5 px-3 py-2 text-xs">
+                          <p className="min-w-0 flex-1 text-muted-foreground">
+                            같은 날 같은 곳에 비슷한 금액이 {group.length}건 있어요. 한 번 결제했다면 하나를 눌러 지우세요.
+                          </p>
+                          <button
+                            type="button"
+                            disabled={pending}
+                            onClick={() => notDuplicate(group)}
+                            className="shrink-0 rounded-md border px-2 py-1 font-medium hover:bg-muted disabled:opacity-50"
+                          >
+                            다른 결제예요
+                          </button>
+                        </div>
+                      ) : null}
                     </li>
                   );
                 })}

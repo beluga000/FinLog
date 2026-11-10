@@ -14,7 +14,7 @@ vi.mock("@/lib/db/context", () => ({
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
 vi.mock("next/headers", () => ({ cookies: async () => ({ get: () => undefined, delete: () => {} }) }));
 
-import { deleteMerchantRule, getMerchantRules, inspectCapturedExpenses, saveMerchantRule } from "@/features/ledger/actions";
+import { deleteMerchantRule, getMerchantRules, inspectCapturedExpenses, markNotDuplicate, saveMerchantRule } from "@/features/ledger/actions";
 import { createHouseholdWithDefaults } from "@/features/household/setup";
 import { prisma, toDbDate } from "@/lib/db/prisma";
 
@@ -105,5 +105,21 @@ describe("가맹점 규칙", () => {
     as(A);
     expect((await deleteMerchantRule(rule.id)).ok).toBe(true);
     expect(await getMerchantRules()).toEqual([]);
+  });
+});
+
+describe("같은 결제 의심 — 다른 결제예요", () => {
+  it("고칠 수 있는 기록만 표시하고, 남의 비공개 기록이나 다른 가구 id는 건드리지 않는다", async () => {
+    const mine = await expense(A, "스타벅스", snack, 5_000n, "2026-11-08");
+    const shared = await expense(B, "스타벅스", snack, 5_000n, "2026-11-08");
+    const hidden = await prisma.transaction.update({ where: { id: (await expense(B, "스타벅스", snack, 5_000n, "2026-11-08")).id }, data: { visibility: "PRIVATE" } });
+    as(A);
+    expect(await markNotDuplicate([mine.id, shared.id, hidden.id])).toEqual({ ok: true });
+    const flags = Object.fromEntries(
+      (await prisma.transaction.findMany({ where: { id: { in: [mine.id, shared.id, hidden.id] } }, select: { id: true, notDuplicate: true } })).map((t) => [t.id, t.notDuplicate]),
+    );
+    expect(flags).toEqual({ [mine.id]: true, [shared.id]: true, [hidden.id]: false });
+    expect((await markNotDuplicate(["no-such-id"])).ok).toBe(false);
+    expect((await markNotDuplicate([])).ok).toBe(false);
   });
 });

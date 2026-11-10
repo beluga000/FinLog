@@ -93,6 +93,21 @@ export async function confirmTransaction(id: string): Promise<ActionResult> {
   return { ok: true };
 }
 
+/** 가계부 "같은 결제일까요?" → [다른 결제예요] — 묶음 전체를 기억해 다시 의심하지 않는다 */
+export async function markNotDuplicate(ids: string[]): Promise<ActionResult> {
+  const ctx = await requireHousehold();
+  if (!Array.isArray(ids) || !ids.length || ids.length > 20 || !ids.every((id) => typeof id === "string")) {
+    return { ok: false, error: "거래를 찾을 수 없습니다." };
+  }
+  const rows = await prisma.transaction.findMany({ where: { id: { in: ids }, householdId: ctx.householdId, deletedAt: null } });
+  // 볼 수 있는 기록끼리 묶인 것이라 하나라도 못 고치는 기록이 있으면 통째로 거절하지 않고 고칠 수 있는 것만 표시한다
+  const editable = rows.filter((t) => txAccess(t, ctx.userId, "us") === "full").map((t) => t.id);
+  if (!editable.length) return { ok: false, error: "거래를 찾을 수 없습니다." };
+  await prisma.transaction.updateMany({ where: { id: { in: editable } }, data: { notDuplicate: true } });
+  done();
+  return { ok: true };
+}
+
 export async function deleteTransaction(id: string): Promise<ActionResult> {
   const ctx = await requireHousehold();
   const existing = await findEditable(ctx, id);
