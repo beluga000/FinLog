@@ -5,6 +5,7 @@ import { prisma, toDbDate } from "@/lib/db/prisma";
 import { computeBalances } from "@/lib/finance/balance";
 import {
   DAILY_SPEND_LOOKBACK_DAYS,
+  findIdleMoney,
   forecastBalances,
   suggestSaveFirst,
   type AccountForecast,
@@ -93,5 +94,10 @@ export async function getBalanceForecast(ctx: Ctx, opts: { today: DateStr }): Pr
     }));
   const input = { accounts: forecastAccounts, rules: forecastRules, cards: forecastCards, today: opts.today };
   const saveFirst = suggestSaveFirst(input);
-  return forecastBalances(input).map((f) => ({ ...f, saveFirst: saveFirst.find((s) => s.accountId === f.id) ?? null }));
+  const idle = findIdleMoney(input, { saveFirst });
+  return forecastBalances(input).map((f) => ({
+    ...f,
+    saveFirst: saveFirst.find((s) => s.accountId === f.id) ?? null,
+    idle: idle.find((s) => s.accountId === f.id) ?? null,
+  }));
 }

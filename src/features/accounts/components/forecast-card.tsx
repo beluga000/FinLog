@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { ReactNode } from "react";
 import { Money } from "@/components/common/money";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { bigOutflowsBefore, type AccountForecast } from "@/lib/finance/forecast";
@@ -30,7 +31,14 @@ function Spark({ f }: { f: AccountForecast }) {
 }
 
 /** 자산 화면 — 앞으로 30일 통장 잔액 예보 (입출금 통장·현금) */
-export function ForecastCard({ forecasts }: { forecasts: AccountForecast[] }) {
+export function ForecastCard({
+  forecasts,
+  idleAction,
+}: {
+  forecasts: AccountForecast[];
+  /** 놀고 있는 돈 옮기기 버튼 (옮길 목표가 있을 때) */
+  idleAction?: (f: AccountForecast & { idle: NonNullable<AccountForecast["idle"]> }) => ReactNode;
+}) {
   if (!forecasts.length) return null;
   const end = forecasts[0].points[forecasts[0].points.length - 1].date;
   return (
@@ -42,6 +50,7 @@ export function ForecastCard({ forecasts }: { forecasts: AccountForecast[] }) {
       <CardContent className="grid gap-4">
         {forecasts.map((f) => {
           const causes = f.shortfall ? bigOutflowsBefore(f, f.shortfall.date) : [];
+          const idleButton = f.idle && idleAction ? idleAction({ ...f, idle: f.idle }) : null;
           return (
             <div key={f.id} className="grid gap-1.5">
               <div className="flex items-baseline justify-between gap-2 text-sm">
@@ -80,6 +89,18 @@ export function ForecastCard({ forecasts }: { forecasts: AccountForecast[] }) {
                     자동이체로 걸어 두기
                   </Link>
                 </p>
+              ) : null}
+              {f.idle ? (
+                <div className="grid gap-2 rounded-lg bg-muted px-3 py-2 text-sm">
+                  <p>
+                    <b className="font-semibold"><Money value={f.idle.amount} compact /></b>은 30일 동안 쓰일 일이 없어 보여요.
+                    <span className="block text-xs text-muted-foreground">
+                      {f.saveFirst ? "월급날 저축까지 함께 옮겨도" : "옮겨도"} 가장 낮을 때 <Money value={f.idle.keep} compact />은 남아요. 입출금 통장에 두면 이자가 거의 없어요
+                      {idleButton ? "" : " — 비상금이라면 파킹통장이나 예금으로 옮겨 두세요"}.
+                    </span>
+                  </p>
+                  {idleButton}
+                </div>
               ) : null}
             </div>
           );

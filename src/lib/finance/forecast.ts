@@ -61,6 +61,8 @@ export interface AccountForecast {
   shortfall: { date: DateStr; amount: bigint } | null;
   /** 월급날 먼저 저축 권유 (suggestSaveFirst) — 붙여 주는 쪽에서 채운다 */
   saveFirst?: SaveFirst | null;
+  /** 놀고 있는 돈 (findIdleMoney) — 붙여 주는 쪽에서 채운다 */
+  idle?: IdleMoney | null;
 }
 
 /** today(포함) ~ until(포함) 사이 규칙 발생일 — 이미 실행한 날은 뺀다 */
@@ -188,6 +190,12 @@ export interface SaveFirst {
   keep: bigint;
 }
 
+/** 통장에 늘 남겨 둘 여유 — max(30만, 하루 평균 지출 14일치) */
+function livingBuffer(a: ForecastAccount): bigint {
+  const daily = a.dailySpend * SAVE_FIRST_BUFFER_DAYS;
+  return daily > SAVE_FIRST_MIN_BUFFER ? daily : SAVE_FIRST_MIN_BUFFER;
+}
+
 /**
  * 월급날 먼저 저축 (pay yourself first).
  * 예보 기간 안에 정기 수입이 들어오는 통장마다, 그날부터 다음 수입 전날까지 예보를 이어서 가장 낮은 잔액을 본다.
@@ -212,14 +220,51 @@ export function suggestSaveFirst(input: { accounts: ForecastAccount[]; rules: Fo
     const days = daysBetween(input.today, addDays(next, -1));
     const [f] = forecastBalances({ ...input, accounts: [a], days });
     const low = f.points.filter((p) => p.date >= first.date).reduce((m, p) => (p.balance < m ? p.balance : m), f.points[f.points.length - 1].balance);
-    const daily = a.dailySpend * SAVE_FIRST_BUFFER_DAYS;
-    const buffer = daily > SAVE_FIRST_MIN_BUFFER ? daily : SAVE_FIRST_MIN_BUFFER;
-    const room = low - buffer;
+    const room = low - livingBuffer(a);
     // 받은 수입보다 많이는 권하지 않는다 — 원래 있던 돈은 "놀고 있는 돈"으로 따로 본다
     const cap = room < first.r.amount ? room : first.r.amount;
     const amount = cap > 0n ? (cap / SAVE_FIRST_STEP) * SAVE_FIRST_STEP : 0n;
     if (amount < SAVE_FIRST_STEP) continue;
     out.push({ accountId: a.id, date: first.date, label: first.r.name, amount, keep: low - amount });
+  }
+  return out;
+}
+
+/** 놀고 있는 돈 — 이보다 적으면 말하지 않는다 (옮기는 수고에 비해 작다) */
+export const IDLE_MIN = 500_000n;
+
+export interface IdleMoney {
+  accountId: string;
+  /** 옮겨도 되는 금액 (10만 원 단위 내림) */
+  amount: bigint;
+  /** 옮겨도 30일 동안 남는 가장 낮은 잔액 */
+  keep: bigint;
+}
+
+/**
+ * 놀고 있는 돈 — 입출금 통장에 30일 예보 내내 쓰이지 않고 남아 있는 돈.
+ * 예보에서 가장 낮은 잔액에서 생활 여유(선저축과 같은 기준)를 남긴 나머지. 월급날 선저축 권유가 있으면 그만큼 먼저 빼고 잰다
+ * (선저축 = 새로 들어올 돈, 놀고 있는 돈 = 원래 쌓여 있던 돈 — 같은 돈을 두 번 권하지 않는다).
+ * 30일 안에 모자라는 통장은 빼고, 50만 원 미만이면 말하지 않는다.
+ * 목표에 연결된 통장도 본다 — 입출금 통장에 두면 이자가 거의 없어, 같은 목표의 예적금으로 옮기라고 권할 수 있다.
+ */
+export function findIdleMoney(
+  input: { accounts: ForecastAccount[]; rules: ForecastRule[]; cards: ForecastCard[]; today: DateStr },
+  opts: { saveFirst: SaveFirst[] },
+): IdleMoney[] {
+  const out: IdleMoney[] = [];
+  for (const f of forecastBalances(input)) {
+    if (f.shortfall) continue;
+    const a = input.accounts.find((x) => x.id === f.id)!;
+    const sf = opts.saveFirst.find((s) => s.accountId === f.id);
+    const low = f.points.reduce((m, p) => {
+      const b = sf && p.date >= sf.date ? p.balance - sf.amount : p.balance;
+      return b < m ? b : m;
+    }, f.start);
+    const room = low - livingBuffer(a);
+    const amount = room > 0n ? (room / SAVE_FIRST_STEP) * SAVE_FIRST_STEP : 0n;
+    if (amount < IDLE_MIN) continue;
+    out.push({ accountId: f.id, amount, keep: low - amount });
   }
   return out;
 }

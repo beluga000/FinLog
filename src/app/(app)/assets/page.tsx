@@ -11,16 +11,19 @@ import { getBalanceForecast } from "@/features/accounts/forecast";
 import { getAccountOverview } from "@/features/accounts/queries";
 import { getTaxRoom } from "@/features/accounts/tax";
 import { defaultSourceAccount, ownerChoiceOf, PAYMENT_SOURCE_TYPES } from "@/features/accounts/rules";
-import { getAccounts } from "@/features/ledger/queries";
+import { MoveToGoalButton } from "@/features/goals/components/move-to-goal";
+import { getGoalsOverview, pickSurplusGoal, type GoalView } from "@/features/goals/queries";
+import { getAccounts, getCategories } from "@/features/ledger/queries";
 import { NetWorthChart } from "@/components/charts/lazy-charts";
 import { requireHousehold } from "@/lib/db/context";
-import { isLiability } from "@/lib/finance/balance";
+import { isLiability, SAVING_DESTINATION_TYPES } from "@/lib/finance/balance";
 import { isLoanRepayment, LOAN_REPAYMENT_LABEL, loanPlan } from "@/lib/finance/loan";
 import { formatKRW } from "@/lib/finance/money";
 import { parseMonthKey, todayKST } from "@/lib/finance/period";
 import { isTaxWrapper, TAX_WRAPPER_LABEL } from "@/lib/finance/tax-accounts";
+import type { AccountType } from "@/lib/finance/types";
 import { parseViewScope } from "@/lib/finance/visibility";
-import { ACCOUNT_TYPE_LABEL, ACCOUNT_TYPE_ORDER, VISIBILITY_LABEL } from "@/lib/labels";
+import { ACCOUNT_TYPE_LABEL, ACCOUNT_TYPE_ORDER, VISIBILITY_LABEL, withRo } from "@/lib/labels";
 
 export const metadata = { title: "자산" };
 
@@ -36,6 +39,11 @@ export default async function AssetsPage({ searchParams }: { searchParams: Promi
     getTaxRoom(ctx, { today }),
     getBalanceForecast(ctx, { today }),
   ]);
+  // 놀고 있는 돈이 있을 때만 옮길 곳을 찾는다 (목표 계산이 무거워서)
+  const [goals, categories] = forecasts.some((f) => f.idle)
+    ? await Promise.all([getGoalsOverview(ctx, { today, monthStartDay: ctx.household.monthStartDay }).then((o) => o.goals), getCategories(ctx)])
+    : [[], []];
+  const idleTargetOf = (accountId: string) => idleMoveTarget(goals, allVisible, accountId);
   // 보관한 계좌 — 순자산에서 빠지고 여기서만 되돌린다 (뷰 스코프는 위 목록과 같게)
   const archived = (await getAccounts(ctx, scope, { includeArchived: true })).filter((a) => a.isArchived);
   const nameById = new Map(allVisible.map((a) => [a.id, a.name]));
@@ -138,7 +146,28 @@ export default async function AssetsPage({ searchParams }: { searchParams: Promi
       {/* 예보·절세는 한 줄에 둘 (휴대폰에서는 위아래) */}
       {forecasts.length || taxRoom ? (
         <div className="grid grid-cols-1 items-start gap-3 lg:grid-cols-2">
-          <ForecastCard forecasts={forecasts} />
+          <ForecastCard
+            forecasts={forecasts}
+            idleAction={(f) => {
+              const t = idleTargetOf(f.id);
+              if (!t) return null;
+              return (
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <MoveToGoalButton
+                    target={{ goalName: t.goalName, toAccountId: t.to.id, fromAccountId: f.id }}
+                    amount={f.idle.amount}
+                    label={`${withRo(t.sameGoal ? t.to.name : t.goalName)} 옮기기 기록`}
+                    accounts={allVisible}
+                    categories={categories}
+                    viewerId={ctx.userId}
+                    isCouple={ctx.isCouple}
+                    variant="outline"
+                  />
+                  {t.sameGoal ? <span className="text-xs text-muted-foreground">{t.goalName}에 모인 돈은 그대로예요</span> : null}
+                </div>
+              );
+            }}
+          />
           {taxRoom ? <TaxRoomCard room={taxRoom} showOwner={ctx.isCouple} viewerId={ctx.userId} /> : null}
         </div>
       ) : null}
@@ -245,4 +274,29 @@ export default async function AssetsPage({ searchParams }: { searchParams: Promi
       ) : null}
     </div>
   );
+}
+
+/**
+ * 놀고 있는 돈을 옮길 곳.
+ * 1) 이 통장이 연결된 진행 중 목표에 예적금·투자 계좌도 있으면 그리로 — 목표 진척은 그대로, 이자만 붙는다
+ * 2) 아니면 남은 돈을 받을 목표(pickSurplusGoal)의 다른 계좌로 (예적금·투자 먼저)
+ */
+function idleMoveTarget(
+  goals: GoalView[],
+  accounts: { id: string; name: string; type: AccountType }[],
+  accountId: string,
+): { goalName: string; to: { id: string; name: string }; sameGoal: boolean } | null {
+  const byId = new Map(accounts.map((a) => [a.id, a]));
+  const destination = (ids: string[]) => {
+    const others = ids.filter((id) => id !== accountId).map((id) => byId.get(id)).filter((a) => a !== undefined);
+    return others.find((a) => SAVING_DESTINATION_TYPES.includes(a.type)) ?? null;
+  };
+  for (const g of goals) {
+    if (g.status !== "ACTIVE" || !g.linkedAccountIds.includes(accountId)) continue;
+    const to = destination(g.linkedAccountIds);
+    if (to) return { goalName: g.name, to, sameGoal: true };
+  }
+  const surplus = pickSurplusGoal(goals);
+  const to = surplus ? destination(surplus.linkedAccountIds) : null;
+  return surplus && to ? { goalName: surplus.name, to, sameGoal: false } : null;
 }
