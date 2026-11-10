@@ -8,9 +8,11 @@ import { prisma, toDbDate } from "@/lib/db/prisma";
 import { balanceSeries, summarizeNetWorth } from "@/lib/finance/balance";
 import {
   describeClosingPace,
+  explainSpendableResult,
   findFrequentMerchant,
   findOneOffExpense,
   suggestAdjustments,
+  type ClosingDriver,
   type ClosingExpense,
   type ClosingPace,
   type ClosingSuggestion,
@@ -26,12 +28,32 @@ import { txAccess } from "@/lib/finance/visibility";
 
 type Ctx = Pick<HouseholdContext, "householdId" | "userId">;
 
+/** 쓸 수 있는 돈 = 수입 − 고정 지출 − 저축 계획 − 생활비 */
+export interface SpendableParts {
+  income: bigint;
+  fixed: bigint;
+  plannedSaving: bigint;
+  variable: bigint;
+}
+const partsOf = (s: { income: bigint; fixed: bigint; plannedSaving: bigint; variableExpense: bigint }): SpendableParts => ({
+  income: s.income,
+  fixed: s.fixed,
+  plannedSaving: s.plannedSaving,
+  variable: s.variableExpense,
+});
+
 export interface MonthlyClosing {
   month: MonthKey;
   savingsRate: number | null;
   saving: { actual: bigint; planned: bigint };
   /** 지난달 쓸 수 있는 돈 결과 — 양수 = 남김, 음수 = 초과 */
   spendableResult: bigint;
+  /** "무엇 때문인지 보기" — 쓸 수 있는 돈 계산식 (전월 기록이 있으면 prev 도) */
+  breakdown: { now: SpendableParts; prev: SpendableParts | null };
+  /** 넘긴(남긴) 이유가 된 지출 카테고리 */
+  drivers: ClosingDriver[];
+  /** 결산 달 가계부 지출 목록 */
+  ledgerHref: string;
   primaryGoal: { id: string; name: string; pace: ClosingPace | null } | null;
   suggestions: ClosingSuggestion[];
   /** 지난달 남긴 돈과 옮길 목표 — 결산 카드의 [옮기기 기록] 버튼용 */
@@ -150,6 +172,14 @@ export async function getMonthlyClosing(
   );
 
   const prevByCat = new Map(prevStats.expenseByTopCategory.map((c) => [c.categoryId, c.amount]));
+  const oneOff = findOneOffExpense(expenses, stats.expense);
+  const drivers = explainSpendableResult({
+    overspent: last.overspent,
+    current: stats.expenseByTopCategory,
+    previous: prevStats.expenseByTopCategory,
+    compared: prevHasData,
+    oneOff: last.overspent ? oneOff : null,
+  });
   const suggestions = suggestAdjustments({
     overspent: last.overspent,
     categoryDiffs: stats.expenseByTopCategory.map((c) => ({ name: c.name, diff: c.amount - (prevByCat.get(c.categoryId) ?? 0n) })),
@@ -158,7 +188,7 @@ export async function getMonthlyClosing(
     primaryGoal: primary ? { id: primary.id, name: primary.name } : null,
     staleAccounts: stale,
     ledgerHref: `/ledger?month=${month}`,
-    oneOff: findOneOffExpense(expenses, stats.expense),
+    oneOff,
     frequentMerchant: frequent,
     pendingReviews,
     surplus: { amount: surplusAmount, goal: surplusGoal ? { id: surplusGoal.id, name: surplusGoal.name, monthsSooner } : null },
@@ -169,6 +199,9 @@ export async function getMonthlyClosing(
     savingsRate: stats.savingsRate,
     saving: { actual: stats.saving, planned },
     spendableResult: last.remaining,
+    breakdown: { now: partsOf(last), prev: prevHasData ? partsOf(prev) : null },
+    drivers,
+    ledgerHref: `/ledger?month=${month}&type=expense`,
     primaryGoal: primary ? { id: primary.id, name: primary.name, pace } : null,
     suggestions,
     surplus: {

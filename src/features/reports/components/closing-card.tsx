@@ -15,6 +15,76 @@ const PACE_TONE: Record<ClosingPace["tone"], string> = {
   critical: "text-critical",
 };
 
+/** 증감 — 돈이 더 남는 쪽(good)이면 초록, 덜 남는 쪽이면 주황 */
+function Diff({ value, good }: { value: bigint; good: boolean }) {
+  if (value === 0n) return <span className="w-16 shrink-0 text-right text-xs text-muted-foreground">그대로</span>;
+  return (
+    <span className={cn("w-16 shrink-0 text-right text-xs font-medium", good ? "text-good" : "text-warning")}>
+      {value > 0n ? "+" : "−"}
+      <Money value={value > 0n ? value : -value} compact />
+    </span>
+  );
+}
+
+/** "왜 넘겼는지 보기" — 쓸 수 있는 돈 계산식 줄마다 전월 대비, 그 아래 늘거나 준 지출 카테고리 */
+function SpendableBreakdown({ closing: c }: { closing: MonthlyClosing }) {
+  const { now, prev } = c.breakdown;
+  const lines: { label: string; value: bigint; prev: bigint | null; minus: boolean }[] = [
+    { label: "수입", value: now.income, prev: prev?.income ?? null, minus: false },
+    { label: "고정 지출", value: now.fixed, prev: prev?.fixed ?? null, minus: true },
+    { label: "저축 계획", value: now.plannedSaving, prev: prev?.plannedSaving ?? null, minus: true },
+    { label: "생활비", value: now.variable, prev: prev?.variable ?? null, minus: true },
+  ];
+  const over = c.spendableResult < 0n;
+  return (
+    <div className="mt-2 grid gap-2 rounded-lg bg-muted/50 p-2">
+      <dl className="grid gap-0.5">
+        {lines.map((l) => (
+          <div key={l.label} className="flex items-baseline gap-2 px-1.5 py-0.5">
+            <dt className="min-w-0 flex-1 text-muted-foreground">
+              {l.minus ? "− " : ""}
+              {l.label}
+            </dt>
+            <dd className="shrink-0 font-medium">
+              <Money value={l.value} compact />
+            </dd>
+            {l.prev !== null ? <Diff value={l.value - l.prev} good={l.minus ? l.value < l.prev : l.value > l.prev} /> : null}
+          </div>
+        ))}
+        <div className="flex items-baseline gap-2 border-t px-1.5 pt-1">
+          <dt className="min-w-0 flex-1 font-medium">= {over ? "넘긴 돈" : "남긴 돈"}</dt>
+          <dd className={cn("shrink-0 font-semibold", over && "text-critical")}>
+            <Money value={over ? -c.spendableResult : c.spendableResult} compact />
+          </dd>
+          {prev !== null ? <span className="w-16 shrink-0" /> : null}
+        </div>
+      </dl>
+      {c.drivers.length ? (
+        <div className="grid gap-0.5 border-t pt-2">
+          <p className="px-1.5 text-xs text-muted-foreground">
+            {c.drivers.some((d) => d.diff !== null) ? (over ? "지출이 많이 늘어난 곳" : "지출을 많이 줄인 곳") : "많이 쓴 곳"}
+          </p>
+          <ul>
+            {c.drivers.map((d) => (
+              <li key={`${d.kind}:${d.name}`}>
+                <Link href={c.ledgerHref} className="flex items-baseline gap-2 rounded-md px-1.5 py-1 hover:bg-muted">
+                  <span className="min-w-0 flex-1 truncate">
+                    {d.kind === "oneOff" ? <span className="mr-1 text-xs text-muted-foreground">큰 지출 한 건</span> : null}
+                    {d.name}
+                  </span>
+                  <Money value={d.amount} compact className="shrink-0 text-xs text-muted-foreground" />
+                  {d.diff !== null ? <Diff value={d.diff} good={d.diff < 0n} /> : null}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+      {prev !== null ? <p className="px-1.5 text-xs text-muted-foreground">오른쪽 숫자는 전월보다 늘거나 준 금액이에요.</p> : null}
+    </div>
+  );
+}
+
 /** 리포트 최상단 — 지난달 결산 + 다음 달 조정 제안 (§4-7, AC-16) */
 export function ClosingCard({ closing: c, surplusAction }: { closing: MonthlyClosing; surplusAction?: React.ReactNode }) {
   const { m } = parseMonthKey(c.month);
@@ -69,6 +139,13 @@ export function ClosingCard({ closing: c, surplusAction }: { closing: MonthlyClo
             </div>
           ) : null}
         </dl>
+
+        <details className="-mt-1 text-sm">
+          <summary className="w-fit cursor-pointer list-none text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline">
+            {over ? "왜 넘겼는지" : "어떻게 남겼는지"} 보기
+          </summary>
+          <SpendableBreakdown closing={c} />
+        </details>
 
         {c.challengeResults.length ? (
           <ul className="grid gap-1 border-t pt-3 text-sm">

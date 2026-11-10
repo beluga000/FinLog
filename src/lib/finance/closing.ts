@@ -255,3 +255,61 @@ export function describeClosingPace(input: {
   }
   return { text, tone, change };
 }
+
+export interface ClosingDriver {
+  kind: "oneOff" | "category";
+  name: string;
+  /** 결산 달 금액 (큰 지출 한 건은 그 금액) */
+  amount: bigint;
+  /** 전월 대비 증감 — 비교할 수 없거나 큰 지출 한 건이면 null */
+  diff: bigint | null;
+}
+
+export const MAX_DRIVERS = 3;
+
+/**
+ * 결산 "무엇 때문인지 보기" — 쓸 수 있는 돈을 넘긴(남긴) 이유가 된 지출.
+ * 큰 지출 한 건이 있으면 먼저 따로 보이고 그 금액은 카테고리 증감에서 뺀다 (조정 제안과 같은 기준).
+ * 넘긴 달은 많이 늘어난 곳, 남긴 달은 많이 줄인 곳부터. 그쪽이 하나도 없으면 증감이 큰 곳부터.
+ * 전월 기록이 없으면 많이 쓴 곳부터.
+ */
+export function explainSpendableResult(input: {
+  overspent: boolean;
+  current: { name: string; amount: bigint }[];
+  previous: { name: string; amount: bigint }[];
+  compared: boolean;
+  oneOff?: OneOffExpense | null;
+}): ClosingDriver[] {
+  const out: ClosingDriver[] = [];
+  const oneOff = input.oneOff ?? null;
+  if (oneOff) out.push({ kind: "oneOff", name: oneOff.label, amount: oneOff.amount, diff: null });
+  const cmp = (a: bigint, b: bigint) => (a > b ? -1 : a < b ? 1 : 0);
+  const abs = (v: bigint) => (v < 0n ? -v : v);
+
+  if (!input.compared) {
+    for (const c of [...input.current].sort((a, b) => cmp(a.amount, b.amount))) {
+      if (out.length >= MAX_DRIVERS) break;
+      if (c.amount > 0n) out.push({ kind: "category", name: c.name, amount: c.amount, diff: null });
+    }
+    return out;
+  }
+
+  const prev = new Map(input.previous.map((c) => [c.name, c.amount]));
+  const names = new Set([...input.current.map((c) => c.name), ...prev.keys()]);
+  const cur = new Map(input.current.map((c) => [c.name, c.amount]));
+  const rows = [...names].map((name) => {
+    const amount = cur.get(name) ?? 0n;
+    let diff = amount - (prev.get(name) ?? 0n);
+    if (oneOff && name === oneOff.categoryName) diff -= oneOff.amount;
+    return { name, amount, diff };
+  });
+  const wanted = rows.filter((r) => (input.overspent ? r.diff > 0n : r.diff < 0n));
+  const pick = wanted.length
+    ? wanted.sort((a, b) => cmp(abs(a.diff), abs(b.diff)))
+    : rows.filter((r) => r.diff !== 0n).sort((a, b) => cmp(abs(a.diff), abs(b.diff)));
+  for (const r of pick) {
+    if (out.length >= MAX_DRIVERS) break;
+    out.push({ kind: "category", name: r.name, amount: r.amount, diff: r.diff });
+  }
+  return out;
+}
