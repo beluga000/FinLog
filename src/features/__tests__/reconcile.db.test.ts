@@ -103,7 +103,7 @@ describe("잔액 한 번에 맞추기", () => {
       { id: card, balance: "2721400", yearly: false },
       { id: jeonse, balance: null, yearly: false },
     ]);
-    expect(r).toEqual({ ok: true, data: { saved: 2 } });
+    expect(r).toEqual({ ok: true, data: { saved: 2, goals: [] } });
 
     const snaps = await prisma.accountSnapshot.findMany({ where: { accountId: { in: [isa, card, jeonse] } }, orderBy: { asOf: "desc" } });
     const latest = (id: string) => snaps.find((s) => s.accountId === id)!;
@@ -117,5 +117,37 @@ describe("잔액 한 번에 맞추기", () => {
     // 맞춘 뒤에는 월급날 줄이 사라진다
     const items = await getReviewItems({ householdId: hid, userId: A }, { today: "2026-11-26" });
     expect(items.some((i) => i.kind === "reconcile")).toBe(false);
+  });
+
+  it("고친 잔액으로 진행 중 목표에 모인 돈이 바뀌면 전후를 돌려준다 (연결 계좌·순자산 기준, 멈춘 목표는 빼고)", async () => {
+    const goal = (name: string, linkedAccountIds: string[], status: "ACTIVE" | "PAUSED" = "ACTIVE") =>
+      prisma.assetGoal.create({
+        data: {
+          householdId: hid,
+          name,
+          targetAmount: 40_000_000n,
+          targetDate: toDbDate("2028-12-31"),
+          priority: 1,
+          linkedAccountIds,
+          startAmount: 10_000_000n,
+          baseBalance: 25_180_000n,
+          baseSetOn: toDbDate("2026-11-26"),
+          status,
+        },
+      });
+    const isaGoal = await goal("ISA 목표", [isa]);
+    await goal("멈춘 목표", [isa], "PAUSED");
+    const netGoal = await goal("순자산 목표", []);
+    const r = await recordBalances([{ id: isa, balance: "26180000", yearly: false }]);
+    expect(r.ok).toBe(true);
+    const goals = r.ok ? r.data!.goals : [];
+    expect(goals.map((g) => g.name).sort()).toEqual(["ISA 목표", "순자산 목표"]);
+    expect(goals.find((g) => g.id === isaGoal.id)).toMatchObject({ before: 10_000_000, after: 11_000_000, target: 40_000_000 });
+    const net = goals.find((g) => g.id === netGoal.id)!;
+    expect(net.after - net.before).toBe(1_000_000);
+
+    // 그대로 저장하면 바뀐 목표가 없다
+    const same = await recordBalances([{ id: isa, balance: "26180000", yearly: false }]);
+    expect(same).toEqual({ ok: true, data: { saved: 1, goals: [] } });
   });
 });

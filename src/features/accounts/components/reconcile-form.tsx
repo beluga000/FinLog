@@ -1,18 +1,20 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { cn } from "cn";
 import { AmountInput } from "@/components/common/amount-input";
 import { Money } from "@/components/common/money";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { isLiability } from "@/lib/finance/balance";
 import { formatCompactKRW } from "@/lib/finance/money";
 import { isBalanceStale, netWorthDelta, toDisplay, toStored } from "@/lib/finance/reconcile";
 import type { AccountType, DateStr } from "@/lib/finance/types";
 import { ACCOUNT_TYPE_LABEL } from "@/lib/labels";
+import type { GoalShift } from "@/features/goals/queries";
 import { recordBalances } from "../actions";
 import type { ReconcileAccount } from "../queries";
 
@@ -43,6 +45,46 @@ function Signed({ value, tone }: { value: bigint; tone?: "delta" }) {
   );
 }
 
+/** 저장 뒤 — 고친 잔액으로 목표에 모인 돈이 어떻게 바뀌었는지 */
+function GoalShifts({ shifts, onDone }: { shifts: GoalShift[]; onDone: () => void }) {
+  return (
+    <div className="grid gap-3">
+      <p className="text-sm font-medium">목표가 이렇게 바뀌었어요</p>
+      <ul className="grid gap-2">
+        {shifts.map((g) => {
+          const pct = g.target > 0 ? Math.min(100, Math.round((g.after / g.target) * 100)) : 0;
+          const before = g.target > 0 ? Math.min(100, Math.round((g.before / g.target) * 100)) : 0;
+          return (
+            <li key={g.id} className="grid gap-2 rounded-xl border bg-card p-3">
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="truncate text-sm font-medium">{g.name}</span>
+                <span className="shrink-0 text-xs font-medium">
+                  <Signed value={BigInt(g.after - g.before)} tone="delta" />
+                </span>
+              </div>
+              <div className="h-2 overflow-hidden rounded-full bg-muted" aria-hidden>
+                <div className="h-full rounded-full bg-brand" style={{ width: `${pct}%` }} />
+              </div>
+              <p className="text-xs text-muted-foreground">
+                <Money value={BigInt(g.before)} compact /> → <b className="font-semibold text-foreground"><Money value={BigInt(g.after)} compact /></b>
+                {g.target > 0 ? ` · 목표 ${before}% → ${pct}%` : ""}
+              </p>
+            </li>
+          );
+        })}
+      </ul>
+      <div className="grid grid-cols-2 gap-2">
+        <Link href="/goals" className={buttonVariants({ variant: "outline", size: "lg" })}>
+          목표 보기
+        </Link>
+        <Button size="lg" onClick={onDone}>
+          자산으로
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 const parse = (v: string): bigint | null => (/^-?\d+$/.test(v) ? BigInt(v) : null);
 
 /** 잔액 한 번에 맞추기 — 앱 숫자와 다른 것만 고치고 나머지는 "그대로예요"로 저장 */
@@ -50,6 +92,7 @@ export function ReconcileForm({ accounts, today }: { accounts: ReconcileAccount[
   const router = useRouter();
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const [shifts, setShifts] = useState<GoalShift[] | null>(null);
   const [rows, setRows] = useState<Record<string, RowState>>(() =>
     Object.fromEntries(
       accounts.map((a) => [
@@ -89,8 +132,12 @@ export function ReconcileForm({ accounts, today }: { accounts: ReconcileAccount[
           ? `${changed.length}개 계좌를 고쳤어요 · 순자산 ${delta >= 0n ? "+" : ""}${formatCompactKRW(delta)}`
           : "모두 그대로예요. 확인 날짜만 남겼어요",
       );
+      // 목표가 바뀌었으면 바로 넘어가지 않고 보여 준다
+      if (r.data?.goals.length) return setShifts(r.data.goals);
       router.push("/assets");
     });
+
+  if (shifts) return <GoalShifts shifts={shifts} onDone={() => router.push("/assets")} />;
 
   return (
     <div className="grid gap-3">

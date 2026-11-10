@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
-import { keepGoalsSteady, linkedGoalsOf } from "@/features/goals/queries";
+import { goalShiftsAround, keepGoalsSteady, linkedGoalsOf, type GoalShift } from "@/features/goals/queries";
 import type { RecurringTemplate } from "@/features/ledger/queries";
 import { amountStr, type ActionResult } from "@/features/ledger/schema";
 import { requireHousehold, writeAudit, type HouseholdContext } from "@/lib/db/context";
@@ -333,7 +333,7 @@ const reconcileSchema = z
  * 잔액 한 번에 맞추기 — 오늘 기준 스냅샷을 계좌마다 남긴다 ("그대로예요"도 기록해야 다음 확인 시점이 밀린다).
  * 1년에 한 번 확인 여부도 같이 저장한다. 하나라도 내가 관리할 수 없는 계좌면 아무것도 저장하지 않는다.
  */
-export async function recordBalances(raw: unknown): Promise<ActionResult<{ saved: number }>> {
+export async function recordBalances(raw: unknown): Promise<ActionResult<{ saved: number; goals: GoalShift[] }>> {
   const ctx = await requireHousehold();
   const parsed = reconcileSchema.safeParse(raw);
   if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "입력값을 확인하세요." };
@@ -360,9 +360,10 @@ export async function recordBalances(raw: unknown): Promise<ActionResult<{ saved
     }
     return out;
   });
-  await prisma.$transaction(ops);
+  // 저장 전후로 목표에 모인 돈 — 저장 뒤 "목표가 이렇게 바뀌었어요"로 보여 준다
+  const goals = await goalShiftsAround(ctx, () => prisma.$transaction(ops));
   revalidatePath("/", "layout");
-  return { ok: true, data: { saved: parsed.data.filter((e) => e.balance !== null).length } };
+  return { ok: true, data: { saved: parsed.data.filter((e) => e.balance !== null).length, goals } };
 }
 
 /** 이 계좌로 들어가거나 나가는 진행 중 자동이체 (정기 거래 템플릿은 JSON 이라 가계 규칙을 읽어 거른다) */

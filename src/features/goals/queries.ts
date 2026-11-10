@@ -318,6 +318,42 @@ export async function keepGoalsSteady(ctx: Ctx, accountId: string, change: () =>
   );
 }
 
+export interface GoalShift {
+  id: string;
+  name: string;
+  before: number;
+  after: number;
+  target: number;
+}
+
+/**
+ * 잔액 맞추기처럼 모인 돈이 바뀌는 변경을 감싸 진행 중 목표마다 전후 모인 돈을 돌려준다 (바뀐 것만).
+ * 연결 계좌가 없는 목표는 순자산을 기준으로 하므로 어느 계좌를 고쳐도 바뀔 수 있다.
+ */
+export async function goalShiftsAround(ctx: Ctx, change: () => Promise<unknown>): Promise<GoalShift[]> {
+  const goals = await prisma.assetGoal.findMany({
+    where: { householdId: ctx.householdId, status: "ACTIVE" },
+    orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
+  });
+  if (!goals.length) {
+    await change();
+    return [];
+  }
+  const before = await basisToday(ctx, { fresh: true });
+  const currents = goals.map((g) => currentOf(g, before(g.linkedAccountIds)));
+  await change();
+  const after = await basisToday(ctx, { fresh: true });
+  return goals
+    .map((g, i) => ({
+      id: g.id,
+      name: g.name,
+      before: Math.round(currents[i]),
+      after: Math.round(currentOf(g, after(g.linkedAccountIds))),
+      target: Number(g.targetAmount),
+    }))
+    .filter((s) => s.before !== s.after);
+}
+
 /* ───────── 계획 대비 실제 (그래프) ───────── */
 
 export interface GoalHistoryPoint {
