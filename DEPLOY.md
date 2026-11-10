@@ -198,5 +198,6 @@ npx vercel deploy --prod --yes            # 환경변수는 새 배포부터 적
 | `20261106050000_tax_wrapper` | `Account.taxWrapper` (연금저축·IRP·ISA) + 계좌 이름으로 기존 계좌 채움 | 2026-11-06 |
 | `20261106081359_reconcile_merchant_rules_challenges` | `Account.balanceCheckYearly` (부동산은 true로 채움), `MerchantCategoryRule`, `Challenge` 테이블 | 2026-11-06 |
 | `20261106084227_user_salary_band` | `User.salaryBand` (총급여 구간 — 연금 세액공제율) | 2026-11-06 |
+| `20261110113000_tx_not_duplicate` | `Transaction.notDuplicate` (가계부 "같은 결제일까요?"에 "다른 결제예요") | 2026-11-10 |
 
 새 마이그레이션을 운영에 적용하면 이 표에 한 줄 추가한다.
