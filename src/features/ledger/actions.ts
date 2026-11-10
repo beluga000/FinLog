@@ -213,6 +213,19 @@ export async function setRecurringRuleActive(id: string, isActive: boolean): Pro
   return { ok: true };
 }
 
+/** 정기 결제 찾기 "아니에요" — 가구 공통으로 이 사용처는 다시 권하지 않는다 */
+export async function dismissRecurringCandidate(key: string): Promise<ActionResult> {
+  const ctx = await requireHousehold();
+  if (typeof key !== "string" || !/^(EXPENSE|INCOME):.{1,100}$/.test(key)) return { ok: false, error: "잘못된 요청입니다." };
+  const household = await prisma.household.findUnique({ where: { id: ctx.householdId }, select: { dismissedRecurring: true } });
+  if (!household) return { ok: false, error: "가구를 찾을 수 없습니다." };
+  if (!household.dismissedRecurring.includes(key)) {
+    await prisma.household.update({ where: { id: ctx.householdId }, data: { dismissedRecurring: { push: key } } });
+  }
+  done();
+  return { ok: true };
+}
+
 /** 규칙 삭제 — 이미 생성된 거래는 남긴다 (recurringRuleId 는 SetNull) */
 export async function deleteRecurringRule(id: string): Promise<ActionResult> {
   const ctx = await requireHousehold();

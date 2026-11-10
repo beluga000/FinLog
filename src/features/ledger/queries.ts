@@ -6,6 +6,8 @@ import type { HouseholdContext } from "@/lib/db/context";
 import { canSeeAccount, scopeTransactions, txAccess, type SummaryTx, type ViewScope } from "@/lib/finance/visibility";
 import { isGenericMerchant } from "@/lib/finance/merchant-match";
 import { memoKey, type MemoHint, type MerchantRule } from "@/lib/finance/merchant-rules";
+import { addDays } from "@/lib/finance/period";
+import { findRecurringCandidates, recurringCandidateKey, type RecurringCandidate } from "@/lib/finance/recurring-detect";
 import type { AccountType, BudgetBucket, DateStr, TxType, Visibility } from "@/lib/finance/types";
 
 type Ctx = Pick<HouseholdContext, "householdId" | "userId">;
@@ -409,4 +411,49 @@ export async function queryMerchantRules(ctx: Ctx): Promise<(MerchantRule & { id
     select: { id: true, merchantKey: true, merchant: true, categoryId: true },
   });
   return rows;
+}
+
+/** 정기 결제 찾기가 훑는 기간 — 석 달 이상 반복을 보려면 여섯 달이면 넉넉하다 */
+const DETECT_DAYS = 183;
+
+/**
+ * 정기 거래로 등록하지 않았는데 매달 반복되는 내 기록 (정기 거래 화면 "이것도 매달 나가요").
+ * 내가 쓴 기록만 본다 — 등록하면 내 규칙이 되므로. 배우자가 이미 등록한 사용처·"아니에요" 한 사용처는 가구 공통으로 뺀다.
+ */
+export async function getRecurringCandidates(ctx: Ctx, today: DateStr): Promise<RecurringCandidate[]> {
+  const [rows, rules, household] = await Promise.all([
+    prisma.transaction.findMany({
+      where: {
+        householdId: ctx.householdId,
+        createdByUserId: ctx.userId,
+        deletedAt: null,
+        type: { in: ["EXPENSE", "INCOME"] },
+        merchant: { not: null },
+        recurringRuleId: null,
+        date: { gte: toDbDate(addDays(today, -DETECT_DAYS)), lte: toDbDate(today) },
+      },
+      select: {
+        type: true,
+        date: true,
+        amount: true,
+        merchant: true,
+        categoryId: true,
+        fromAccountId: true,
+        toAccountId: true,
+        visibility: true,
+        recurringRuleId: true,
+      },
+    }),
+    prisma.recurringRule.findMany({ where: { householdId: ctx.householdId }, select: { template: true } }),
+    prisma.household.findUnique({ where: { id: ctx.householdId }, select: { dismissedRecurring: true } }),
+  ]);
+  const ruleKeys = new Set<string>();
+  for (const r of rules) {
+    const t = r.template as unknown as RecurringTemplate;
+    if (t.merchant?.trim()) ruleKeys.add(recurringCandidateKey(t.type, t.merchant));
+  }
+  return findRecurringCandidates(
+    rows.map((r) => ({ ...r, date: fromDbDate(r.date) })),
+    { today, ruleKeys, dismissed: new Set(household?.dismissedRecurring ?? []) },
+  );
 }

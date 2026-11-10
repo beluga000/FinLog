@@ -4,7 +4,8 @@ import { Money } from "@/components/common/money";
 import { PageHeader } from "@/components/common/page-header";
 import { Card, CardContent } from "@/components/ui/card";
 import { NewRecurringButton, RecurringList, type RecurringRowView } from "@/features/ledger/components/recurring-controls";
-import { getAccounts, getCategories, getRecurringRules } from "@/features/ledger/queries";
+import { RecurringCandidates } from "@/features/ledger/components/recurring-candidates";
+import { getAccounts, getCategories, getRecurringCandidates, getRecurringRules } from "@/features/ledger/queries";
 import { groupOf, RECURRING_GROUPS, scheduleOf, summarizeRecurring } from "@/features/ledger/recurring-view";
 import { requireHousehold } from "@/lib/db/context";
 import { todayKST } from "@/lib/finance/period";
@@ -17,7 +18,12 @@ const BAR = { expense: "var(--chart-2)", saving: "var(--chart-3)", remaining: "v
 export default async function RecurringPage() {
   const ctx = await requireHousehold();
   const today = todayKST();
-  const [rules, accounts, categories] = await Promise.all([getRecurringRules(ctx), getAccounts(ctx, "us"), getCategories(ctx)]);
+  const [rules, accounts, categories, candidates] = await Promise.all([
+    getRecurringRules(ctx),
+    getAccounts(ctx, "us"),
+    getCategories(ctx),
+    getRecurringCandidates(ctx, today),
+  ]);
   const accountName = new Map(accounts.map((a) => [a.id, a.name]));
   const categoryName = new Map(categories.map((c) => [c.id, c.name]));
   const memberName = new Map(ctx.members.map((m) => [m.id, m.name]));
@@ -98,6 +104,8 @@ export default async function RecurringPage() {
           </CardContent>
         </Card>
       ) : null}
+
+      <RecurringCandidates candidates={candidates} formEnv={formEnv} />
 
       {rows.length === 0 ? (
         <div className="grid justify-items-center gap-3 rounded-xl border border-dashed px-6 py-12 text-center">

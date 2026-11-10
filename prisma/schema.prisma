@@ -103,26 +103,28 @@ model User {
 }
 
 model Household {
-  id              String                 @id @default(cuid())
-  name            String
-  monthStartDay   Int                    @default(1)
-  emergencyMonths Int                    @default(3)
-  createdAt       DateTime               @default(now())
-  members         HouseholdMember[]
-  invites         HouseholdInvite[]
-  accounts        Account[]
-  categories      Category[]
-  transactions    Transaction[]
-  recurringRules  RecurringRule[]
-  budgets         Budget[]
-  splitRules      SplitRule[]
-  settlements     Settlement[]
-  plans           PortfolioPlan[]
-  goals           AssetGoal[]
-  lifeEvents      LifeEvent[]
-  auditLogs       AuditLog[]
-  merchantRules   MerchantCategoryRule[]
-  challenges      Challenge[]
+  id                 String                 @id @default(cuid())
+  name               String
+  monthStartDay      Int                    @default(1)
+  emergencyMonths    Int                    @default(3)
+  /// 정기 결제 찾기에서 "아니에요" 한 사용처 (`${type}:${merchantKey}`) — 다시 권하지 않는다
+  dismissedRecurring String[]               @default([])
+  createdAt          DateTime               @default(now())
+  members            HouseholdMember[]
+  invites            HouseholdInvite[]
+  accounts           Account[]
+  categories         Category[]
+  transactions       Transaction[]
+  recurringRules     RecurringRule[]
+  budgets            Budget[]
+  splitRules         SplitRule[]
+  settlements        Settlement[]
+  plans              PortfolioPlan[]
+  goals              AssetGoal[]
+  lifeEvents         LifeEvent[]
+  auditLogs          AuditLog[]
+  merchantRules      MerchantCategoryRule[]
+  challenges         Challenge[]
 }
 
 model HouseholdMember {

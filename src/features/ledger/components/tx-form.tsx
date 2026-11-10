@@ -91,6 +91,8 @@ export interface TxDraft {
   categoryId?: string | null;
   merchant?: string | null;
   visibility?: Visibility | null;
+  /** 정기 거래로 미리 채울 이름·날짜 (정기 결제 찾기) */
+  recurring?: { name: string; dayOfMonth: number; startDate: string };
 }
 
 /** 기존 거래를 오늘 날짜의 새 거래로 — 금액·계좌·카테고리·사용처를 그대로 가져온다 */
@@ -295,10 +297,10 @@ function TxForm({
   const [duplicate, setDuplicate] = useState<PastedExpenseInfo["duplicate"]>(null);
   const [pendingAccount, setPendingAccount] = useState<string | null>(null);
   // 정기 거래 전용
-  const [name, setName] = useState(rule?.name ?? "");
-  const [dayOfMonth, setDayOfMonth] = useState(rule?.dayOfMonth ?? 25);
+  const [name, setName] = useState(rule?.name ?? draft?.recurring?.name ?? "");
+  const [dayOfMonth, setDayOfMonth] = useState(rule?.dayOfMonth ?? draft?.recurring?.dayOfMonth ?? 25);
   const [adjust, setAdjust] = useState<"NONE" | "PREV" | "NEXT">(rule?.businessDayAdjust ?? "NONE");
-  const [startDate, setStartDate] = useState(rule?.startDate ?? todayKST());
+  const [startDate, setStartDate] = useState(rule?.startDate ?? draft?.recurring?.startDate ?? todayKST());
   const [endDate, setEndDate] = useState(rule?.endDate ?? "");
   // 간편 입력: 새 거래는 금액·카테고리·결제 수단만 먼저 보이고, 나머지는 '더 보기'로 접는다
   const [showMore, setShowMore] = useState(Boolean(initial || rule || mode === "recurring" || draft));
@@ -862,7 +864,11 @@ function TxForm({
             </Field>
           </div>
           <p className="text-xs text-muted-foreground">
-            {rule ? "이미 생성된 거래는 그대로 두고, 다음 회차부터 바뀐 내용으로 생성돼요." : "시작일부터 오늘까지 지난 회차도 바로 생성됩니다."}
+            {rule
+              ? "이미 생성된 거래는 그대로 두고, 다음 회차부터 바뀐 내용으로 생성돼요."
+              : draft?.recurring
+                ? "지금까지 기록한 것은 그대로 두고, 다음 회차부터 자동으로 기록돼요."
+                : "시작일부터 오늘까지 지난 회차도 바로 생성됩니다."}
           </p>
         </div>
       ) : null}

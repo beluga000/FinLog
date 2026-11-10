@@ -6,7 +6,7 @@ import { PageHeader } from "@/components/common/page-header";
 import { buttonVariants } from "@/components/ui/button";
 import { LedgerBrowser } from "@/features/ledger/components/ledger-browser";
 import { TYPE_FILTERS } from "@/features/ledger/filters";
-import { getAccounts, getCategories, getScopedTransactions } from "@/features/ledger/queries";
+import { getAccounts, getCategories, getRecurringCandidates, getScopedTransactions } from "@/features/ledger/queries";
 import { materializeRecurring } from "@/features/ledger/service";
 import { requireHousehold } from "@/lib/db/context";
 import { getMonthKey, getMonthRange, todayKST } from "@/lib/finance/period";
@@ -30,10 +30,11 @@ export default async function LedgerPage({
   const range = getMonthRange(month, monthStartDay);
 
   await materializeRecurring(ctx.householdId, today);
-  const [{ items, summarized }, categories, accounts] = await Promise.all([
+  const [{ items, summarized }, categories, accounts, candidates] = await Promise.all([
     getScopedTransactions(ctx, range, scope),
     getCategories(ctx),
     getAccounts(ctx, "us"),
+    getRecurringCandidates(ctx, today),
   ]);
 
   const stats = calculateMonthlyStats([...items, ...summarized], categories);
@@ -64,6 +65,11 @@ export default async function LedgerPage({
             />
             <Link href="/ledger/recurring" className={buttonVariants({ variant: "outline" })}>
               <CalendarClock /> 정기 거래
+              {candidates.length ? (
+                <span className="rounded-full bg-brand-soft px-2 py-0.5 text-[11px] font-medium text-brand" title="매달 반복되는 기록을 찾았어요">
+                  {candidates.length}
+                </span>
+              ) : null}
             </Link>
           </>
         }
