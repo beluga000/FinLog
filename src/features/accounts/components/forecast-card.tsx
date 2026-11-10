@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { Money } from "@/components/common/money";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { bigOutflowsBefore, type AccountForecast } from "@/lib/finance/forecast";
@@ -71,6 +72,15 @@ export function ForecastCard({ forecasts }: { forecasts: AccountForecast[] }) {
                   가장 낮을 때 {md(f.low.date)} <Money value={f.low.balance} compact />
                 </p>
               )}
+              {f.saveFirst ? (
+                <p className="rounded-lg bg-brand-soft px-3 py-2 text-sm">
+                  {day(f.saveFirst.date)} {f.saveFirst.label} 들어오면 <b className="font-semibold"><Money value={f.saveFirst.amount} compact /></b> 먼저 저축으로 옮겨도
+                  다음 {f.saveFirst.label} 전까지 <Money value={f.saveFirst.keep} compact /> 아래로 안 내려가요.
+                  <Link href="/ledger/recurring" className="ml-1 text-xs font-medium text-brand underline-offset-2 hover:underline">
+                    자동이체로 걸어 두기
+                  </Link>
+                </p>
+              ) : null}
             </div>
           );
         })}

@@ -6,6 +6,7 @@ import { computeBalances } from "@/lib/finance/balance";
 import {
   DAILY_SPEND_LOOKBACK_DAYS,
   forecastBalances,
+  suggestSaveFirst,
   type AccountForecast,
   type ForecastAccount,
   type ForecastCard,
@@ -90,5 +91,7 @@ export async function getBalanceForecast(ctx: Ctx, opts: { today: DateStr }): Pr
       endDate: r.endDate,
       lastRunOn: r.lastRunOn,
     }));
-  return forecastBalances({ accounts: forecastAccounts, rules: forecastRules, cards: forecastCards, today: opts.today });
+  const input = { accounts: forecastAccounts, rules: forecastRules, cards: forecastCards, today: opts.today };
+  const saveFirst = suggestSaveFirst(input);
+  return forecastBalances(input).map((f) => ({ ...f, saveFirst: saveFirst.find((s) => s.accountId === f.id) ?? null }));
 }

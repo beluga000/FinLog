@@ -59,6 +59,8 @@ export interface AccountForecast {
   low: { date: DateStr; balance: bigint };
   /** 처음으로 0 아래로 내려가는 날과 모자라는 금액 (가장 낮을 때 기준) */
   shortfall: { date: DateStr; amount: bigint } | null;
+  /** 월급날 먼저 저축 권유 (suggestSaveFirst) — 붙여 주는 쪽에서 채운다 */
+  saveFirst?: SaveFirst | null;
 }
 
 /** today(포함) ~ until(포함) 사이 규칙 발생일 — 이미 실행한 날은 뺀다 */
@@ -168,4 +170,56 @@ export function pickTransferSource(forecasts: AccountForecast[], targetId: strin
 /** 옮길 금액은 만 원 단위로 올린다 */
 export function roundUpToManwon(amount: bigint): bigint {
   return ((amount + 9_999n) / 10_000n) * 10_000n;
+}
+
+/** 선저축 권유 — 받자마자 옮겨도 다음 수입 전까지 이 금액 아래로는 내려가지 않게 남긴다 */
+export const SAVE_FIRST_MIN_BUFFER = 300_000n;
+export const SAVE_FIRST_BUFFER_DAYS = 14n;
+export const SAVE_FIRST_STEP = 100_000n;
+
+export interface SaveFirst {
+  accountId: string;
+  /** 수입이 들어오는 날 */
+  date: DateStr;
+  label: string;
+  /** 먼저 옮겨도 되는 금액 (10만 원 단위) */
+  amount: bigint;
+  /** 옮겨도 다음 수입 전까지 남는 가장 낮은 잔액 */
+  keep: bigint;
+}
+
+/**
+ * 월급날 먼저 저축 (pay yourself first).
+ * 예보 기간 안에 정기 수입이 들어오는 통장마다, 그날부터 다음 수입 전날까지 예보를 이어서 가장 낮은 잔액을 본다.
+ * 그 사이 내내 max(30만, 하루 평균 지출 14일치)를 남기고 남는 만큼(받은 수입 이하)을 10만 원 단위로 내려 권한다.
+ * 30일 예보에 모자라는 날이 있는 통장은 권하지 않는다.
+ */
+export function suggestSaveFirst(input: { accounts: ForecastAccount[]; rules: ForecastRule[]; cards: ForecastCard[]; today: DateStr }): SaveFirst[] {
+  const until = addDays(input.today, FORECAST_DAYS);
+  const base = forecastBalances(input);
+  const out: SaveFirst[] = [];
+  for (const a of input.accounts) {
+    if (base.find((f) => f.id === a.id)?.shortfall) continue;
+    // 가장 먼저 들어오는 정기 수입
+    const incomes = input.rules
+      .filter((r) => r.type === "INCOME" && r.toAccountId === a.id && r.amount > 0n)
+      .map((r) => ({ r, date: upcomingRuleDates(r, input.today, until)[0] }))
+      .filter((x): x is { r: ForecastRule; date: DateStr } => !!x.date)
+      .sort((x, y) => x.date.localeCompare(y.date));
+    const first = incomes[0];
+    if (!first) continue;
+    const next = upcomingRuleDates({ ...first.r, lastRunOn: first.date }, addDays(first.date, 1), addDays(first.date, 45))[0] ?? addDays(first.date, 31);
+    const days = daysBetween(input.today, addDays(next, -1));
+    const [f] = forecastBalances({ ...input, accounts: [a], days });
+    const low = f.points.filter((p) => p.date >= first.date).reduce((m, p) => (p.balance < m ? p.balance : m), f.points[f.points.length - 1].balance);
+    const daily = a.dailySpend * SAVE_FIRST_BUFFER_DAYS;
+    const buffer = daily > SAVE_FIRST_MIN_BUFFER ? daily : SAVE_FIRST_MIN_BUFFER;
+    const room = low - buffer;
+    // 받은 수입보다 많이는 권하지 않는다 — 원래 있던 돈은 "놀고 있는 돈"으로 따로 본다
+    const cap = room < first.r.amount ? room : first.r.amount;
+    const amount = cap > 0n ? (cap / SAVE_FIRST_STEP) * SAVE_FIRST_STEP : 0n;
+    if (amount < SAVE_FIRST_STEP) continue;
+    out.push({ accountId: a.id, date: first.date, label: first.r.name, amount, keep: low - amount });
+  }
+  return out;
 }
