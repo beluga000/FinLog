@@ -138,6 +138,8 @@ export interface TxRow {
   createdByUserId: string;
   recurringRuleId: string | null;
   notDuplicate: boolean;
+  /** 신용카드 할부 개월 (일시불이면 null) */
+  installmentMonths: number | null;
 }
 
 const txInclude = {
@@ -167,6 +169,7 @@ function toRow(t: TxWithRel): TxRow {
     createdByUserId: t.createdByUserId,
     recurringRuleId: t.recurringRuleId,
     notDuplicate: t.notDuplicate,
+    installmentMonths: t.installmentMonths,
   };
 }
 

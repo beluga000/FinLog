@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
 import { LIABILITY_TYPES, SAVING_DESTINATION_TYPES } from "@/lib/finance/balance";
 import type { ParsedCardMessage } from "@/lib/finance/card-message";
+import { INSTALLMENT_MONTH_OPTIONS } from "@/lib/finance/installments";
 import { isGenericMerchant } from "@/lib/finance/merchant-match";
 import { canHaveRule, resolveCategory, type MemoHint, type MerchantRule } from "@/lib/finance/merchant-rules";
 import { addDays, todayKST } from "@/lib/finance/period";
@@ -291,6 +292,8 @@ function TxForm({
   const [memo, setMemo] = useState(seed?.memo ?? "");
   const [visibility, setVisibility] = useState<Visibility | null>(edit?.visibility ?? draft?.visibility ?? null);
   const [isFixed, setIsFixed] = useState(initial?.isFixed ?? false);
+  /** 신용카드 할부 개월 (1 = 일시불) */
+  const [installment, setInstallment] = useState(initial?.installmentMonths ?? 1);
   const [error, setError] = useState<string | null>(null);
   // 문자로 채운 지출 — 저장 전에 중복 확인 (AC-23)
   const [fromMessage, setFromMessage] = useState(false);
@@ -388,6 +391,7 @@ function TxForm({
     setAmount(p.amount!.toString());
     if (p.date) setDate(p.date);
     if (p.merchant) setMerchant(p.merchant);
+    setInstallment(p.installment && p.installment > 1 ? p.installment : 1);
     setFromMessage(true);
     setDuplicate(null);
     // 계좌 이름에 카드사명(신한·현대 …)이 들어간 카드 → 없으면 같은 이름의 다른 결제 수단
@@ -462,6 +466,10 @@ function TxForm({
     (resolvedTo ? byId.get(resolvedTo)?.defaultVisibility : undefined) ??
     "SHARED";
 
+  // 할부는 신용카드 지출만 — 결제 수단을 바꾸면 고른 값은 두되 저장하지 않는다
+  const canInstall = mode === "tx" && type === "EXPENSE" && !!resolvedFrom && byId.get(resolvedFrom)?.type === "CREDIT_CARD";
+  const installmentOptions = [...new Set<number>([...INSTALLMENT_MONTH_OPTIONS, ...(installment > 1 ? [installment] : [])])].sort((a, b) => a - b);
+
   function submit() {
     setError(null);
     if (!amount || amount === "0") return setError("금액을 입력하세요.");
@@ -486,6 +494,7 @@ function TxForm({
       memo: memo || null,
       visibility,
       isFixed: type === "EXPENSE" ? isFixed : false,
+      installmentMonths: canInstall && installment > 1 ? installment : null,
     };
 
     startTransition(async () => {
@@ -686,6 +695,21 @@ function TxForm({
           {meta.to ? accountSelect("to", toAccountId, setTo, "입금 계좌") : null}
         </div>
       )}
+
+      {canInstall ? (
+        <Field
+          label="할부"
+          htmlFor="installment"
+          hint={installment > 1 && amount ? `가계부엔 산 날 전체 금액으로, 카드값 예보엔 매달 약 ${Math.floor(Number(amount) / installment).toLocaleString("ko-KR")}원씩 잡아요` : undefined}
+        >
+          <NativeSelect id="installment" value={installment} onChange={(e) => setInstallment(Number(e.target.value))} className="h-9">
+            <option value={1}>일시불</option>
+            {installmentOptions.map((n) => (
+              <option key={n} value={n}>{n}개월</option>
+            ))}
+          </NativeSelect>
+        </Field>
+      ) : null}
 
       {meta.category ? (
         <Field label="카테고리" htmlFor="category">

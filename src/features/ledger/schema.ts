@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MAX_INSTALLMENT_MONTHS } from "@/lib/finance/installments";
 
 export const TX_TYPE_VALUES = ["INCOME", "EXPENSE", "TRANSFER", "SAVE_INVEST", "LOAN_REPAY", "ADJUSTMENT"] as const;
 export const VISIBILITY_VALUES = ["SHARED", "SUMMARY_ONLY", "PRIVATE"] as const;
@@ -32,13 +33,20 @@ export const txInputSchema = z.object({
   /** null 이면 계좌 기본 공개범위를 따른다 */
   visibility: z.enum(VISIBILITY_VALUES).nullable(),
   isFixed: z.boolean(),
+  /** 신용카드 할부 개월. 없거나 1 이하면 일시불 */
+  installmentMonths: z
+    .number()
+    .int()
+    .max(MAX_INSTALLMENT_MONTHS, `할부는 ${MAX_INSTALLMENT_MONTHS}개월까지예요.`)
+    .nullish()
+    .transform((v) => (v && v >= 2 ? v : null)),
 });
 
 export type TxInput = z.input<typeof txInputSchema>;
 
 export const recurringInputSchema = z.object({
   name: z.string().trim().min(1, "이름을 입력하세요.").max(50),
-  tx: txInputSchema.omit({ date: true }),
+  tx: txInputSchema.omit({ date: true, installmentMonths: true }),
   dayOfMonth: z.number().int().min(0).max(31),
   businessDayAdjust: z.enum(["NONE", "PREV", "NEXT"]),
   startDate: dateStr,

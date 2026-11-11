@@ -7,6 +7,7 @@ process.env.DATABASE_URL = process.env.TEST_DATABASE_URL;
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getCardDueItems, getReviewItems } from "@/features/dashboard/home";
 import { createHouseholdWithDefaults } from "@/features/household/setup";
+import { resolveTxInput } from "@/features/ledger/service";
 import { prisma, toDbDate } from "@/lib/db/prisma";
 
 const TAG = `t${Date.now()}`;
@@ -76,6 +77,35 @@ describe("카드 결제 예정 (AC-25)", () => {
     const [item] = await getCardDueItems({ householdId: hid, userId: A }, { today: "2026-11-12" });
     expect(item).toMatchObject({ card: { id: card }, payment: null });
     await prisma.account.update({ where: { id: bank }, data: { defaultVisibility: "SHARED" } });
+  });
+
+  it("할부는 이번 결제일 회차만 대금에 넣는다", async () => {
+    // 11/2 120만 12개월 → 11/15 결제분 10만, 나머지 110만은 다음 달부터
+    const inst = await prisma.transaction.create({
+      data: {
+        householdId: hid,
+        type: "EXPENSE",
+        amount: 1_200_000n,
+        date: toDbDate("2026-11-02"),
+        fromAccountId: card,
+        createdByUserId: B,
+        visibility: "SHARED",
+        installmentMonths: 12,
+      },
+    });
+    const [item] = await getCardDueItems({ householdId: hid, userId: A }, { today: "2026-11-12" });
+    expect(item).toMatchObject({ card: { id: card, toPay: 800_000n + 100_000n } });
+    await prisma.transaction.delete({ where: { id: inst.id } });
+  });
+
+  it("할부 개월은 신용카드 지출에만", async () => {
+    const categoryId = (await prisma.category.findFirstOrThrow({ where: { householdId: hid, txType: "EXPENSE" } })).id;
+    const base = { type: "EXPENSE", date: "2026-11-12", amount: "300000", toAccountId: null, categoryId, merchant: null, memo: null, visibility: null, isFixed: false };
+    const ctx = { householdId: hid, userId: A };
+    expect(await resolveTxInput(ctx, { ...base, fromAccountId: card, installmentMonths: 3 })).toMatchObject({ ok: true, data: { installmentMonths: 3 } });
+    expect(await resolveTxInput(ctx, { ...base, fromAccountId: card, installmentMonths: 1 })).toMatchObject({ ok: true, data: { installmentMonths: null } });
+    expect(await resolveTxInput(ctx, { ...base, fromAccountId: card })).toMatchObject({ ok: true, data: { installmentMonths: null } });
+    expect(await resolveTxInput(ctx, { ...base, fromAccountId: bank, installmentMonths: 3 })).toEqual({ ok: false, error: "할부는 신용카드 지출에만 넣을 수 있어요." });
   });
 
   it("대금 이체(→카드)를 기록하면 사라진다", async () => {

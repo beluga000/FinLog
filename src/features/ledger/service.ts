@@ -19,6 +19,7 @@ export type ResolvedTx = {
   memo: string | null;
   visibility: Visibility;
   isFixed: boolean;
+  installmentMonths: number | null;
 };
 
 /**
@@ -93,6 +94,9 @@ export async function resolveTxInput(
     categoryId: input.categoryId,
   });
   if (errors.length) return { ok: false, error: errors[0] };
+  if (input.installmentMonths && (input.type !== "EXPENSE" || from?.type !== "CREDIT_CARD")) {
+    return { ok: false, error: "할부는 신용카드 지출에만 넣을 수 있어요." };
+  }
 
   return {
     ok: true,
@@ -107,6 +111,7 @@ export async function resolveTxInput(
       memo: input.memo,
       visibility: input.visibility ?? defaultVisibilityFor(from, to, "SHARED" as Visibility),
       isFixed: input.isFixed,
+      installmentMonths: input.installmentMonths ?? null,
     },
   };
 }

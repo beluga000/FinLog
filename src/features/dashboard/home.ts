@@ -10,6 +10,7 @@ import {
   type TxRow,
 } from "@/features/ledger/queries";
 import { getBalanceForecast } from "@/features/accounts/forecast";
+import { getInstallmentPurchases } from "@/features/accounts/installments";
 import { getTaxRoom } from "@/features/accounts/tax";
 import type { GoalView } from "@/features/goals/queries";
 import type { HouseholdContext } from "@/lib/db/context";
@@ -18,6 +19,7 @@ import { computeBalances } from "@/lib/finance/balance";
 import { bigOutflowsBefore, pickTransferSource, roundUpToManwon } from "@/lib/finance/forecast";
 import { isTaxDeadlineWindow, refundForBand } from "@/lib/finance/tax-accounts";
 import { upcomingCardDue } from "@/lib/finance/card-billing";
+import { allInstallmentCharges, billForDate } from "@/lib/finance/installments";
 import { summarizePlanned, upcomingPlanned, type PlannedSummary } from "@/lib/finance/month-progress";
 import { isBalanceStale, recentPayday, RECONCILE_BUNDLE_MIN } from "@/lib/finance/reconcile";
 import { addDays, getMonthKey, getMonthRange } from "@/lib/finance/period";
@@ -246,7 +248,7 @@ export async function getCardDueItems(ctx: Ctx, opts: { today: DateStr }): Promi
   const paymentIds = due.map(({ a }) => a.paymentAccountId).filter((id): id is string => !!id && visibleById.has(id));
   const ids = [...new Set([...due.map(({ a }) => a.id), ...paymentIds])];
   const earliest = due.reduce((min, { date }) => (date < min ? date : min), due[0]!.date);
-  const [{ snapshots, flows }, paid] = await Promise.all([
+  const [{ snapshots, flows }, paid, installments] = await Promise.all([
     getAccountFlows(ctx, ids, opts.today),
     prisma.transaction.findMany({
       where: {
@@ -257,13 +259,15 @@ export async function getCardDueItems(ctx: Ctx, opts: { today: DateStr }): Promi
       },
       select: { toAccountId: true, date: true },
     }),
+    getInstallmentPurchases(ctx, due.map(({ a }) => a.id), opts.today),
   ]);
   const balances = computeBalances(ids, snapshots, flows, opts.today);
 
   return due.flatMap(({ a, date }): CardDueItem[] => {
     const from = addDays(date, -CARD_PAID_LOOKBACK_DAYS);
     const alreadyPaid = paid.some((t) => t.toAccountId === a.id && fromDbDate(t.date) >= from);
-    const toPay = -(balances.get(a.id) ?? 0n);
+    // 이번 결제일에 낼 금액 — 다음 달 이후 청구될 할부 원금은 뺀다
+    const toPay = billForDate(-(balances.get(a.id) ?? 0n), allInstallmentCharges(installments.get(a.id) ?? [], a.billingDay), date);
     if (alreadyPaid || toPay <= 0n) return [];
     const src = a.paymentAccountId ? visibleById.get(a.paymentAccountId) : undefined;
     return [

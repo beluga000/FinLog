@@ -179,8 +179,9 @@ export function CaptureImport({
           merchant: r.merchant.trim() || null,
           categoryId: r.categoryId,
           fromAccountId: r.accountId,
-          // 할부도 문자 붙여넣기처럼 결제한 날 전체 금액으로 기록하고, 메모로 남긴다
-          memo: [r.note.trim(), r.installment && r.installment > 1 ? `${r.installment}개월 할부` : ""].filter(Boolean).join(" · ") || null,
+          // 할부도 결제한 날 전체 금액으로 기록하고, 개월은 신용카드일 때만 남긴다 (카드값 예보에 쓴다)
+          memo: r.note.trim() || null,
+          installmentMonths: r.installment && r.installment > 1 && payAccounts.find((a) => a.id === r.accountId)?.type === "CREDIT_CARD" ? r.installment : null,
         })),
       );
       if (!result.ok) return setError(result.error);

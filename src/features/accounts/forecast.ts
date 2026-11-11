@@ -13,7 +13,9 @@ import {
   type ForecastCard,
   type ForecastRule,
 } from "@/lib/finance/forecast";
+import { allInstallmentCharges } from "@/lib/finance/installments";
 import { addDays } from "@/lib/finance/period";
+import { getInstallmentPurchases } from "./installments";
 import type { AccountType, DateStr } from "@/lib/finance/types";
 
 type Ctx = Pick<HouseholdContext, "householdId" | "userId">;
@@ -35,7 +37,7 @@ export async function getBalanceForecast(ctx: Ctx, opts: { today: DateStr }): Pr
   );
   const ids = [...targets, ...cardsWithBilling].map((a) => a.id);
   const since = addDays(opts.today, -DAILY_SPEND_LOOKBACK_DAYS);
-  const [{ snapshots, flows }, rules, spend] = await Promise.all([
+  const [{ snapshots, flows }, rules, spend, installments] = await Promise.all([
     getAccountFlows(ctx, ids, opts.today),
     getRecurringRules(ctx),
     prisma.transaction.groupBy({
@@ -46,11 +48,14 @@ export async function getBalanceForecast(ctx: Ctx, opts: { today: DateStr }): Pr
         type: "EXPENSE",
         isFixed: false,
         recurringRuleId: null,
+        // 할부는 회차별로 따로 잡는다 — 하루 평균에 원금 전체가 섞이면 다음 달들 카드값이 부풀려진다
+        installmentMonths: null,
         fromAccountId: { in: ids },
         date: { gt: toDbDate(since), lte: toDbDate(opts.today) },
       },
       _sum: { amount: true },
     }),
+    getInstallmentPurchases(ctx, cardsWithBilling.map((c) => c.id), opts.today),
   ]);
   const balances = computeBalances(ids, snapshots, flows, opts.today);
   // 기록을 시작한 지 90일이 안 됐으면 그 기간으로 나눈다 (가입 첫 주에 하루 평균이 1/90 로 작아지지 않게)
@@ -76,6 +81,7 @@ export async function getBalanceForecast(ctx: Ctx, opts: { today: DateStr }): Pr
       paymentAccountId: c.paymentAccountId!,
       unpaid: b < 0n ? -b : 0n,
       dailySpend: daily.get(c.id) ?? 0n,
+      installments: allInstallmentCharges(installments.get(c.id) ?? [], c.billingDay),
     };
   });
   const forecastRules: ForecastRule[] = rules

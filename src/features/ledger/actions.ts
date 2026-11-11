@@ -409,6 +409,8 @@ export interface BulkExpenseRow {
   categoryId: string | null;
   fromAccountId: string | null;
   memo: string | null;
+  /** 신용카드 할부 개월 (일시불이면 없음) */
+  installmentMonths?: number | null;
 }
 
 /**
@@ -439,6 +441,7 @@ export async function createTransactionsBulk(rows: BulkExpenseRow[]): Promise<Ac
       memo: row.memo ?? null,
       visibility: null,
       isFixed: false,
+      installmentMonths: row.installmentMonths ?? null,
     }, { lookup });
     if (!r.ok) return { ok: false, error: `${i + 1}번째 거래: ${r.error}` };
     resolved.push(r.data);

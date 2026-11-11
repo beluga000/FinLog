@@ -8,6 +8,7 @@ import { AccountMenu, DeleteArchivedAccountButton, NewAccountButton, RestoreAcco
 import { ForecastCard } from "@/features/accounts/components/forecast-card";
 import { TaxRoomCard } from "@/features/accounts/components/tax-room-card";
 import { getBalanceForecast } from "@/features/accounts/forecast";
+import { getInstallmentPurchases } from "@/features/accounts/installments";
 import { getAccountOverview } from "@/features/accounts/queries";
 import { getTaxRoom } from "@/features/accounts/tax";
 import { defaultSourceAccount, ownerChoiceOf, PAYMENT_SOURCE_TYPES } from "@/features/accounts/rules";
@@ -18,6 +19,7 @@ import { NetWorthChart } from "@/components/charts/lazy-charts";
 import { requireHousehold } from "@/lib/db/context";
 import { isLiability, SAVING_DESTINATION_TYPES } from "@/lib/finance/balance";
 import { isLoanRepayment, LOAN_REPAYMENT_LABEL, loanPlan } from "@/lib/finance/loan";
+import { installmentStatus } from "@/lib/finance/installments";
 import { formatKRW } from "@/lib/finance/money";
 import { parseMonthKey, todayKST } from "@/lib/finance/period";
 import { isTaxWrapper, TAX_WRAPPER_LABEL } from "@/lib/finance/tax-accounts";
@@ -45,7 +47,17 @@ export default async function AssetsPage({ searchParams }: { searchParams: Promi
     : [[], []];
   const idleTargetOf = (accountId: string) => idleMoveTarget(goals, allVisible, accountId);
   // 보관한 계좌 — 순자산에서 빠지고 여기서만 되돌린다 (뷰 스코프는 위 목록과 같게)
-  const archived = (await getAccounts(ctx, scope, { includeArchived: true })).filter((a) => a.isArchived);
+  const [archived, installments] = await Promise.all([
+    getAccounts(ctx, scope, { includeArchived: true }).then((list) => list.filter((a) => a.isArchived)),
+    getInstallmentPurchases(ctx, accounts.filter((a) => a.type === "CREDIT_CARD").map((a) => a.id), today),
+  ]);
+  // 신용카드 할부: 남은 원금과 다음 결제일에 붙는 회차
+  const installmentLabel = (a: (typeof accounts)[number]) => {
+    const st = installmentStatus(installments.get(a.id) ?? [], a.billingDay, today);
+    if (!st.count) return null;
+    const next = st.next ? ` · ${Number(st.next.date.slice(5, 7))}/${Number(st.next.date.slice(8))} 결제분 ${formatKRW(st.next.amount)}` : "";
+    return `할부 ${st.count}건 남은 ${formatKRW(st.remaining)}${next}`;
+  };
   const nameById = new Map(allVisible.map((a) => [a.id, a.name]));
   const env: AccountFormEnv = {
     isCouple: ctx.isCouple,
@@ -209,6 +221,7 @@ export default async function AssetsPage({ searchParams }: { searchParams: Promi
                           </div>
                           {/* 대출 상환 정보는 길어서 줄을 따로 (좁은 화면에서 줄바꿈) */}
                           {a.type === "LOAN" && loanLabel(a) ? <div className="text-xs text-muted-foreground">{loanLabel(a)}</div> : null}
+                          {a.type === "CREDIT_CARD" && installmentLabel(a) ? <div className="text-xs text-muted-foreground">{installmentLabel(a)}</div> : null}
                         </div>
                         <Money value={liability ? -a.balance : a.balance} className="text-sm font-semibold" />
                         <AccountMenu

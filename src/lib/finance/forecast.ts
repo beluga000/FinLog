@@ -1,4 +1,5 @@
 import { billingDateIn } from "./card-billing";
+import { billForDate, chargesBetween, type InstallmentCharge } from "./installments";
 import { addDays, shiftMonth } from "./period";
 import { scheduledDateFor, type RecurringSchedule } from "./recurring";
 import type { DateStr, TxType } from "./types";
@@ -29,8 +30,10 @@ export interface ForecastCard {
   paymentAccountId: string;
   /** 지금 미결제 사용액 (양수) */
   unpaid: bigint;
-  /** 카드로 쓰는 변동 지출 하루 평균 — 다음 결제 주기 대금 추정용 */
+  /** 카드로 쓰는 변동 지출 하루 평균 — 다음 결제 주기 대금 추정용 (할부 건은 빼고 낸다) */
   dailySpend: bigint;
+  /** 할부 회차별 청구 — 미결제액 중 아직 청구되지 않은 원금은 그 회차 결제일에 나간다 */
+  installments?: InstallmentCharge[];
 }
 
 export interface ForecastAccount {
@@ -108,8 +111,10 @@ export function forecastEvents(input: { accounts: ForecastAccount[]; rules: Fore
     if (!ids.has(c.paymentAccountId)) continue;
     let prev: DateStr | null = null;
     for (const date of billingDates(c.billingDay, input.today, until)) {
-      // 첫 결제는 지금 미결제액, 그다음은 그 사이 쓸 것으로 보이는 금액
-      const amount: bigint = prev === null ? c.unpaid : c.dailySpend * BigInt(daysBetween(prev, date));
+      // 첫 결제는 지금 미결제액(뒤 회차 할부 원금은 빼고), 그다음은 그 사이 쓸 것으로 보이는 금액 + 그날 할부 회차
+      const charges = c.installments ?? [];
+      const amount: bigint =
+        prev === null ? billForDate(c.unpaid, charges, date) : c.dailySpend * BigInt(daysBetween(prev, date)) + chargesBetween(charges, prev, date);
       if (amount > 0n) events.push({ date, accountId: c.paymentAccountId, amount: -amount, label: `${c.name} 대금` });
       prev = date;
     }

@@ -109,6 +109,7 @@ export function TxList({
                             {/* 메모(무엇을 샀는지)를 결제 수단보다 앞에 — "네이버페이"만으로는 알 수 없는 내용 */}
                             {tx.memo ? <span className="truncate text-foreground/80">{tx.memo} ·</span> : null}
                             <span className="truncate">{flowText(tx)}</span>
+                            {tx.installmentMonths ? <span className="shrink-0 rounded bg-muted px-1">{tx.installmentMonths}개월 할부</span> : null}
                             {isCouple && partner ? <span className="shrink-0 rounded bg-muted px-1">{partnerName}</span> : null}
                           </div>
                         </div>
