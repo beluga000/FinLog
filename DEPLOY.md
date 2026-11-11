@@ -200,5 +200,6 @@ npx vercel deploy --prod --yes            # 환경변수는 새 배포부터 적
 | `20261106084227_user_salary_band` | `User.salaryBand` (총급여 구간 — 연금 세액공제율) | 2026-11-06 |
 | `20261110113000_tx_not_duplicate` | `Transaction.notDuplicate` (가계부 "같은 결제일까요?"에 "다른 결제예요") | 2026-11-10 |
 | `20261110170000_household_dismissed_recurring` | `Household.dismissedRecurring` (정기 결제 찾기에서 "아니에요" 한 사용처) | 2026-11-10 |
+| `20261110190000_push_subscription` | `PushSubscription` 테이블 (설정 "이 기기에서 알림 받기" — 아침 9시 웹 푸시 구독) | 2026-11-11 |
 
 새 마이그레이션을 운영에 적용하면 이 표에 한 줄 추가한다.
