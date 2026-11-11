@@ -85,21 +85,22 @@ enum BusinessDayAdjust {
 }
 
 model User {
-  id              String            @id @default(cuid())
-  email           String            @unique
-  name            String
-  passwordHash    String?
-  createdAt       DateTime          @default(now())
+  id                String             @id @default(cuid())
+  email             String             @unique
+  name              String
+  passwordHash      String?
+  createdAt         DateTime           @default(now())
   /// 관리자 가입 승인 시각. null = 승인 대기 (로그인 불가). ADMIN_EMAILS 의 이메일은 가입 즉시 승인
-  approvedAt      DateTime?
+  approvedAt        DateTime?
   /// 로그인 세션 세대. "모든 기기에서 로그아웃" 시 +1 → 이전에 발급된 로그인 토큰이 모두 무효
-  sessionVersion  Int               @default(0)
+  sessionVersion    Int                @default(0)
   /// 화면 테마: forest(숲) | sea(바다) | dusk(저녁). 사용자별 — 배우자와 따로 고른다
-  palette         String            @default("forest")
+  palette           String             @default("forest")
   /// 총급여 구간 — 연금 세액공제율 계산용 (UNDER = 기준 이하 · OVER = 초과, null = 모름). 기준액은 src/lib/finance/tax-accounts.ts
-  salaryBand      String?
-  memberships     HouseholdMember[]
-  riskAssessments RiskAssessment[]
+  salaryBand        String?
+  memberships       HouseholdMember[]
+  riskAssessments   RiskAssessment[]
+  pushSubscriptions PushSubscription[]
 }
 
 model Household {
@@ -442,4 +443,17 @@ model Challenge {
   household       Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
 
   @@unique([householdId, month, merchantKey])
+}
+
+/// 푸시 알림 구독 (기기·브라우저마다 하나). 보낼 때 404·410 이 오면 지운다
+model PushSubscription {
+  id        String   @id @default(cuid())
+  userId    String
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }

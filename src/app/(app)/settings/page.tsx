@@ -10,6 +10,7 @@ import {
   ThemeSelect,
 } from "@/features/household/components/settings-forms";
 import { MerchantRuleList } from "@/features/ledger/components/merchant-rule-list";
+import { PushToggle } from "@/features/notifications/components/push-toggle";
 import { getCategories, queryMerchantRules } from "@/features/ledger/queries";
 import { requireHousehold } from "@/lib/db/context";
 
@@ -34,6 +35,15 @@ export default async function SettingsPage() {
         </CardHeader>
         <CardContent>
           <HouseholdSettingsForm initial={ctx.household} canEdit={ctx.role === "OWNER"} />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>알림</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <PushToggle />
         </CardContent>
       </Card>
 

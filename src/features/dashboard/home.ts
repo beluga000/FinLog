@@ -348,9 +348,9 @@ async function getTaxDeadlineItems(ctx: Ctx, opts: { today: DateStr }): Promise<
 /** 잔액 부족은 이만큼 앞까지만 알린다 — 한 달 뒤 부족은 그 사이 월급·기록으로 바뀌기 쉽다 */
 const SHORTFALL_NOTICE_DAYS = 14;
 
-type ShortfallItem = Extract<ReviewItem, { kind: "shortfall" }>;
+export type ShortfallItem = Extract<ReviewItem, { kind: "shortfall" }>;
 
-async function getShortfallItems(ctx: Ctx, opts: { today: DateStr }): Promise<ShortfallItem[]> {
+export async function getShortfallItems(ctx: Ctx, opts: { today: DateStr }): Promise<ShortfallItem[]> {
   const forecasts = await getBalanceForecast(ctx, opts);
   const until = addDays(opts.today, SHORTFALL_NOTICE_DAYS);
   return forecasts.flatMap((f): ShortfallItem[] => {

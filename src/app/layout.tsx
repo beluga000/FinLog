@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { ThemeProvider } from "next-themes";
+import { ServiceWorkerRegister } from "@/components/pwa/service-worker";
 import { Toaster } from "@/components/ui/sonner";
 import { DEFAULT_PALETTE, PALETTE_INIT_SCRIPT } from "@/features/appearance/palettes";
 import { fontVariables } from "./fonts";
@@ -41,6 +42,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
         <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
           {children}
           <Toaster position="top-center" richColors />
+          <ServiceWorkerRegister />
         </ThemeProvider>
       </body>
     </html>

@@ -8,6 +8,7 @@ import { isGenericMerchant } from "@/lib/finance/merchant-match";
 import { memoKey, type MemoHint, type MerchantRule } from "@/lib/finance/merchant-rules";
 import { addDays } from "@/lib/finance/period";
 import { findRecurringCandidates, recurringCandidateKey, type RecurringCandidate } from "@/lib/finance/recurring-detect";
+import type { TxQuery } from "@/lib/finance/tx-search";
 import type { AccountType, BudgetBucket, DateStr, TxType, Visibility } from "@/lib/finance/types";
 
 type Ctx = Pick<HouseholdContext, "householdId" | "userId">;
@@ -456,4 +457,37 @@ export async function getRecurringCandidates(ctx: Ctx, today: DateStr): Promise<
     rows.map((r) => ({ ...r, date: fromDbDate(r.date) })),
     { today, ruleKeys, dismissed: new Set(household?.dismissedRecurring ?? []) },
   );
+}
+
+/** 전체 기간 검색 — 최근 것부터 이만큼만 */
+export const SEARCH_LIMIT = 50;
+
+/**
+ * 가계부 전체 기간 검색 (사용처·메모·카테고리 글자 또는 금액).
+ * 볼 수 있는 기록만 — 배우자의 '합계만 공개'는 건별 내용을 보여 주지 않기로 했으므로 빠진다.
+ */
+export async function searchTransactions(ctx: Ctx, q: NonNullable<TxQuery>, scope: ViewScope): Promise<{ items: TxRow[]; more: boolean }> {
+  const text = { contains: q.text, mode: "insensitive" as const };
+  const rows = await prisma.transaction.findMany({
+    where: {
+      householdId: ctx.householdId,
+      deletedAt: null,
+      AND: [
+        { OR: [{ createdByUserId: ctx.userId }, { visibility: "SHARED" }] },
+        {
+          OR: [
+            { merchant: text },
+            { memo: text },
+            { category: { name: text } },
+            ...(q.amount !== null ? [{ amount: q.amount }] : []),
+          ],
+        },
+      ],
+    },
+    orderBy: [{ date: "desc" }, { createdAt: "desc" }],
+    take: SEARCH_LIMIT + 1,
+    include: txInclude,
+  });
+  const items = scopeTransactions(rows.map(toRow), ctx.userId, scope).items;
+  return { items: items.slice(0, SEARCH_LIMIT), more: items.length > SEARCH_LIMIT };
 }

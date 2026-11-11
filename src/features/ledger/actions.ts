@@ -13,11 +13,12 @@ import { canHaveRule, findRule, isNearAmount, merchantKey, resolveCategory, type
 import { lastRunAfterScheduleChange } from "@/lib/finance/recurring";
 import { TX_TYPES_ORDER } from "@/lib/finance/tx-rules";
 import type { TxType } from "@/lib/finance/types";
-import { txAccess } from "@/lib/finance/visibility";
+import { parseTxQuery } from "@/lib/finance/tx-search";
+import { parseViewScope, txAccess } from "@/lib/finance/visibility";
 import { recurringInputSchema, type ActionResult } from "./schema";
 import { materializeRecurring, prefetchTxLookup, resolveTxInput } from "./service";
 import { SHARED_TEXT_COOKIE } from "./shared-text";
-import { getCategories, queryMemoHints, queryMerchantRules, queryMerchantSuggestions, type MerchantSuggestion, type RecurringTemplate } from "./queries";
+import { getCategories, queryMemoHints, queryMerchantRules, queryMerchantSuggestions, searchTransactions, type MerchantSuggestion, type RecurringTemplate, type TxRow } from "./queries";
 
 function done() {
   revalidatePath("/", "layout");
@@ -211,6 +212,15 @@ export async function setRecurringRuleActive(id: string, isActive: boolean): Pro
   await prisma.recurringRule.update({ where: { id }, data: { isActive } });
   done();
   return { ok: true };
+}
+
+/** 가계부 전체 기간 검색 — 이번 달 밖의 기록까지 */
+export async function searchLedger(raw: string, scopeRaw: string): Promise<ActionResult<{ items: TxRow[]; more: boolean }>> {
+  const ctx = await requireHousehold();
+  const q = parseTxQuery(typeof raw === "string" ? raw : "");
+  if (!q) return { ok: false, error: "검색어를 입력하세요." };
+  const scope = ctx.isCouple ? parseViewScope(scopeRaw) : "us";
+  return { ok: true, data: await searchTransactions(ctx, q, scope) };
 }
 
 /** 정기 결제 찾기 "아니에요" — 가구 공통으로 이 사용처는 다시 권하지 않는다 */

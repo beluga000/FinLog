@@ -19,7 +19,7 @@ export const metadata = { title: "가계부" };
 export default async function LedgerPage({
   searchParams,
 }: {
-  searchParams: Promise<{ month?: string; scope?: string; type?: string; day?: string; account?: string }>;
+  searchParams: Promise<{ month?: string; scope?: string; type?: string; day?: string; week?: string; account?: string }>;
 }) {
   const ctx = await requireHousehold();
   const sp = await searchParams;
@@ -101,7 +101,8 @@ export default async function LedgerPage({
         daily={[...daily.entries()]}
         range={range}
         today={today}
-        initial={{ type: typeValue, day, account: sp.account }}
+        scope={scope}
+        initial={{ type: typeValue, day, week: day ? undefined : sp.week, account: sp.account }}
         accounts={accounts}
         categories={categories}
         viewerId={ctx.userId}
