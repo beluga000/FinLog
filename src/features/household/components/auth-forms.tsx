@@ -61,6 +61,7 @@ export function LoginForm({ callbackUrl }: { callbackUrl?: string }) {
       <p className="text-center text-sm text-muted-foreground">
         처음이신가요? <Link href="/signup" className="font-medium text-foreground underline">가입하기</Link>
       </p>
+      <p className="text-center text-xs text-muted-foreground">비밀번호를 잊었다면 관리자에게 재설정 링크를 요청하세요.</p>
     </form>
   );
 }

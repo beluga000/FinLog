@@ -28,7 +28,7 @@ export function PalettePicker({ initial }: { initial: string }) {
   }
 
   return (
-    <div role="radiogroup" aria-label="화면 테마" aria-busy={pending} className="grid gap-3 sm:grid-cols-3">
+    <div role="radiogroup" aria-label="화면 테마" aria-busy={pending} className="grid gap-3 grid-cols-2 lg:grid-cols-4">
       {PALETTES.map((p) => {
         const meta = PALETTE_META[p];
         const on = p === current;

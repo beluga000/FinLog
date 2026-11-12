@@ -2,10 +2,10 @@ import { ImageResponse } from "next/og";
 import { LOGO_MARK_SHAPES } from "@/components/common/logo-mark";
 
 const SIZES = new Set([180, 192, 512]);
-const BRAND = "#17693d";
+const BRAND = "#ff5a1f";
 
 /**
- * 앱 아이콘 — 액센트 초록 바탕에 흰 '진척 F' 마크.
+ * 앱 아이콘 — 주황(기본 테마 노을) 바탕에 흰 '진척 F' 마크.
  * maskable 은 안드로이드가 원·물방울로 잘라도 남도록 안전 영역(가운데 80%) 안에 작게 둔다.
  * 180(애플)은 iOS 가 모서리를 직접 둥글리므로 사각형 그대로.
  */

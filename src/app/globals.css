@@ -70,14 +70,14 @@
 
 /*
  * ── 화면 테마(팔레트) ──
- * <html data-palette="forest|sea|dusk"> × 밝게/어둡게(.dark).
+ * <html data-palette="sunset|forest|sea|dusk"> × 밝게/어둡게(.dark).
  * 규칙: 각 팔레트의 밝게 블록은 모든 토큰을 정의하고, 어둡게 블록은 색과 그림자만 덮어쓴다.
  * 순서가 중요하다 — 밝게 블록(특이도 0,1,0)이 앞 팔레트의 .dark(0,1,0)를 덮고,
  * 어둡게 블록(0,2,0)이 다시 자기 밝게 블록을 덮는다.
  * `.dark [data-palette=…]` 는 설정 화면 미리보기처럼 다른 팔레트를 안에 그릴 때 쓴다.
  */
 
-/* 숲 · 또렷한 장부 (기본) */
+/* 숲 · 또렷한 장부 — 토큰이 없는 곳(:root)의 바탕값도 겸한다. 기본 테마는 노을(아래) */
 :root,
 [data-palette="forest"] {
   --background: oklch(1 0 0);
@@ -324,6 +324,84 @@
   --card-shadow: 0 0 0 1px #2a2640, 0 10px 24px -12px rgb(0 0 0 / 0.5);
 }
 
+/* 노을 · 주황 한 색으로 또렷하게 (기본) — 주황은 대표 카드·목표 막대·버튼·선택 표시에 몰아 쓰고, 나머지는 따뜻한 흰색과 갈색 기운 먹색.
+   주의(겨자)·위험(장미빛 빨강)은 주황과 헷갈리지 않게 따로 뺀다 */
+[data-palette="sunset"] {
+  --background: #fffaf6;
+  --foreground: #1f1410;
+  --card: #ffffff;
+  --card-foreground: #1f1410;
+  --popover: #ffffff;
+  --popover-foreground: #1f1410;
+  --primary: #e04e0b;
+  --primary-foreground: #ffffff;
+  --secondary: #ffeee4;
+  --secondary-foreground: #1f1410;
+  --muted: #f8efe9;
+  --muted-foreground: #7a655a;
+  --accent: #ffeee4;
+  --accent-foreground: #1f1410;
+  --destructive: #c0263f;
+  --border: #f1e2d8;
+  --input: #ead7cb;
+  --ring: #e04e0b;
+  --chart-1: #2a78d6;
+  --chart-2: #ff5a1f;
+  --chart-3: #1f8a5b;
+  --chart-4: #c99400;
+  --chart-5: #d9668f;
+  --chart-grid: #f1e4db;
+  --chart-axis: #8f7a6e;
+  --brand: #e8540f;
+  --brand-soft: #ffe8dc;
+  --good: #1f8a5b;
+  --critical: #c0263f;
+  --warning: #a16207;
+  --card-shadow: 0 0 0 1px #f1e2d8, 0 6px 18px -12px rgb(120 50 10 / 0.25);
+  --radius: 0.875rem;
+  --progress-h: 10px;
+  --icon-stroke: 2;
+  --heading-weight: 800;
+  --font-sans: var(--ff-gothic-a1), system-ui, -apple-system, "Segoe UI", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  --font-heading: var(--font-sans);
+  --font-num: "FinNum", var(--ff-gothic-a1), system-ui, -apple-system, "Segoe UI", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+}
+
+.dark[data-palette="sunset"],
+.dark [data-palette="sunset"] {
+  --background: #17110e;
+  --foreground: #f6ebe4;
+  --card: #221915;
+  --card-foreground: #f6ebe4;
+  --popover: #221915;
+  --popover-foreground: #f6ebe4;
+  --primary: #ff7a3d;
+  --primary-foreground: #1a0c05;
+  --secondary: #2c211b;
+  --secondary-foreground: #f6ebe4;
+  --muted: #2c211b;
+  --muted-foreground: #b39d90;
+  --accent: #2c211b;
+  --accent-foreground: #f6ebe4;
+  --destructive: #ff6b81;
+  --border: #3a2b23;
+  --input: #4a372d;
+  --ring: #ff7a3d;
+  --chart-1: #5c9cf0;
+  --chart-2: #ff7a3d;
+  --chart-3: #43c08a;
+  --chart-4: #e0b341;
+  --chart-5: #e58aab;
+  --chart-grid: #2e231d;
+  --chart-axis: #9c877b;
+  --brand: #ff7a3d;
+  --brand-soft: #3a1d10;
+  --good: #43c08a;
+  --critical: #ff6b81;
+  --warning: #e0b341;
+  --card-shadow: 0 0 0 1px #3a2b23, 0 10px 24px -12px rgb(0 0 0 / 0.5);
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
@@ -469,7 +547,7 @@ svg[stroke="currentColor"] {
   background: linear-gradient(140deg, #0f5770 0%, #0b2c42 100%);
   box-shadow: 0 0 0 1px rgb(69 184 212 / 0.25);
 }
-/* 저녁: 노을 */
+/* 저녁: 보랏빛 저녁 하늘 */
 [data-palette="dusk"] [data-hero] {
   background: linear-gradient(140deg, #5b47c9 0%, #9a56b8 100%);
   box-shadow: 0 16px 34px -14px rgb(91 71 201 / 0.55);
@@ -478,6 +556,19 @@ svg[stroke="currentColor"] {
 .dark [data-palette="dusk"] [data-hero] {
   background: linear-gradient(140deg, #3f3196 0%, #6a3a7e 100%);
   box-shadow: 0 0 0 1px rgb(165 150 255 / 0.25);
+}
+
+/* 노을: 주황 판 — 시안의 "오늘 쓸 수 있는 돈" */
+[data-palette="sunset"] [data-hero] {
+  background: linear-gradient(150deg, #ff6a2b 0%, #ec4a0c 100%);
+  --critical: #fff1c2;
+  --warning: #fff1c2;
+  box-shadow: 0 16px 34px -16px rgb(236 74 12 / 0.65);
+}
+.dark[data-palette="sunset"] [data-hero],
+.dark [data-palette="sunset"] [data-hero] {
+  background: linear-gradient(150deg, #e2561c 0%, #a8360a 100%);
+  box-shadow: 0 0 0 1px rgb(255 122 61 / 0.3);
 }
 
 /* 사이드바(데스크톱)·상단 헤더: 숲 흰 바탕 · 바다 짙은 남색 · 저녁 옅은 보라 — 휴대폰에서도 헤더로 테마가 보인다 */
@@ -512,6 +603,25 @@ svg[stroke="currentColor"] {
   --muted: #2a2640;
 }
 
+/* 노을: 데스크톱 사이드바는 먹색, 지금 있는 메뉴만 주황 (휴대폰 상단 헤더는 밝게 둔다) */
+[data-palette="sunset"] [data-slot="sidebar"] {
+  --brand: #ff7a3d;
+  --background: #1f1410;
+  --foreground: #fffaf6;
+  --muted: rgb(255 255 255 / 0.08);
+  --muted-foreground: #c9b3a6;
+  --border: transparent;
+}
+/* 지금 있는 메뉴 (SidebarNav 가 font-semibold 로 표시) */
+[data-palette="sunset"] [data-slot="sidebar"] nav a.font-semibold {
+  background: #e8540f;
+  color: #ffffff;
+}
+.dark[data-palette="sunset"] [data-slot="sidebar"],
+.dark [data-palette="sunset"] [data-slot="sidebar"] {
+  --background: #0f0a08;
+}
+
 /* 입력칸: 숲은 테두리형, 바다·저녁은 채움형 */
 :is([data-palette="sea"], [data-palette="dusk"]) :is([data-slot="input"], [data-slot="native-select"]) {
   background-color: var(--muted);
@@ -522,6 +632,9 @@ svg[stroke="currentColor"] {
 }
 
 /* 버튼·배지 모서리 */
+[data-palette="sunset"] [data-slot="button"] {
+  font-weight: 700;
+}
 [data-palette="dusk"] [data-slot="button"] {
   border-radius: 9999px;
 }
@@ -536,6 +649,10 @@ svg[stroke="currentColor"] {
 [data-palette="forest"] [data-slot="logo"] {
   font-weight: 900;
   letter-spacing: -0.025em;
+}
+[data-palette="sunset"] [data-slot="logo"] {
+  font-weight: 900;
+  letter-spacing: -0.02em;
 }
 [data-palette="sea"] [data-slot="logo"] {
   font-family: var(--font-num);
@@ -572,6 +689,10 @@ svg[stroke="currentColor"] {
   height: 2px;
   border-radius: 0 0 2px 2px;
   background: var(--brand);
+}
+[data-palette="sunset"] [data-slot="tabbar-item"][data-active] [data-slot="tabbar-icon"] {
+  background: var(--brand);
+  color: #ffffff;
 }
 [data-palette="sea"] [data-slot="tabbar-item"][data-active] [data-slot="tabbar-icon"] {
   background: var(--brand-soft);

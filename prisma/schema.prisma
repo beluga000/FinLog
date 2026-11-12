@@ -81,8 +81,8 @@ model User {
   approvedAt        DateTime?
   /// 로그인 세션 세대. "모든 기기에서 로그아웃" 시 +1 → 이전에 발급된 로그인 토큰이 모두 무효
   sessionVersion    Int                @default(0)
-  /// 화면 테마: forest(숲) | sea(바다) | dusk(저녁). 사용자별 — 배우자와 따로 고른다
-  palette           String             @default("forest")
+  /// 화면 테마: sunset(노을, 기본) | forest(숲) | sea(바다) | dusk(저녁). 사용자별 — 배우자와 따로 고른다
+  palette           String             @default("sunset")
   /// 총급여 구간 — 연금 세액공제율 계산용 (UNDER = 기준 이하 · OVER = 초과, null = 모름). 기준액은 src/lib/finance/tax-accounts.ts
   salaryBand        String?
   /// 비밀번호 재설정 링크 (관리자가 발급, 1회용). 원문은 저장하지 않고 SHA-256 만

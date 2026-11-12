@@ -1,12 +1,13 @@
 /** 화면 테마(팔레트) — 색·글꼴·모양을 한 벌로 묶은 것. 밝게/어둡게(next-themes)와는 따로 고른다 */
-export const PALETTES = ["forest", "sea", "dusk"] as const;
+export const PALETTES = ["sunset", "forest", "sea", "dusk"] as const;
 export type Palette = (typeof PALETTES)[number];
-export const DEFAULT_PALETTE: Palette = "forest";
+export const DEFAULT_PALETTE: Palette = "sunset";
 
 /** 첫 화면 깜빡임을 막으려고 브라우저에도 같은 값을 둔다 (DB 가 기준, 이 값은 캐시) */
 export const PALETTE_STORAGE_KEY = "finlog-palette";
 
 export const PALETTE_META: Record<Palette, { name: string; motto: string; description: string }> = {
+  sunset: { name: "노을", motto: "주황 한 색으로 또렷하게", description: "따뜻한 흰 바탕에 주황 하나. 쓸 수 있는 돈과 목표가 가장 먼저 보입니다." },
   forest: { name: "숲", motto: "또렷한 장부", description: "흰 바탕에 초록 하나. 숫자가 가장 먼저 보입니다." },
   sea: { name: "바다", motto: "잔잔한 은행 창구", description: "푸른 회색 바탕과 청록. 오래 보아도 눈이 편합니다." },
   dusk: { name: "저녁", motto: "하루 끝에 쓰는 일기장", description: "보랏빛 바탕, 명조 제목, 둥근 모서리." },
@@ -14,6 +15,7 @@ export const PALETTE_META: Record<Palette, { name: string; motto: string; descri
 
 /** 설치 앱(PWA)의 상단 상태바 색 — 각 테마의 상단 헤더 바탕과 같게 (globals.css 의 topbar) */
 export const PALETTE_THEME_COLOR: Record<Palette, { light: string; dark: string }> = {
+  sunset: { light: "#fffaf6", dark: "#17110e" },
   forest: { light: "#ffffff", dark: "#252525" },
   sea: { light: "#0e2433", dark: "#07111a" },
   dusk: { light: "#eeeaf9", dark: "#1b1829" },
