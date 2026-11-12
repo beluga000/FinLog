@@ -5,6 +5,7 @@ import { requireHousehold } from "@/lib/db/context";
 import { prisma } from "@/lib/db/prisma";
 import type { ActionResult } from "@/features/ledger/schema";
 import { todayKST } from "@/lib/finance/period";
+import { consumeLimit, RATE_LIMITED_MESSAGE } from "@/lib/security/rate-limit";
 import { sendToUser } from "./send";
 
 const subscriptionSchema = z.object({
@@ -37,7 +38,8 @@ export async function unsubscribePush(endpoint: string): Promise<ActionResult> {
 /** 이 기기로 시험 알림 — 오늘 보낼 알림이 있으면 그것을, 없으면 켜졌다는 알림을 */
 export async function sendTestPush(): Promise<ActionResult<{ sent: number }>> {
   const ctx = await requireHousehold();
-  const r = await sendToUser(ctx, todayKST(), { title: "알림이 켜졌어요", body: "통장이 모자랄 것 같거나 확인할 기록이 생기면 아침에 알려 드려요.", url: "/dashboard", tag: "test" });
+  if (!(await consumeLimit("pushTestUser", ctx.userId))) return { ok: false, error: RATE_LIMITED_MESSAGE };
+  const r = await sendToUser(ctx, todayKST(), { title: "알림이 켜졌어요", body: "통장이 모자랄 것 같을 때, 카드값 나가기 이틀 전, 쓸 수 있는 돈을 많이 썼을 때, 목표가 한 단계 모였을 때 아침에 알려 드려요.", url: "/dashboard", tag: "test" });
   if (r.skipped) return { ok: false, error: "서버에 알림 설정(VAPID 키)이 아직 없어요." };
   if (!r.sent) return { ok: false, error: "보낼 기기가 없어요. 알림을 다시 켜 주세요." };
   return { ok: true, data: { sent: r.sent } };

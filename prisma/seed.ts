@@ -8,7 +8,6 @@ import { PrismaClient, type TxType, type Visibility } from "../src/generated/pri
 import { PrismaPg } from "@prisma/adapter-pg";
 import bcrypt from "bcryptjs";
 import { createHouseholdWithDefaults } from "../src/features/household/setup";
-import { DEFAULT_ASSET_CLASSES } from "../src/lib/finance/portfolio";
 import { addDays, todayKST, toDateStr } from "../src/lib/finance/period";
 
 // 시드는 기존 데모 사용자를 지우고 다시 만든다 — 운영 DB 등 원격 DB에서 실수로 돌지 않게 막는다
@@ -28,15 +27,6 @@ const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: proc
 const d = (s: string) => new Date(`${s}T00:00:00.000Z`);
 
 async function main() {
-  // 자산군 가정치 (PROD.MD §3-3)
-  for (const c of DEFAULT_ASSET_CLASSES) {
-    await prisma.assetClassAssumption.upsert({
-      where: { id: c.id },
-      update: { label: c.label, expectedReturn: c.expectedReturn, volatility: c.volatility },
-      create: { id: c.id, label: c.label, expectedReturn: c.expectedReturn, volatility: c.volatility, effectiveFrom: d("2026-01-01") },
-    });
-  }
-
   const emails = ["minsu@demo.finlog", "jiyoung@demo.finlog"];
   const old = await prisma.householdMember.findMany({ where: { user: { email: { in: emails } } }, select: { householdId: true } });
   await prisma.household.deleteMany({ where: { id: { in: old.map((o) => o.householdId) } } });

@@ -1,8 +1,9 @@
 import "server-only";
 import webpush from "web-push";
-import { getShortfallItems } from "@/features/dashboard/home";
+import { computeSpendable, getCardDueItems, getShortfallItems, getSpendableSource } from "@/features/dashboard/home";
+import { getGoalsOverview } from "@/features/goals/queries";
 import { prisma } from "@/lib/db/prisma";
-import { composeDailyNotice, PUSH_SHORTFALL_DAYS, type DailyNotice } from "@/lib/finance/daily-notice";
+import { composeDailyNotice, composeEventNotices, PUSH_SHORTFALL_DAYS, spendableCrossing, type DailyNotice } from "@/lib/finance/daily-notice";
 import { formatCompactKRW } from "@/lib/finance/money";
 import { addDays } from "@/lib/finance/period";
 import type { DateStr } from "@/lib/finance/types";
@@ -41,6 +42,50 @@ export async function buildDailyNotice(ctx: { householdId: string; userId: strin
   });
 }
 
+/**
+ * 일이 생겼을 때 알림 재료 — 카드 결제 이틀 전·당일, 쓸 수 있는 돈 80%·100% 처음 넘은 날, 목표 진행률 새 단계.
+ * milestones 는 보낸 뒤 호출자가 milestonePushed 를 올린다 (부부 둘 다 받게 한 번에).
+ */
+export async function buildEventNotices(
+  ctx: { householdId: string; userId: string },
+  today: DateStr,
+  monthStartDay: number,
+): Promise<{ notices: DailyNotice[]; milestones: { goalId: string; percent: number }[] }> {
+  const [cards, { goals }, pushed] = await Promise.all([
+    getCardDueItems(ctx, { today }),
+    getGoalsOverview(ctx, { today, monthStartDay }),
+    prisma.assetGoal.findMany({ where: { householdId: ctx.householdId }, select: { id: true, milestonePushed: true } }),
+  ]);
+  const source = await getSpendableSource(ctx, "us", { today, monthStartDay, goals });
+  // 어제까지 쓴 것 vs 그 전날까지 쓴 것 — 아침 9시 알림이라 오늘 기록은 보지 않는다
+  const yesterday = addDays(today, -1);
+  const upTo = (d: DateStr) => computeSpendable({ ...source, txs: source.txs.filter((t) => !t.date || t.date <= d) });
+  const after = upTo(yesterday);
+  const level = spendableCrossing(upTo(addDays(today, -2)).usedRatio, after.usedRatio);
+
+  const pushedById = new Map(pushed.map((g) => [g.id, g.milestonePushed]));
+  const milestones = goals
+    .filter((g) => g.milestone !== null && g.milestone > (pushedById.get(g.id) ?? 0))
+    .map((g) => ({ goalId: g.id, name: g.name, percent: g.milestone! }));
+
+  return {
+    notices: composeEventNotices({
+      today,
+      cardDues: cards.map((c) => ({
+        cardId: c.card.id,
+        cardName: c.card.name,
+        date: c.date,
+        toPay: c.card.toPay,
+        paymentName: c.payment?.name ?? null,
+        shortBy: c.payment ? c.card.toPay - c.payment.balance : null,
+      })),
+      spendable: level ? { level, remaining: after.remaining } : null,
+      milestones,
+    }),
+    milestones: milestones.map(({ goalId, percent }) => ({ goalId, percent })),
+  };
+}
+
 type Sub = { id: string; endpoint: string; p256dh: string; auth: string };
 
 /** 기기들로 보내기 — 구독이 끊긴 기기(404·410)는 지운다 */
@@ -63,6 +108,24 @@ async function deliver(list: Sub[], notice: DailyNotice): Promise<{ sent: number
   return { sent, removed };
 }
 
+/** 여러 알림을 차례로 — 끊긴 기기는 첫 알림에서 지워지므로 다음 알림부터는 남은 기기로만 */
+async function deliverAll(list: Sub[], notices: DailyNotice[]): Promise<{ sent: number; removed: number }> {
+  let alive = list;
+  let sent = 0;
+  let removed = 0;
+  for (const n of notices) {
+    if (!alive.length) break;
+    const r = await deliver(alive, n);
+    sent += r.sent;
+    removed += r.removed;
+    if (r.removed) {
+      const left = new Set((await prisma.pushSubscription.findMany({ where: { id: { in: alive.map((s) => s.id) } }, select: { id: true } })).map((s) => s.id));
+      alive = alive.filter((s) => left.has(s.id));
+    }
+  }
+  return { sent, removed };
+}
+
 /** 한 사람에게 지금 보내기 (시험 알림) — 오늘 알림이 있으면 그것, 없으면 fallback */
 export async function sendToUser(ctx: { householdId: string; userId: string }, today: DateStr, fallback: DailyNotice) {
   if (!configure()) return { sent: 0, removed: 0, skipped: true };
@@ -73,26 +136,47 @@ export async function sendToUser(ctx: { householdId: string; userId: string }, t
 }
 
 /**
- * 하루 알림 보내기 (크론). 구독한 사람마다 한 번 만들어 그 사람의 모든 기기로.
+ * 하루 알림 보내기 (크론). 구독한 사람마다 아침 알림 + 일이 생겼을 때 알림을 만들어 그 사람의 모든 기기로.
  */
 export async function sendDailyNotifications(today: DateStr): Promise<{ users: number; sent: number; removed: number; skipped?: string }> {
   if (!configure()) return { users: 0, sent: 0, removed: 0, skipped: "VAPID 키 없음" };
   const subs = await prisma.pushSubscription.findMany({
-    include: { user: { select: { memberships: { select: { householdId: true }, take: 1 } } } },
+    include: {
+      user: {
+        select: {
+          memberships: { where: { leftAt: null }, select: { householdId: true, household: { select: { monthStartDay: true } } }, take: 1 },
+        },
+      },
+    },
   });
   const byUser = new Map<string, typeof subs>();
   for (const s of subs) byUser.set(s.userId, [...(byUser.get(s.userId) ?? []), s]);
 
   let sent = 0;
   let removed = 0;
+  const reached = new Map<string, number>(); // 보낸 목표 진행률 단계 — 끝나고 한 번에 저장
   for (const [userId, list] of byUser) {
-    const householdId = list[0].user.memberships[0]?.householdId;
-    if (!householdId) continue;
-    const notice = await buildDailyNotice({ householdId, userId }, today);
-    if (!notice) continue;
-    const r = await deliver(list, notice);
-    sent += r.sent;
-    removed += r.removed;
+    const membership = list[0].user.memberships[0];
+    if (!membership) continue;
+    const ctx = { householdId: membership.householdId, userId };
+    // 한 사람 알림 만들기가 실패해도 다른 사람에게는 보낸다
+    try {
+      const [daily, events] = await Promise.all([
+        buildDailyNotice(ctx, today),
+        buildEventNotices(ctx, today, membership.household.monthStartDay),
+      ]);
+      const notices = [...(daily ? [daily] : []), ...events.notices];
+      if (!notices.length) continue;
+      const r = await deliverAll(list, notices);
+      sent += r.sent;
+      removed += r.removed;
+      if (r.sent) for (const m of events.milestones) reached.set(m.goalId, Math.max(reached.get(m.goalId) ?? 0, m.percent));
+    } catch (e) {
+      console.error("[notify]", userId, e);
+    }
+  }
+  for (const [id, percent] of reached) {
+    await prisma.assetGoal.updateMany({ where: { id, milestonePushed: { lt: percent } }, data: { milestonePushed: percent } });
   }
   return { users: byUser.size, sent, removed };
 }

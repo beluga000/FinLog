@@ -62,7 +62,7 @@ export async function moveHouseholdData(
   const goals = await db.assetGoal.findMany({ where: { householdId: p.fromHouseholdId }, orderBy: { priority: "asc" } });
   let priority = (maxPriority._max.priority ?? 0) + 1;
   for (const g of goals) {
-    await db.assetGoal.update({ where: { id: g.id }, data: { householdId: p.toHouseholdId, priority: priority++, planId: null } });
+    await db.assetGoal.update({ where: { id: g.id }, data: { householdId: p.toHouseholdId, priority: priority++ } });
   }
 }
 

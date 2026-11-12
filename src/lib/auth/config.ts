@@ -2,8 +2,8 @@ import type { NextAuthConfig } from "next-auth";
 import type { JWT } from "next-auth/jwt";
 
 /** Edge(미들웨어)에서도 import 가능한 설정 — Prisma·bcrypt 금지 */
-/** /share: 공유받기 POST — 로그인 전이어도 원문을 받아 쿠키에 담는다 */
-export const PUBLIC_PATHS = ["/", "/login", "/signup", "/share"];
+/** /share: 공유받기 POST — 로그인 전이어도 원문을 받아 쿠키에 담는다 · /reset-password: 관리자가 준 재설정 링크 */
+export const PUBLIC_PATHS = ["/", "/login", "/signup", "/share", "/reset-password"];
 
 /** 로그인 유지 최대 시간: 로그인 시각부터 24시간. 그 안에 계속 써도 연장되지 않는다(절대 만료). */
 export const SESSION_MAX_AGE_SEC = 24 * 60 * 60;

@@ -15,6 +15,7 @@ import { TX_TYPES_ORDER } from "@/lib/finance/tx-rules";
 import type { TxType } from "@/lib/finance/types";
 import { parseTxQuery } from "@/lib/finance/tx-search";
 import { parseViewScope, txAccess } from "@/lib/finance/visibility";
+import { consumeLimit, RATE_LIMITED_MESSAGE } from "@/lib/security/rate-limit";
 import { recurringInputSchema, type ActionResult } from "./schema";
 import { materializeRecurring, prefetchTxLookup, resolveTxInput } from "./service";
 import { SHARED_TEXT_COOKIE } from "./shared-text";
@@ -217,6 +218,7 @@ export async function setRecurringRuleActive(id: string, isActive: boolean): Pro
 /** 가계부 전체 기간 검색 — 이번 달 밖의 기록까지 */
 export async function searchLedger(raw: string, scopeRaw: string): Promise<ActionResult<{ items: TxRow[]; more: boolean }>> {
   const ctx = await requireHousehold();
+  if (!(await consumeLimit("searchUser", ctx.userId))) return { ok: false, error: RATE_LIMITED_MESSAGE };
   const q = parseTxQuery(typeof raw === "string" ? raw : "");
   if (!q) return { ok: false, error: "검색어를 입력하세요." };
   const scope = ctx.isCouple ? parseViewScope(scopeRaw) : "us";
@@ -275,6 +277,8 @@ export async function inspectPastedExpense(input: {
   merchant: string | null;
 }): Promise<PastedExpenseInfo> {
   const ctx = await requireHousehold();
+  // 한도를 넘으면 점검 없이 빈 결과 — 기록 자체는 막지 않는다 (중복 확인만 건너뜀)
+  if (!(await consumeLimit("captureUser", ctx.userId))) return { duplicate: null, categoryId: null };
   return (await inspectExpenses(ctx, [input]))[0];
 }
 
@@ -286,6 +290,7 @@ export async function inspectCapturedExpenses(
 ): Promise<PastedExpenseInfo[]> {
   const ctx = await requireHousehold();
   if (!Array.isArray(items) || items.length > BULK_MAX) return [];
+  if (!(await consumeLimit("captureUser", ctx.userId))) return items.map(() => ({ duplicate: null, categoryId: null }));
   // 캡처 날짜는 카드 앱에 찍힌 그대로라 같은 날만 본다 — ±1일이면 매일 같은 금액(편의점·커피)이 전날 기록에 걸린다
   return inspectExpenses(ctx, items, 0);
 }
@@ -423,6 +428,7 @@ export async function createTransactionsBulk(rows: BulkExpenseRow[]): Promise<Ac
   const ctx = await requireHousehold();
   if (!Array.isArray(rows) || !rows.length) return { ok: false, error: "기록할 거래가 없습니다." };
   if (rows.length > BULK_MAX) return { ok: false, error: `한 번에 ${BULK_MAX}건까지 기록할 수 있습니다.` };
+  if (!(await consumeLimit("captureUser", ctx.userId))) return { ok: false, error: RATE_LIMITED_MESSAGE };
   const parsedRows = rows.map((raw) => (raw && typeof raw === "object" ? raw : {}) as Partial<Record<keyof BulkExpenseRow, unknown>>);
   // 계좌·카테고리는 한 번에 읽어 두고 건별 검증은 메모리에서 (최대 50건 × 2번 조회 → 2번)
   const ids = (key: "fromAccountId" | "categoryId") =>

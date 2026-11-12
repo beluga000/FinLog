@@ -586,3 +586,28 @@ svg[stroke="currentColor"] {
 [data-palette="dusk"] [data-slot="tabbar-item"][data-active]::after {
   background: var(--brand);
 }
+
+/* 인쇄·PDF 저장 (리포트 "인쇄 · PDF") — 메뉴·탭·버튼을 빼고 본문만, 카드는 쪽 사이에서 잘리지 않게 */
+@media print {
+  [data-slot="sidebar"],
+  [data-slot="topbar"],
+  [data-slot="tabbar"],
+  [data-print="hide"] {
+    display: none !important;
+  }
+  html,
+  body {
+    background: #fff !important;
+  }
+  [data-slot="app-shell"] {
+    display: block !important;
+  }
+  main {
+    max-width: none !important;
+    padding: 0 !important;
+  }
+  [data-slot="card"] {
+    break-inside: avoid;
+    box-shadow: none !important;
+  }
+}

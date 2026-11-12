@@ -204,7 +204,12 @@ export async function joinHousehold(raw: unknown): Promise<ActionResult> {
           await db.household.delete({ where: { id: fromId } });
         }
       }
-      await db.householdMember.create({ data: { householdId: targetId, userId: user.id, role: "MEMBER" } });
+      // 예전에 이 가구에서 나갔던 사람이면 그 연결을 되살린다 (가구·사람 쌍은 하나뿐)
+      await db.householdMember.upsert({
+        where: { householdId_userId: { householdId: targetId, userId: user.id } },
+        create: { householdId: targetId, userId: user.id, role: "MEMBER" },
+        update: { leftAt: null, role: "MEMBER", joinedAt: new Date() },
+      });
       await db.auditLog.create({
         data: { householdId: targetId, userId: user.id, action: "MEMBER_JOIN", entity: "HouseholdMember", entityId: user.id, diff: { mode } },
       });
@@ -261,4 +266,75 @@ export async function setCategoryBucket(id: string, bucket: "NEEDS" | "WANTS" | 
   await prisma.category.update({ where: { id }, data: { bucket } });
   revalidatePath("/", "layout");
   return { ok: true };
+}
+
+const renameSchema = z.object({ id: z.string().min(1).max(64), name: z.string().trim().min(1, "이름을 입력하세요.").max(20) });
+
+/** 카테고리 이름 바꾸기 — 같은 대분류 안(대분류끼리는 같은 유형 안)에서 이름이 겹치지 않게 */
+export async function renameCategory(raw: unknown): Promise<ActionResult> {
+  const ctx = await requireHousehold();
+  const parsed = renameSchema.safeParse(raw);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "입력값을 확인하세요." };
+  const cat = await prisma.category.findFirst({ where: { id: parsed.data.id, householdId: ctx.householdId } });
+  if (!cat) return { ok: false, error: "카테고리를 찾을 수 없습니다." };
+  const clash = await prisma.category.findFirst({
+    where: { householdId: ctx.householdId, txType: cat.txType, parentId: cat.parentId, name: parsed.data.name, id: { not: cat.id } },
+  });
+  if (clash) return { ok: false, error: "같은 이름의 카테고리가 이미 있어요." };
+  await prisma.category.update({ where: { id: cat.id }, data: { name: parsed.data.name } });
+  await writeAudit(ctx, "CATEGORY_RENAME", "Category", cat.id, { before: cat.name, after: parsed.data.name });
+  revalidatePath("/", "layout");
+  return { ok: true };
+}
+
+/** 지우기 전에 보여 줄 사용처 — 이 카테고리를 쓰는 기록·가맹점 규칙·정기 거래 수 (가구 전체, 건수만) */
+export async function getCategoryUsage(id: string): Promise<ActionResult<{ tx: number; rules: number; recurring: number; children: number }>> {
+  const ctx = await requireHousehold();
+  if (typeof id !== "string") return { ok: false, error: "잘못된 요청입니다." };
+  const cat = await prisma.category.findFirst({ where: { id, householdId: ctx.householdId }, select: { id: true } });
+  if (!cat) return { ok: false, error: "카테고리를 찾을 수 없습니다." };
+  const [tx, rules, recurring, children] = await Promise.all([
+    prisma.transaction.count({ where: { householdId: ctx.householdId, categoryId: id, deletedAt: null } }),
+    prisma.merchantCategoryRule.count({ where: { householdId: ctx.householdId, categoryId: id } }),
+    prisma.recurringRule.count({ where: { householdId: ctx.householdId, template: { path: ["categoryId"], equals: id } } }),
+    prisma.category.count({ where: { householdId: ctx.householdId, parentId: id } }),
+  ]);
+  return { ok: true, data: { tx, rules, recurring, children } };
+}
+
+const deleteCategorySchema = z.object({ id: z.string().min(1).max(64), moveToId: z.string().min(1, "옮길 카테고리를 고르세요.").max(64) });
+
+/**
+ * 카테고리 지우기(= 다른 카테고리로 합치기). 이 카테고리의 기록·가맹점 규칙·정기 거래를 moveToId 로 옮긴 뒤 지운다.
+ * 지운 기록(휴지통)도 함께 옮긴다 — 되살렸을 때 미분류가 되지 않게.
+ * 소분류가 있는 대분류는 소분류부터 정리해야 한다 (소분류가 통째로 사라지지 않게).
+ */
+export async function deleteCategory(raw: unknown): Promise<ActionResult<{ moved: number }>> {
+  const ctx = await requireHousehold();
+  const parsed = deleteCategorySchema.safeParse(raw);
+  if (!parsed.success) return { ok: false, error: parsed.error.issues[0]?.message ?? "입력값을 확인하세요." };
+  const { id, moveToId } = parsed.data;
+  if (id === moveToId) return { ok: false, error: "다른 카테고리를 고르세요." };
+  const [cat, target] = await Promise.all([
+    prisma.category.findFirst({ where: { id, householdId: ctx.householdId }, include: { _count: { select: { children: true } } } }),
+    prisma.category.findFirst({ where: { id: moveToId, householdId: ctx.householdId } }),
+  ]);
+  if (!cat || !target) return { ok: false, error: "카테고리를 찾을 수 없습니다." };
+  if (cat.txType !== target.txType) return { ok: false, error: "같은 유형(지출·수입 등)의 카테고리로만 옮길 수 있어요." };
+  if (cat._count.children > 0) return { ok: false, error: "소분류가 있는 대분류예요. 소분류를 먼저 지우거나 옮기세요." };
+
+  const moved = await prisma.$transaction(async (db) => {
+    const tx = await db.transaction.updateMany({ where: { householdId: ctx.householdId, categoryId: id }, data: { categoryId: moveToId } });
+    // 가맹점 규칙은 가맹점마다 하나라 카테고리만 바꾸면 겹치지 않는다
+    await db.merchantCategoryRule.updateMany({ where: { householdId: ctx.householdId, categoryId: id }, data: { categoryId: moveToId } });
+    const rules = await db.recurringRule.findMany({ where: { householdId: ctx.householdId, template: { path: ["categoryId"], equals: id } } });
+    for (const r of rules) {
+      await db.recurringRule.update({ where: { id: r.id }, data: { template: { ...(r.template as Record<string, unknown>), categoryId: moveToId } } });
+    }
+    await db.category.delete({ where: { id } });
+    return tx.count;
+  });
+  await writeAudit(ctx, "CATEGORY_DELETE", "Category", id, { name: cat.name, movedTo: target.name, moved });
+  revalidatePath("/", "layout");
+  return { ok: true, data: { moved } };
 }

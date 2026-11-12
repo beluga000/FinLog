@@ -38,4 +38,17 @@ export const LIMITS = {
   loginIp: { limit: 30, windowMs: 15 * MIN }, // 한 IP 에서 여러 계정 대입
   signupIp: { limit: 5, windowMs: 60 * MIN },
   joinUser: { limit: 10, windowMs: 60 * MIN }, // 초대 코드 대입
+  passwordUser: { limit: 5, windowMs: 15 * MIN }, // 비밀번호 변경·탈퇴·가구 나가기 — 현재 비밀번호 대입
+  resetIp: { limit: 10, windowMs: 60 * MIN }, // 재설정 링크 토큰 대입
+  captureUser: { limit: 30, windowMs: 10 * MIN }, // 문자·캡처 점검, 여러 건 기록 (한 번에 최대 50건)
+  searchUser: { limit: 60, windowMs: MIN }, // 가계부 검색 (입력할 때마다 부른다)
+  pushTestUser: { limit: 5, windowMs: 60 * MIN }, // 시험 알림
 } as const;
+
+/** 정책 이름으로 한 번 세기 — true = 허용 */
+export function consumeLimit(policy: keyof typeof LIMITS, subject: string): Promise<boolean> {
+  const { limit, windowMs } = LIMITS[policy];
+  return consumeRateLimit(`${policy}:${subject}`, limit, windowMs);
+}
+
+export const RATE_LIMITED_MESSAGE = "시도가 너무 많습니다. 잠시 뒤에 다시 시도하세요.";

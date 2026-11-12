@@ -8,8 +8,7 @@ import { Field } from "@/components/common/field";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { NativeSelect } from "@/components/ui/native-select";
-import { BUCKET_LABEL } from "@/lib/labels";
-import { addCategory, createInvite, joinHousehold, setCategoryBucket, updateHouseholdSettings } from "../actions";
+import { createInvite, joinHousehold, updateHouseholdSettings } from "../actions";
 import { INVITE_CODE_LENGTH, normalizeInviteCode } from "../invite-code";
 
 export function HouseholdSettingsForm({
@@ -157,103 +156,6 @@ export function JoinPanel() {
         <Button type="submit" disabled={pending || code.length !== INVITE_CODE_LENGTH}>{pending ? "연결 중…" : "배우자 가구에 참여"}</Button>
       </div>
     </form>
-  );
-}
-
-interface Cat {
-  id: string;
-  name: string;
-  bucket: "NEEDS" | "WANTS" | "SAVINGS" | null;
-  children: { id: string; name: string; bucket: "NEEDS" | "WANTS" | "SAVINGS" | null }[];
-}
-
-export function CategoryEditor({ parents }: { parents: Cat[] }) {
-  const [pending, start] = useTransition();
-  const [parentId, setParentId] = useState(parents[0]?.id ?? "");
-  const [name, setName] = useState("");
-  const run = (fn: () => Promise<{ ok: boolean; error?: string }>, msg?: string) =>
-    start(async () => {
-      const r = await fn();
-      if (!r.ok) toast.error(r.error);
-      else if (msg) toast.success(msg);
-    });
-  return (
-    <div className="grid gap-4">
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b text-left text-xs text-muted-foreground">
-              <th className="py-1.5 font-medium">카테고리</th>
-              <th className="w-32 font-medium">50/30/20</th>
-            </tr>
-          </thead>
-          <tbody>
-            {parents.flatMap((p) => [
-              <tr key={p.id} className="border-b">
-                <td className="py-1.5 font-medium">{p.name}</td>
-                <td>
-                  <BucketSelect value={p.bucket} allowInherit={false} disabled={pending} onChange={(b) => run(() => setCategoryBucket(p.id, b))} />
-                </td>
-              </tr>,
-              ...p.children.map((c) => (
-                <tr key={c.id} className="border-b last:border-0">
-                  <td className="py-1.5 pl-4 text-muted-foreground">└ {c.name}</td>
-                  <td>
-                    <BucketSelect value={c.bucket} allowInherit disabled={pending} onChange={(b) => run(() => setCategoryBucket(c.id, b))} />
-                  </td>
-                </tr>
-              )),
-            ])}
-          </tbody>
-        </table>
-      </div>
-      <form
-        className="flex flex-wrap items-end gap-2"
-        onSubmit={(e) => {
-          e.preventDefault();
-          run(async () => {
-            const r = await addCategory({ parentId, name });
-            if (r.ok) setName("");
-            return r;
-          }, "추가했어요");
-        }}
-      >
-        <Field label="소분류 추가" className="min-w-36 flex-1">
-          <NativeSelect value={parentId} onChange={(e) => setParentId(e.target.value)}>
-            {parents.map((p) => (
-              <option key={p.id} value={p.id}>{p.name}</option>
-            ))}
-          </NativeSelect>
-        </Field>
-        <Input value={name} onChange={(e) => setName(e.target.value)} maxLength={20} placeholder="이름" className="h-9 w-36" />
-        <Button type="submit" disabled={pending || !name.trim()}>추가</Button>
-      </form>
-    </div>
-  );
-}
-
-function BucketSelect({
-  value,
-  allowInherit,
-  disabled,
-  onChange,
-}: {
-  value: "NEEDS" | "WANTS" | "SAVINGS" | null;
-  allowInherit: boolean;
-  disabled: boolean;
-  onChange: (b: "NEEDS" | "WANTS" | null) => void;
-}) {
-  return (
-    <NativeSelect
-      value={value ?? ""}
-      disabled={disabled}
-      className="h-8"
-      onChange={(e) => onChange((e.target.value || null) as "NEEDS" | "WANTS" | null)}
-    >
-      {allowInherit ? <option value="">상위 따름</option> : null}
-      <option value="NEEDS">{BUCKET_LABEL.NEEDS}</option>
-      <option value="WANTS">{BUCKET_LABEL.WANTS}</option>
-    </NativeSelect>
   );
 }
 

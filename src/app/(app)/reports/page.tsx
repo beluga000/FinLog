@@ -1,6 +1,8 @@
 import Link from "next/link";
+import { ChevronRight, HandCoins } from "lucide-react";
 import { Money } from "@/components/common/money";
 import { MonthNav } from "@/components/common/month-nav";
+import { PrintButton } from "@/components/common/print-button";
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getAccountOverview } from "@/features/accounts/queries";
 import { CashflowTrendChart, NetWorthChart } from "@/components/charts/lazy-charts";
@@ -17,8 +19,10 @@ import { formatPercent } from "@/lib/finance/money";
 import { samePeriodRange } from "@/lib/finance/month-progress";
 import { getMonthKey, getMonthRange, parseMonthKey, shiftMonth, todayKST } from "@/lib/finance/period";
 import { calculateMonthlyStats, compareMonths, delta } from "@/lib/finance/stats";
+import { detectUnusualSpending } from "@/lib/finance/unusual-spending";
 import type { DateStr } from "@/lib/finance/types";
 import { parseViewScope } from "@/lib/finance/visibility";
+import { formatCompactKRW } from "@/lib/finance/money";
 import { SCOPE_LABEL, withRo } from "@/lib/labels";
 
 export const metadata = { title: "리포트" };
@@ -82,6 +86,11 @@ export default async function ReportsPage({
   const qs = scope === "us" ? "" : `?scope=${scope}`;
   const scopeLabel = scope === "partner" ? ctx.partner?.name ?? "배우자" : SCOPE_LABEL[scope];
   const empty = series.every((s) => s.stats.income === 0n && s.stats.expense === 0n && s.stats.saving === 0n);
+  // 평소와 다른 지출: 이 달 대분류별 지출 vs 직전 3달 평균
+  const unusual = detectUnusualSpending(
+    cur.expenseByTopCategory,
+    series.slice(-4, -1).map((s) => ({ expense: s.stats.expense, byCategory: s.stats.expenseByTopCategory })),
+  );
 
   return (
     <div className="grid gap-5">
@@ -90,7 +99,12 @@ export default async function ReportsPage({
           <h1 className="text-xl font-bold md:text-2xl">{ctx.isCouple ? `${scopeLabel}의 ` : ""}리포트</h1>
           <p className="text-sm text-muted-foreground">{ctx.household.name}</p>
         </div>
-        <MonthNav month={month} monthStartDay={monthStartDay} basePath="/reports" params={{ scope: scope === "us" ? undefined : scope }} />
+        <div className="flex items-center gap-2">
+          <PrintButton />
+          <div data-print="hide">
+            <MonthNav month={month} monthStartDay={monthStartDay} basePath="/reports" params={{ scope: scope === "us" ? undefined : scope }} />
+          </div>
+        </div>
       </div>
 
       {closing ? (
@@ -111,6 +125,21 @@ export default async function ReportsPage({
             ) : null
           }
         />
+      ) : null}
+
+      {ctx.isCouple ? (
+        <Link href="/reports/settle" data-print="hide" className="group block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          <Card className="transition-colors group-hover:bg-muted/40">
+            <CardContent className="flex items-center gap-3">
+              <HandCoins className="size-5 shrink-0 text-muted-foreground" />
+              <div className="min-w-0 flex-1">
+                <div className="font-semibold">정산</div>
+                <div className="truncate text-sm text-muted-foreground">각자 낸 생활비를 반반·수입 비율로 맞춰요</div>
+              </div>
+              <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+            </CardContent>
+          </Card>
+        </Link>
       ) : null}
 
       {periodLabel && !empty ? (
@@ -150,6 +179,37 @@ export default async function ReportsPage({
             <p className="rounded-lg bg-muted px-3 py-2 text-xs text-muted-foreground">
               {ctx.partner?.name ?? "배우자"}님의 &lsquo;합계만 공개&rsquo; 지출 <Money value={summaryOnlyTotal} />이 합계에 포함되어 있어요 (건별 내역은 비공개).
             </p>
+          ) : null}
+
+          {unusual.length ? (
+            <Card>
+              <CardHeader>
+                <CardTitle>평소와 다른 지출</CardTitle>
+                <CardAction>
+                  <Link href={`/ledger?month=${month}&type=expense${scope === "us" ? "" : `&scope=${scope}`}`} className="text-xs text-muted-foreground hover:underline">
+                    내역 보기
+                  </Link>
+                </CardAction>
+              </CardHeader>
+              <CardContent>
+                <ul className="grid gap-2 text-sm">
+                  {unusual.map((u) => (
+                    <li key={u.categoryId ?? "none"} className="flex flex-wrap items-baseline justify-between gap-x-3">
+                      <span>
+                        <span className="font-medium">{u.name}</span>{" "}
+                        <span className="text-muted-foreground">
+                          {u.rate === null
+                            ? "평소엔 없던 지출이에요"
+                            : `최근 3달 평균 ${formatCompactKRW(u.average)}보다 ${Math.round(u.rate * 100)}% 많아요`}
+                        </span>
+                      </span>
+                      <Money value={u.amount} compact className="font-semibold" />
+                    </li>
+                  ))}
+                </ul>
+                {partial ? <p className="mt-3 text-xs text-muted-foreground">진행 중인 달인데 벌써 평소보다 많이 썼어요.</p> : null}
+              </CardContent>
+            </Card>
           ) : null}
 
           <div className="grid gap-3 lg:grid-cols-2">

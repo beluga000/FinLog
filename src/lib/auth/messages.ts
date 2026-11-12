@@ -6,4 +6,6 @@ export const LOGIN_NOTICE: Record<string, string> = {
   pending: PENDING_MESSAGE,
   expired: "로그인 후 24시간이 지나 다시 로그인이 필요해요.",
   revoked: "모든 기기에서 로그아웃됐어요. 다시 로그인해 주세요.",
+  reset: "비밀번호를 바꿨어요. 새 비밀번호로 로그인해 주세요.",
+  deleted: "탈퇴했어요. 그동안 FINLOG를 써 주셔서 고마워요.",
 };

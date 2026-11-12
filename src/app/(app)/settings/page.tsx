@@ -1,14 +1,11 @@
 import Link from "next/link";
-import { ChevronRight, Users } from "lucide-react";
+import { ChevronRight, History, UserRound, Users, type LucideIcon } from "lucide-react";
 import { Field } from "@/components/common/field";
 import { PageHeader } from "@/components/common/page-header";
 import { PalettePicker } from "@/features/appearance/components/palette-picker";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  CategoryEditor,
-  HouseholdSettingsForm,
-  ThemeSelect,
-} from "@/features/household/components/settings-forms";
+import { CategoryEditor } from "@/features/household/components/category-editor";
+import { HouseholdSettingsForm, ThemeSelect } from "@/features/household/components/settings-forms";
 import { MerchantRuleList } from "@/features/ledger/components/merchant-rule-list";
 import { PushToggle } from "@/features/notifications/components/push-toggle";
 import { getCategories, queryMerchantRules } from "@/features/ledger/queries";
@@ -47,20 +44,14 @@ export default async function SettingsPage() {
         </CardContent>
       </Card>
 
-      <Link href="/settings/couple" className="group block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-        <Card className="transition-colors group-hover:bg-muted/40">
-          <CardContent className="flex items-center gap-3">
-            <Users className="size-5 shrink-0 text-muted-foreground" />
-            <div className="min-w-0 flex-1">
-              <div className="font-semibold">부부 설정</div>
-              <div className="truncate text-sm text-muted-foreground">
-                {ctx.isCouple ? `${ctx.partner?.name ?? "배우자"}님과 연결됨 · 공유범위 관리` : "배우자 초대·참여, 공유범위 관리"}
-              </div>
-            </div>
-            <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
-          </CardContent>
-        </Card>
-      </Link>
+      <LinkCard
+        href="/settings/couple"
+        icon={Users}
+        title="부부 설정"
+        desc={ctx.isCouple ? `${ctx.partner?.name ?? "배우자"}님과 연결됨 · 공유범위 관리` : "배우자 초대·참여, 공유범위 관리"}
+      />
+      <LinkCard href="/settings/account" icon={UserRound} title="계정" desc="비밀번호 바꾸기 · 가구 나가기 · 탈퇴" />
+      <LinkCard href="/settings/history" icon={History} title="변경 이력" desc="계좌·설정·카테고리를 누가 언제 바꿨는지" />
 
       <Card>
         <CardHeader>
@@ -95,5 +86,22 @@ export default async function SettingsPage() {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+function LinkCard({ href, icon: Icon, title, desc }: { href: string; icon: LucideIcon; title: string; desc: string }) {
+  return (
+    <Link href={href} className="group block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+      <Card className="transition-colors group-hover:bg-muted/40">
+        <CardContent className="flex items-center gap-3">
+          <Icon className="size-5 shrink-0 text-muted-foreground" />
+          <div className="min-w-0 flex-1">
+            <div className="font-semibold">{title}</div>
+            <div className="truncate text-sm text-muted-foreground">{desc}</div>
+          </div>
+          <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+        </CardContent>
+      </Card>
+    </Link>
   );
 }

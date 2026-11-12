@@ -53,22 +53,9 @@ enum BudgetBucket {
   SAVINGS
 }
 
-enum RiskProfile {
-  STABLE
-  STABLE_SEEKING
-  NEUTRAL
-  ACTIVE
-  AGGRESSIVE
-}
-
 enum SplitMethod {
   EQUAL
   INCOME_RATIO
-  CUSTOM
-}
-
-enum PlanSource {
-  RECOMMENDED
   CUSTOM
 }
 
@@ -98,8 +85,10 @@ model User {
   palette           String             @default("forest")
   /// 총급여 구간 — 연금 세액공제율 계산용 (UNDER = 기준 이하 · OVER = 초과, null = 모름). 기준액은 src/lib/finance/tax-accounts.ts
   salaryBand        String?
+  /// 비밀번호 재설정 링크 (관리자가 발급, 1회용). 원문은 저장하지 않고 SHA-256 만
+  passwordResetHash String?            @unique
+  passwordResetExp  DateTime?
   memberships       HouseholdMember[]
-  riskAssessments   RiskAssessment[]
   pushSubscriptions PushSubscription[]
 }
 
@@ -117,10 +106,8 @@ model Household {
   categories         Category[]
   transactions       Transaction[]
   recurringRules     RecurringRule[]
-  budgets            Budget[]
   splitRules         SplitRule[]
   settlements        Settlement[]
-  plans              PortfolioPlan[]
   goals              AssetGoal[]
   lifeEvents         LifeEvent[]
   auditLogs          AuditLog[]
@@ -283,17 +270,7 @@ model RecurringRule {
   @@index([householdId])
 }
 
-model Budget {
-  id          String    @id @default(cuid())
-  householdId String
-  categoryId  String?
-  month       String
-  amount      BigInt
-  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
-
-  @@unique([householdId, categoryId, month])
-}
-
+/// 부부 정산 나누는 방식 (가구에 하나 — categoryId 는 null). ratios = { [userId]: 비율(%) } — CUSTOM 만
 model SplitRule {
   id          String      @id @default(cuid())
   householdId String
@@ -301,50 +278,23 @@ model SplitRule {
   method      SplitMethod
   ratios      Json?
   household   Household   @relation(fields: [householdId], references: [id], onDelete: Cascade)
+
+  @@index([householdId])
 }
 
+/// 부부 정산 완료 기록 (달마다 하나). 계산은 src/lib/finance/settlement.ts
 model Settlement {
   id          String    @id @default(cuid())
   householdId String
+  /// 정산한 달 (YYYY-MM, 가구 월 시작일 기준)
   month       String
   fromUserId  String
   toUserId    String
   amount      BigInt
   settledAt   DateTime?
   household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
-}
 
-model RiskAssessment {
-  id        String      @id @default(cuid())
-  userId    String
-  answers   Json
-  score     Int
-  profile   RiskProfile
-  takenAt   DateTime    @default(now())
-  expiresAt DateTime
-  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
-}
-
-model AssetClassAssumption {
-  id             String   @id
-  label          String
-  expectedReturn Decimal  @db.Decimal(9, 6)
-  volatility     Decimal  @db.Decimal(9, 6)
-  effectiveFrom  DateTime @db.Date
-}
-
-model PortfolioPlan {
-  id             String       @id @default(cuid())
-  householdId    String
-  name           String
-  source         PlanSource
-  baseProfile    RiskProfile?
-  allocations    Json
-  expectedReturn Decimal      @db.Decimal(9, 6)
-  volatility     Decimal      @db.Decimal(9, 6)
-  createdAt      DateTime     @default(now())
-  household      Household    @relation(fields: [householdId], references: [id], onDelete: Cascade)
-  goals          AssetGoal[]
+  @@unique([householdId, month])
 }
 
 model AssetGoal {
@@ -356,7 +306,6 @@ model AssetGoal {
   targetDate       DateTime       @db.Date
   priority         Int
   expectedReturn   Decimal        @default(0.05) @db.Decimal(9, 6)
-  planId           String?
   linkedAccountIds String[]
   monthlyCommit    BigInt?
   /// 목표를 만들(수정할) 때 기존 잔액 중 이 목표 몫으로 넣은 금액
@@ -367,26 +316,28 @@ model AssetGoal {
   baseSetOn        DateTime?      @db.Date
   /// 홈에서 이미 보고 닫은 진행률 알림 (0·25·50·75·100)
   milestoneSeen    Int            @default(0)
+  /// 아침 알림으로 이미 보낸 진행률 단계 — 같은 단계를 매일 다시 보내지 않게
+  milestonePushed  Int            @default(0)
   status           GoalStatus     @default(ACTIVE)
   createdAt        DateTime       @default(now())
   household        Household      @relation(fields: [householdId], references: [id], onDelete: Cascade)
-  plan             PortfolioPlan? @relation(fields: [planId], references: [id], onDelete: SetNull)
 
   @@index([householdId])
 }
 
+/// 생활 변화 (출산·육아휴직·이사 등) — 목표 "만약에"에서 매달 저축 변화로 반영. kind·params 는 src/lib/finance/life-events.ts
 model LifeEvent {
   id          String    @id @default(cuid())
   householdId String
   kind        String
+  /// 시작 달 (YYYY-MM)
   startMonth  String
+  /// { label, monthly(매달 저축 변화, 음수 = 줄어듦), months(기간, null = 계속), oneTime(한 번에 나가는 돈) }
   params      Json
+  createdAt   DateTime  @default(now())
   household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
-}
 
-model TaxRuleSet {
-  year  Int  @id
-  rules Json
+  @@index([householdId])
 }
 
 model AuditLog {

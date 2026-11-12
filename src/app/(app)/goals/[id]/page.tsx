@@ -11,6 +11,7 @@ import { CommitButton, GoalMenu } from "@/features/goals/components/goal-control
 import { FastTrackBadge, GoalEta, GoalPace } from "@/features/goals/components/goal-status";
 import { GoalWhatIf } from "@/features/goals/components/goal-what-if";
 import { LinkedAccounts } from "@/features/goals/components/linked-accounts";
+import { getLifeEvents } from "@/features/goals/life-events";
 import { getAutoSaveSetup, getGoalHistory, getGoalsOverview } from "@/features/goals/queries";
 import { requireHousehold } from "@/lib/db/context";
 import { formatPercent } from "@/lib/finance/money";
@@ -25,7 +26,11 @@ export default async function GoalDetailPage({ params }: { params: Promise<{ id:
   const { goals, accounts, capacity, netWorth, claims } = await getGoalsOverview(ctx, { today, monthStartDay: ctx.household.monthStartDay });
   const goal = goals.find((g) => g.id === id);
   if (!goal) notFound();
-  const [history, autoSave] = await Promise.all([getGoalHistory(ctx, goal, today), getAutoSaveSetup(ctx, goal.linkedAccountIds)]);
+  const [history, autoSave, lifeEvents] = await Promise.all([
+    getGoalHistory(ctx, goal, today),
+    getAutoSaveSetup(ctx, goal.linkedAccountIds),
+    getLifeEvents(ctx),
+  ]);
 
   const e = goal.evaluation;
 
@@ -156,6 +161,7 @@ export default async function GoalDetailPage({ params }: { params: Promise<{ id:
 
       <GoalWhatIf
         today={today}
+        events={lifeEvents}
         goal={{
           id: goal.id,
           targetAmount: goal.targetAmount,

@@ -7,6 +7,8 @@ import { AutoSaveButton } from "@/features/goals/components/goal-autosave";
 import { PriorityButtons } from "@/features/goals/components/goal-controls";
 import { NewGoalButton } from "@/features/goals/components/goal-form";
 import { FastTrackBadge, GoalEta, GoalPace, GoalProgressBar, RequiredLine } from "@/features/goals/components/goal-status";
+import { LifeEventsCard } from "@/features/goals/components/life-events-card";
+import { getLifeEvents } from "@/features/goals/life-events";
 import { getAutoSaveSetup, getGoalsOverview, pickSurplusGoal } from "@/features/goals/queries";
 import { requireHousehold } from "@/lib/db/context";
 import { todayKST } from "@/lib/finance/period";
@@ -16,10 +18,11 @@ export const metadata = { title: "목표" };
 
 export default async function GoalsPage() {
   const ctx = await requireHousehold();
-  const { goals, capacity, totalDemand, accounts, netWorth, claims } = await getGoalsOverview(ctx, {
-    today: todayKST(),
-    monthStartDay: ctx.household.monthStartDay,
-  });
+  const today = todayKST();
+  const [{ goals, capacity, totalDemand, accounts, netWorth, claims }, lifeEvents] = await Promise.all([
+    getGoalsOverview(ctx, { today, monthStartDay: ctx.household.monthStartDay }),
+    getLifeEvents(ctx),
+  ]);
   const over = totalDemand > capacity.capacity;
   // 평균 남는 돈 → 매달 자동으로 옮기기 (곧 끝나는 목표 먼저)
   const surplusGoal = capacity.avgSurplus > 0 ? pickSurplusGoal(goals) : null;
@@ -119,6 +122,7 @@ export default async function GoalsPage() {
           ))}
         </ol>
       )}
+      <LifeEventsCard events={lifeEvents} today={today} />
     </div>
   );
 }

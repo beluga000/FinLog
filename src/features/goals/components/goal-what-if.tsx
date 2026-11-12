@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { evaluateGoal } from "@/lib/finance/goals";
 import { MODEL_ALLOCATIONS, portfolioMetrics, RISK_PROFILE_LABEL, RISK_PROFILES } from "@/lib/finance/portfolio";
 import { formatMonthLabel, lastDayOfMonth, toDateStr } from "@/lib/finance/period";
+import { projectWithEvents, type LifeEventInput } from "@/lib/finance/life-events";
 import { inflate, toMonthlyRate } from "@/lib/finance/projection";
 import type { DateStr } from "@/lib/finance/types";
 import { applyGoalPlan } from "../actions";
@@ -64,11 +65,13 @@ export interface WhatIfGoal {
  * "만약에" 패널 (§4-1, AC-15) — 월 저축·수익률·목표일을 바꾸면 서버 왕복 없이 달성 시점과 경로를 다시 계산한다.
  * "이 계획으로 바꾸기"만 서버에 저장한다.
  */
-export function GoalWhatIf({ goal, today }: { goal: WhatIfGoal; today: DateStr }) {
+export function GoalWhatIf({ goal, today, events = [] }: { goal: WhatIfGoal; today: DateStr; events?: LifeEventInput[] }) {
   const [pending, start] = useTransition();
   const [monthly, setMonthly] = useState(String(Math.max(0, Math.round(goal.contribution))));
   const [rate, setRate] = useState(Math.round(goal.expectedReturn * 1000) / 10);
   const [targetMonth, setTargetMonth] = useState(goal.targetDate.slice(0, 7));
+  // 생활 변화 반영 (넣어 둔 게 있으면 기본으로 켠다)
+  const [withEvents, setWithEvents] = useState(events.length > 0);
 
   // 목표 월을 바꾸지 않았으면 기존 목표일 그대로, 바꿨으면 그 달 말일
   const targetDate = useMemo(() => {
@@ -80,6 +83,16 @@ export function GoalWhatIf({ goal, today }: { goal: WhatIfGoal; today: DateStr }
   const pmt = Number(monthly || 0);
   const base = useMemo(() => evaluatePlan(goal, today, goal.contribution, goal.expectedReturn, goal.targetDate), [goal, today]);
   const plan = useMemo(() => evaluatePlan(goal, today, pmt, rate / 100, targetDate), [goal, today, pmt, rate, targetDate]);
+  // 생활 변화를 넣고 굴린 경로 — 변화 없이 같은 식으로 굴린 것과 달성 시점을 비교한다
+  const life = useMemo(() => {
+    if (!events.length) return null;
+    const base = { current: goal.current, monthly: pmt, annualReturn: rate / 100, today, target: goal.targetAmount, targetIsReal: goal.targetIsReal, inflation: INFLATION };
+    const plain = projectWithEvents({ ...base, events: [] });
+    const withLife = projectWithEvents({ ...base, events });
+    const diff = plain.months !== null && withLife.months !== null ? withLife.months - plain.months : null;
+    return { withLife, diff };
+  }, [events, goal, pmt, rate, today]);
+  const lifeOn = withEvents && life !== null;
 
   const data = useMemo(() => {
     const r = toMonthlyRate(rate / 100);
@@ -91,7 +104,7 @@ export function GoalWhatIf({ goal, today }: { goal: WhatIfGoal; today: DateStr }
     let required = goal.current;
     for (let m = 0; m <= horizon; m++) {
       if (m > 0) {
-        projected = projected * (1 + r) + pmt;
+        projected = lifeOn && life.withLife.path[m] !== undefined ? life.withLife.path[m] : projected * (1 + r) + pmt;
         required = required * (1 + r) + plan.required.monthly;
       }
       if (m % step === 0 || m === horizon || m === plan.monthsLeft) {
@@ -105,7 +118,7 @@ export function GoalWhatIf({ goal, today }: { goal: WhatIfGoal; today: DateStr }
       }
     }
     return { points, showRequired };
-  }, [plan, pmt, rate, goal, today]);
+  }, [plan, pmt, rate, goal, today, lifeOn, life]);
 
   const changed =
     pmt !== Math.round(goal.contribution) || Math.abs(rate / 100 - goal.expectedReturn) > 1e-9 || targetDate !== goal.targetDate;
@@ -223,6 +236,23 @@ export function GoalWhatIf({ goal, today }: { goal: WhatIfGoal; today: DateStr }
               </dd>
             </div>
           </dl>
+
+          {life ? (
+            <div className="grid gap-1.5 rounded-lg border px-3 py-2.5 text-sm">
+              <label className="flex items-center gap-2 font-medium">
+                <input type="checkbox" checked={withEvents} onChange={(e) => setWithEvents(e.target.checked)} className="size-4 accent-[var(--brand)]" />
+                생활 변화 {events.length}개 반영
+              </label>
+              <p className="text-muted-foreground">
+                {life.withLife.months === null
+                  ? "생활 변화를 반영하면 이 계획으로는 달성이 어려워요."
+                  : `반영하면 ${etaLabel(today, life.withLife.months)} 달성${
+                      life.diff ? ` — ${Math.abs(life.diff)}개월 ${life.diff > 0 ? "늦어져요" : "빨라져요"}` : " — 달라지지 않아요"
+                    }.`}
+                {lifeOn ? " 그래프에 반영했어요." : ""}
+              </p>
+            </div>
+          ) : null}
 
           <GoalProjectionChart data={data.points} showRequired={data.showRequired} />
 

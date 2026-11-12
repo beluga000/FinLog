@@ -9,6 +9,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import type { ActionResult } from "@/features/ledger/schema";
+import { issuePasswordReset } from "@/features/account/actions";
 import { approveUser, deleteUser, forceLogoutUser, revokeUser } from "../actions";
 import type { AdminUserRow } from "../queries";
 
@@ -18,6 +19,7 @@ export function UserAdminList({ rows, viewerId }: { rows: AdminUserRow[]; viewer
   const [pending, start] = useTransition();
   const [deleting, setDeleting] = useState<AdminUserRow | null>(null);
   const [confirm, setConfirm] = useState("");
+  const [resetLink, setResetLink] = useState<{ name: string; url: string; expiresAt: string } | null>(null);
 
   const run = (fn: () => Promise<ActionResult<unknown>>, msg: string, after?: () => void) =>
     start(async () => {
@@ -78,6 +80,17 @@ export function UserAdminList({ rows, viewerId }: { rows: AdminUserRow[]; viewer
                     <DropdownMenuItem onClick={() => run(() => forceLogoutUser(u.id), `${u.name}님의 모든 기기 로그인을 끊었어요`)}>
                       모든 기기에서 로그아웃
                     </DropdownMenuItem>
+                    <DropdownMenuItem
+                      onClick={() =>
+                        start(async () => {
+                          const r = await issuePasswordReset(u.id);
+                          if (!r.ok) return void toast.error(r.error);
+                          if (r.data) setResetLink({ name: u.name, url: `${window.location.origin}${r.data.path}`, expiresAt: r.data.expiresAt });
+                        })
+                      }
+                    >
+                      비밀번호 재설정 링크
+                    </DropdownMenuItem>
                     {!u.isAdmin ? (
                       <>
                         <DropdownMenuSeparator />
@@ -99,6 +112,37 @@ export function UserAdminList({ rows, viewerId }: { rows: AdminUserRow[]; viewer
           );
         })}
       </ul>
+
+      <Dialog open={resetLink !== null} onOpenChange={(o) => !o && setResetLink(null)}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{resetLink?.name}님 비밀번호 재설정 링크</DialogTitle>
+            <DialogDescription>
+              본인에게 직접 전해 주세요. {resetLink ? new Date(resetLink.expiresAt).toLocaleString("ko-KR", { timeZone: "Asia/Seoul" }) : ""}까지 한 번만 쓸 수 있어요.
+              이 창을 닫으면 다시 볼 수 없어요 (새로 만들면 이전 링크는 무효).
+            </DialogDescription>
+          </DialogHeader>
+          <Input readOnly value={resetLink?.url ?? ""} onFocus={(e) => e.currentTarget.select()} className="h-9 font-mono text-xs" />
+          <DialogFooter className="gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() =>
+                resetLink &&
+                navigator.clipboard.writeText(resetLink.url).then(
+                  () => toast.success("복사했어요"),
+                  () => toast.error("복사하지 못했어요. 직접 선택해 복사하세요."),
+                )
+              }
+            >
+              복사
+            </Button>
+            <Button type="button" onClick={() => setResetLink(null)}>
+              닫기
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={deleting !== null} onOpenChange={(o) => !o && setDeleting(null)}>
         <DialogContent className="sm:max-w-md">

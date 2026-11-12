@@ -32,7 +32,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const sharedText = shared ? safeDecode(shared) : undefined;
 
   return (
-    <div className="min-h-dvh md:grid md:grid-cols-[220px_1fr]">
+    <div data-slot="app-shell" className="min-h-dvh md:grid md:grid-cols-[220px_1fr]">
       <aside data-slot="sidebar" className="sticky top-0 hidden h-dvh flex-col gap-6 border-r px-3 py-5 md:flex">
         <Link href="/dashboard" data-slot="logo" aria-label="FINLOG 홈" className="px-3 text-lg font-black tracking-tight">
           <Logo />
