@@ -202,5 +202,8 @@ npx vercel deploy --prod --yes            # 환경변수는 새 배포부터 적
 | `20261110170000_household_dismissed_recurring` | `Household.dismissedRecurring` (정기 결제 찾기에서 "아니에요" 한 사용처) | 2026-11-10 |
 | `20261110190000_push_subscription` | `PushSubscription` 테이블 (설정 "이 기기에서 알림 받기" — 아침 9시 웹 푸시 구독) | 2026-11-11 |
 | `20261111100000_tx_installment_months` | `Transaction.installmentMonths` (신용카드 할부 개월 — 기존 캡처 메모 "N개월 할부"를 칸으로 옮김) | 2026-11-11 |
+| `20261112100000_cleanup_settlement_life_event_password_reset` | 쓰지 않던 `Budget`·`RiskAssessment`·`PortfolioPlan`(+`AssetGoal.planId`)·`AssetClassAssumption`·`TaxRuleSet` 삭제, `Settlement` 달마다 하나·`LifeEvent.createdAt`·인덱스, `User.passwordResetHash`·`passwordResetExp` (부부 정산·생활 변화·비밀번호 재설정 링크) | 2026-11-12 |
+| `20261112110000_goal_milestone_pushed` | `AssetGoal.milestonePushed` (아침 알림으로 보낸 목표 진행률 단계, 기존 목표는 `milestoneSeen` 으로 채움) | 2026-11-12 |
+| `20261112120000_default_palette_sunset` | `User.palette` 기본값 `sunset`(노을) + 숲(forest) 사용자를 노을로 | 2026-11-12 |
 
 새 마이그레이션을 운영에 적용하면 이 표에 한 줄 추가한다.
