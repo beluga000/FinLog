@@ -108,4 +108,6 @@ export async function detachMember(
   await db.householdInvite.updateMany({ where: { householdId, usedAt: null, expiresAt: { gt: new Date() } }, data: { expiresAt: new Date() } });
   // 정산 방식(사람별 비율)은 한 사람이 빠지면 의미가 없다 — 지난 정산 기록은 남긴다
   await db.splitRule.deleteMany({ where: { householdId } });
+  // 즐겨찾기는 그 사람만 쓰던 것 — 이 가구 것만 지운다
+  await db.txFavorite.deleteMany({ where: { householdId, userId } });
 }

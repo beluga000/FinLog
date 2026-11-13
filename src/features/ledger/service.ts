@@ -4,7 +4,7 @@ import { dueDates } from "@/lib/finance/recurring";
 import { defaultVisibilityFor, validateTxShape } from "@/lib/finance/tx-rules";
 import { canSeeAccount } from "@/lib/finance/visibility";
 import type { AccountType, TxType, Visibility } from "@/lib/finance/types";
-import type { RecurringTemplate } from "./queries";
+import { TRASH_DAYS, type RecurringTemplate } from "./queries";
 import { txInputSchema, type TxInput } from "./schema";
 
 type Ctx = { householdId: string; userId: string };
@@ -161,4 +161,14 @@ export async function materializeRecurring(householdId: string, today: string): 
     created += result[0].count;
   }
   return created;
+}
+
+/**
+ * 휴지통 비우기 (매일 크론) — 지운 지 TRASH_DAYS 가 지난 기록을 완전히 지운다. 되돌릴 수 없다.
+ * 거래를 가리키는 다른 테이블은 없다 (정산·감사 로그는 id 문자열만 남긴다).
+ */
+export async function purgeDeletedTransactions(now: Date = new Date()): Promise<number> {
+  const before = new Date(now.getTime() - TRASH_DAYS * 86_400_000);
+  const { count } = await prisma.transaction.deleteMany({ where: { deletedAt: { lt: before } } });
+  return count;
 }

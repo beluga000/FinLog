@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, Star } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "cn";
 import { AmountInput } from "@/components/common/amount-input";
@@ -14,6 +14,7 @@ import { NativeSelect } from "@/components/ui/native-select";
 import { LIABILITY_TYPES, SAVING_DESTINATION_TYPES } from "@/lib/finance/balance";
 import type { ParsedCardMessage } from "@/lib/finance/card-message";
 import { INSTALLMENT_MONTH_OPTIONS } from "@/lib/finance/installments";
+import { formatCompactKRW } from "@/lib/finance/money";
 import { isGenericMerchant } from "@/lib/finance/merchant-match";
 import { canHaveRule, resolveCategory, type MemoHint, type MerchantRule } from "@/lib/finance/merchant-rules";
 import { addDays, todayKST } from "@/lib/finance/period";
@@ -30,11 +31,13 @@ import {
   getMerchantRules,
   getMerchantSuggestions,
   inspectPastedExpense,
+  restoreTransaction,
   saveMerchantRule,
   updateTransaction,
   type PastedExpenseInfo,
   type SpendableChange,
 } from "../actions";
+import { addFavoriteFromTransaction, getFavorites, recordFavorite, type FavoriteRow } from "../favorites";
 import type { CategoryRow, MerchantSuggestion, RecurringTemplate, TxRow } from "../queries";
 import { readLastAccounts, readRecentAmounts, readRecentCategories, rememberAccount, rememberAmount, rememberCategory } from "./last-used";
 import { CaptureImport } from "./capture-import";
@@ -163,7 +166,7 @@ function dateLabel(date: string) {
 
 export function TxFormDialog(props: Props) {
   const { open, onOpenChange, initial, mode = "tx" } = props;
-  const [saved, setSaved] = useState<SpendableChange | null>(null);
+  const [saved, setSaved] = useState<SavedTx | null>(null);
   // 문자 채우기는 첫 기록에만 — "하나 더 기록"에서 같은 문자를 다시 채우지 않는다
   const [pasteUsed, setPasteUsed] = useState(false);
   // '다시 기록' — 편집 중인 거래를 복사해 새 거래 폼으로 바꾼다
@@ -183,8 +186,8 @@ export function TxFormDialog(props: Props) {
     }
     onOpenChange(o);
   };
-  const onSaved = (c: SpendableChange) => {
-    setSaved(c);
+  const onSaved = (s: SavedTx) => {
+    setSaved(s);
     setPasteUsed(true);
   };
   return (
@@ -197,7 +200,7 @@ export function TxFormDialog(props: Props) {
           <DialogDescription className="sr-only">거래 유형, 금액, 계좌를 입력합니다.</DialogDescription>
         </DialogHeader>
         {!open ? null : saved ? (
-          <SavedResult change={saved} onAgain={() => setSaved(null)} onClose={() => change(false)} />
+          <SavedResult saved={saved} onAgain={() => setSaved(null)} onClose={() => change(false)} />
         ) : captureMode ? (
           <CaptureImport
             accounts={props.accounts}
@@ -227,9 +230,51 @@ export function TxFormDialog(props: Props) {
   );
 }
 
+/** 방금 저장한 기록 — 결과 화면에서 취소·즐겨찾기에 쓴다 */
+interface SavedTx {
+  id: string;
+  change: SpendableChange;
+  /** 즐겨찾기 버튼으로 기록했으면 다시 추가하자고 하지 않는다 */
+  fromFavorite?: boolean;
+}
+
+/** 지운 기록을 되살리는 [되돌리기] 알림 — 삭제 직후 몇 초 동안 */
+function toastDeleted(id: string, message = "삭제했어요") {
+  toast.success(message, {
+    duration: 6000,
+    action: {
+      label: "되돌리기",
+      onClick: () => {
+        void restoreTransaction(id).then((r) => (r.ok ? toast.success("되살렸어요") : toast.error(r.error)));
+      },
+    },
+  });
+}
+
+/** 기록을 즐겨찾기로 — 결과는 알림으로 */
+async function addToFavorites(txId: string): Promise<boolean> {
+  const r = await addFavoriteFromTransaction(txId);
+  if (!r.ok) {
+    toast.error(r.error);
+    return false;
+  }
+  toast.success(r.data?.existed ? "이미 즐겨찾기에 있어요" : "즐겨찾기에 넣었어요 · 기록 창 맨 위에서 한 번에 기록해요");
+  return true;
+}
+
 /** 저장 결과 — 쓸 수 있는 돈이 얼마에서 얼마로 바뀌었는지 (AC-13) */
-function SavedResult({ change, onAgain, onClose }: { change: SpendableChange; onAgain: () => void; onClose: () => void }) {
+function SavedResult({ saved, onAgain, onClose }: { saved: SavedTx; onAgain: () => void; onClose: () => void }) {
+  const { change } = saved;
   const over = change.after < 0n;
+  const [busy, startBusy] = useTransition();
+  const [favorited, setFavorited] = useState(Boolean(saved.fromFavorite));
+  const undo = () =>
+    startBusy(async () => {
+      const r = await deleteTransaction(saved.id);
+      if (!r.ok) return void toast.error(r.error);
+      toastDeleted(saved.id, "방금 기록을 취소했어요");
+      onClose();
+    });
   return (
     <div className="grid gap-4">
       <div className="grid gap-1 rounded-lg bg-muted px-4 py-3">
@@ -247,6 +292,21 @@ function SavedResult({ change, onAgain, onClose }: { change: SpendableChange; on
         <div className="text-xs text-muted-foreground">
           {over ? "이번 달 남은 기간은 지출을 줄여야 해요." : <>오늘부터 하루 <Money value={change.daily} />씩 쓸 수 있어요.</>}
         </div>
+      </div>
+      <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+        <button type="button" onClick={undo} disabled={busy} className="text-muted-foreground underline-offset-2 hover:text-foreground hover:underline">
+          방금 기록 취소
+        </button>
+        {favorited ? null : (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => startBusy(async () => setFavorited(await addToFavorites(saved.id)))}
+            className="flex items-center gap-1 text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+          >
+            <Star className="size-3.5" /> 즐겨찾기에 추가
+          </button>
+        )}
       </div>
       <DialogFooter className="gap-2">
         <Button type="button" variant="outline" onClick={onAgain}>
@@ -275,7 +335,7 @@ function TxForm({
   paste,
   onCopy,
   onCapture,
-}: Props & { onSaved: (change: SpendableChange) => void; onCopy?: (tx: TxRow) => void; onCapture?: () => void }) {
+}: Props & { onSaved: (saved: SavedTx) => void; onCopy?: (tx: TxRow) => void; onCapture?: () => void }) {
   const [pending, startTransition] = useTransition();
   // 수정 대상: 거래(initial) 또는 정기 규칙의 템플릿
   const edit = initial ?? (rule ? { ...rule.template, amount: BigInt(rule.template.amount), date: undefined } : null);
@@ -335,6 +395,21 @@ function TxForm({
       alive = false;
     };
   }, []);
+  // 즐겨찾기 — 새 기록 창을 열 때마다 받는다 (설정에서 지운 것이 바로 빠지게)
+  const showFavorites = mode === "tx" && !initial && !draft && !paste;
+  const [favorites, setFavorites] = useState<FavoriteRow[]>([]);
+  useEffect(() => {
+    if (!showFavorites) return;
+    let alive = true;
+    void getFavorites()
+      .then((list) => {
+        if (alive) setFavorites(list);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [showFavorites]);
   // 사용처로 자동으로 고른 카테고리의 출처 (안내 문구용)
   const [autoSource, setAutoSource] = useState<"rule" | "brand" | "memo" | null>(null);
   // "앞으로 이 사용처는 이 카테고리로" — null 이면 기본값 (수정 중인 거래는 켬, 새 기록은 끔)
@@ -536,9 +611,36 @@ function TxForm({
         rememberCategory(type, tx.categoryId);
         rememberAmount(type, tx.amount);
       }
-      const change = result.data && "spendable" in result.data ? result.data.spendable : null;
-      if (change) return onSaved(change);
-      toast.success(mode === "recurring" ? (rule ? "정기 거래를 수정했어요" : "정기 거래를 등록했어요") : initial ? "수정했어요" : "기록했어요");
+      const created = result.data && "spendable" in result.data ? result.data : null;
+      if (created?.spendable) return onSaved({ id: created.id, change: created.spendable });
+      if (created) toastSaved(created.id);
+      else toast.success(mode === "recurring" ? (rule ? "정기 거래를 수정했어요" : "정기 거래를 등록했어요") : "수정했어요");
+      onOpenChange(false);
+    });
+  }
+
+  /** 쓸 수 있는 돈이 바뀌지 않은 새 기록(지난달·이체 등) — 결과 화면 대신 알림에서 취소한다 */
+  function toastSaved(id: string) {
+    toast.success("기록했어요", {
+      action: {
+        label: "취소",
+        onClick: () => {
+          void deleteTransaction(id).then((r) => (r.ok ? toastDeleted(id, "기록을 취소했어요") : toast.error(r.error)));
+        },
+      },
+    });
+  }
+
+  /** 즐겨찾기 버튼 — 오늘 날짜로 바로 기록 */
+  function recordWithFavorite(f: FavoriteRow) {
+    setError(null);
+    startTransition(async () => {
+      const result = await recordFavorite(f.id);
+      if (!result.ok) return setError(result.error);
+      rememberAmount(f.type, f.amount);
+      const created = result.data!;
+      if (created.spendable) return onSaved({ id: created.id, change: created.spendable, fromFavorite: true });
+      toastSaved(created.id);
       onOpenChange(false);
     });
   }
@@ -548,7 +650,7 @@ function TxForm({
     startTransition(async () => {
       const result = await deleteTransaction(initial.id);
       if (!result.ok) return setError(result.error);
-      toast.success("삭제했어요");
+      toastDeleted(initial.id);
       onOpenChange(false);
     });
   }
@@ -615,6 +717,28 @@ function TxForm({
           ) : null}
         </div>
       </div>
+
+      {showFavorites && favorites.length ? (
+        <div className="grid gap-1.5">
+          <div className="flex items-center gap-1 text-xs text-muted-foreground">
+            <Star className="size-3.5" aria-hidden /> 즐겨찾기 · 누르면 오늘로 바로 기록해요
+          </div>
+          <div className="flex flex-wrap gap-1.5" aria-label="즐겨찾기">
+            {favorites.map((f) => (
+              <button
+                key={f.id}
+                type="button"
+                disabled={pending}
+                onClick={() => recordWithFavorite(f)}
+                className="flex max-w-full items-center gap-1.5 rounded-full border px-3 py-1 text-sm transition-colors hover:bg-muted disabled:opacity-60"
+              >
+                <span className="truncate">{f.name}</span>
+                <span className="shrink-0 text-xs tabular text-muted-foreground">{formatCompactKRW(BigInt(f.amount))}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       {mode === "tx" && !initial ? (
         <PasteMessage initialText={paste?.text} expanded={paste?.expanded} onParsed={applyParsed} onCapture={onCapture} />
@@ -911,6 +1035,17 @@ function TxForm({
         <p role="alert" className="text-sm text-destructive">
           {error}
         </p>
+      ) : null}
+
+      {initial && mode === "tx" && type !== "ADJUSTMENT" ? (
+        <button
+          type="button"
+          disabled={pending}
+          onClick={() => startTransition(async () => void (await addToFavorites(initial.id)))}
+          className="flex items-center gap-1 justify-self-start text-sm text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+        >
+          <Star className="size-3.5" /> 이 기록을 즐겨찾기에 추가
+        </button>
       ) : null}
 
       {/* 저장 버튼은 화면 아래 고정 — 긴 입력 창에서도 엄지로 바로 누른다 */}

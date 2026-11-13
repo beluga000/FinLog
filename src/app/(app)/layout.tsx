@@ -6,6 +6,7 @@ import { ProfileMenu } from "@/components/layout/profile-menu";
 import { ScopeToggle } from "@/components/layout/scope-toggle";
 import { getPendingCountForAdmin } from "@/features/admin/access";
 import { Logo } from "@/components/common/logo-mark";
+import { AppLock } from "@/features/app-lock/components/app-lock";
 import { PaletteSync } from "@/features/appearance/components/palette-sync";
 import { QuickAdd } from "@/features/ledger/components/quick-add";
 import { getAccounts, getCategories } from "@/features/ledger/queries";
@@ -72,6 +73,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
       </div>
       <BottomTabBar />
       <PaletteSync palette={ctx.user.palette} />
+      <AppLock userId={ctx.userId} />
     </div>
   );
 }

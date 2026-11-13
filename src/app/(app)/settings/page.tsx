@@ -1,13 +1,16 @@
 import Link from "next/link";
-import { ChevronRight, History, UserRound, Users, type LucideIcon } from "lucide-react";
+import { ChevronRight, History, Trash2, UserRound, Users, type LucideIcon } from "lucide-react";
 import { Field } from "@/components/common/field";
 import { PageHeader } from "@/components/common/page-header";
 import { PalettePicker } from "@/features/appearance/components/palette-picker";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { CategoryEditor } from "@/features/household/components/category-editor";
 import { HouseholdSettingsForm, ThemeSelect } from "@/features/household/components/settings-forms";
+import { FavoriteList } from "@/features/ledger/components/favorite-list";
 import { MerchantRuleList } from "@/features/ledger/components/merchant-rule-list";
+import { getFavorites } from "@/features/ledger/favorites";
 import { PushToggle } from "@/features/notifications/components/push-toggle";
+import { AppLockToggle } from "@/features/app-lock/components/app-lock-toggle";
 import { getCategories, queryMerchantRules } from "@/features/ledger/queries";
 import { requireHousehold } from "@/lib/db/context";
 
@@ -15,7 +18,7 @@ export const metadata = { title: "설정" };
 
 export default async function SettingsPage() {
   const ctx = await requireHousehold();
-  const [categories, rules] = await Promise.all([getCategories(ctx), queryMerchantRules(ctx)]);
+  const [categories, rules, favorites] = await Promise.all([getCategories(ctx), queryMerchantRules(ctx), getFavorites()]);
   const categoryName = new Map(categories.map((c) => [c.id, c.name]));
   const expenseParents = categories
     .filter((c) => c.txType === "EXPENSE" && !c.parentId)
@@ -44,6 +47,15 @@ export default async function SettingsPage() {
         </CardContent>
       </Card>
 
+      <Card>
+        <CardHeader>
+          <CardTitle>앱 잠금</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <AppLockToggle userId={ctx.userId} />
+        </CardContent>
+      </Card>
+
       <LinkCard
         href="/settings/couple"
         icon={Users}
@@ -52,6 +64,17 @@ export default async function SettingsPage() {
       />
       <LinkCard href="/settings/account" icon={UserRound} title="계정" desc="비밀번호 바꾸기 · 가구 나가기 · 탈퇴" />
       <LinkCard href="/settings/history" icon={History} title="변경 이력" desc="계좌·설정·카테고리를 누가 언제 바꿨는지" />
+      <LinkCard href="/settings/trash" icon={Trash2} title="최근 지운 기록" desc="30일 안에 지운 기록 되살리기" />
+
+      <Card>
+        <CardHeader>
+          <CardTitle>즐겨찾기</CardTitle>
+          <CardDescription>자주 쓰는 기록 — 기록 창 맨 위 버튼을 누르면 오늘 날짜로 바로 기록해요. 나만 보여요.</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <FavoriteList favorites={favorites} />
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

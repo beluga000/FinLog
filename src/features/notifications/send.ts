@@ -1,12 +1,14 @@
 import "server-only";
 import webpush from "web-push";
 import { computeSpendable, getCardDueItems, getShortfallItems, getSpendableSource } from "@/features/dashboard/home";
-import { getGoalsOverview } from "@/features/goals/queries";
+import { getGoalsOverview, getSpendableGoals } from "@/features/goals/queries";
+import { getCategories, getScopedTransactions } from "@/features/ledger/queries";
 import { prisma } from "@/lib/db/prisma";
 import { composeDailyNotice, composeEventNotices, PUSH_SHORTFALL_DAYS, spendableCrossing, type DailyNotice } from "@/lib/finance/daily-notice";
 import { formatCompactKRW } from "@/lib/finance/money";
 import { addDays } from "@/lib/finance/period";
 import type { DateStr } from "@/lib/finance/types";
+import { composeWeeklyNotice, isWeeklySummaryDay, summarizeWeek, weeklyRangeStart } from "@/lib/finance/weekly-summary";
 
 /** VAPID 키가 없으면(로컬·미설정) 보내지 않는다 */
 function configure(): boolean {
@@ -86,6 +88,35 @@ export async function buildEventNotices(
   };
 }
 
+/**
+ * 월요일 주간 요약 — 지난주 변동 지출과 평소 비교, 가장 늘어난 대분류, 이번 주 하루 쓸 수 있는 돈.
+ * 그 사람이 "우리" 화면에서 보는 범위(배우자 비공개 제외, 합계만 공개는 금액에 포함) 그대로.
+ */
+export async function buildWeeklyNotice(
+  ctx: { householdId: string; userId: string },
+  today: DateStr,
+  monthStartDay: number,
+): Promise<DailyNotice | null> {
+  const [{ items, summarized }, categories, goals] = await Promise.all([
+    getScopedTransactions(ctx, { start: weeklyRangeStart(today), end: today }, "us"),
+    getCategories(ctx),
+    getSpendableGoals(ctx, { today, monthStartDay }),
+  ]);
+  const byId = new Map(categories.map((c) => [c.id, c]));
+  const parentOf = new Map(
+    categories.map((c) => {
+      const parent = c.parentId ? byId.get(c.parentId) ?? c : c;
+      return [c.id, { id: parent.id, name: parent.name }] as const;
+    }),
+  );
+  const expenses = [...items, ...summarized]
+    .filter((t) => t.type === "EXPENSE")
+    .map((t) => ({ date: t.date, amount: t.amount, categoryId: t.categoryId, isFixed: t.isFixed }));
+  const summary = summarizeWeek({ today, expenses, parentOf });
+  const spendable = computeSpendable(await getSpendableSource(ctx, "us", { today, monthStartDay, goals }));
+  return composeWeeklyNotice({ summary, spendable: spendable.usedRatio === null ? null : spendable });
+}
+
 type Sub = { id: string; endpoint: string; p256dh: string; auth: string };
 
 /** 기기들로 보내기 — 구독이 끊긴 기기(404·410)는 지운다 */
@@ -161,11 +192,13 @@ export async function sendDailyNotifications(today: DateStr): Promise<{ users: n
     const ctx = { householdId: membership.householdId, userId };
     // 한 사람 알림 만들기가 실패해도 다른 사람에게는 보낸다
     try {
-      const [daily, events] = await Promise.all([
+      const monthStartDay = membership.household.monthStartDay;
+      const [daily, events, weekly] = await Promise.all([
         buildDailyNotice(ctx, today),
-        buildEventNotices(ctx, today, membership.household.monthStartDay),
+        buildEventNotices(ctx, today, monthStartDay),
+        isWeeklySummaryDay(today) ? buildWeeklyNotice(ctx, today, monthStartDay) : null,
       ]);
-      const notices = [...(daily ? [daily] : []), ...events.notices];
+      const notices = [...(daily ? [daily] : []), ...events.notices, ...(weekly ? [weekly] : [])];
       if (!notices.length) continue;
       const r = await deliverAll(list, notices);
       sent += r.sent;

@@ -173,6 +173,35 @@ function toRow(t: TxWithRel): TxRow {
   };
 }
 
+/** 휴지통에 머무는 기간 — 이보다 오래 지난 지운 기록은 크론이 완전히 지운다 (purgeDeletedTransactions) */
+export const TRASH_DAYS = 30;
+
+export interface DeletedTxRow extends TxRow {
+  /** 지운 시각 (ISO) */
+  deletedAt: string;
+}
+
+/**
+ * 최근 지운 기록 (휴지통) — 복원할 수 있는 것만: 내가 쓴 기록과 배우자의 공유 기록.
+ * 배우자의 합계만·비공개 기록은 원래 건별로 보이지 않으므로 여기에도 나오지 않는다.
+ */
+export async function getDeletedTransactions(ctx: Ctx, now: Date = new Date()): Promise<DeletedTxRow[]> {
+  const since = new Date(now.getTime() - TRASH_DAYS * 86_400_000);
+  const rows = await prisma.transaction.findMany({
+    where: {
+      householdId: ctx.householdId,
+      deletedAt: { gte: since },
+      OR: [{ createdByUserId: ctx.userId }, { visibility: "SHARED" }],
+    },
+    orderBy: { deletedAt: "desc" },
+    take: 200,
+    include: txInclude,
+  });
+  return rows
+    .filter((t) => txAccess(t, ctx.userId, "us") === "full")
+    .map((t) => ({ ...toRow(t), deletedAt: t.deletedAt!.toISOString() }));
+}
+
 /**
  * 공개범위가 적용된 거래 조회. 반환값의 summarized 는 합계 계산 전용이며 화면 목록에 쓰면 안 된다.
  * PRIVATE 은 DB 단계에서부터 걸러 배우자 데이터가 메모리에도 올라오지 않게 한다.

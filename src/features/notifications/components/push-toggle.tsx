@@ -74,7 +74,7 @@ export function PushToggle() {
   return (
     <div className="grid gap-3">
       <p className="text-sm text-muted-foreground">
-        아침 9시에 알려 드려요 — 통장이 3일 안에 모자랄 것 같을 때, 확인할 자동 기록, 카드값 나가기 이틀 전·당일, 쓸 수 있는 돈을 80%·100% 넘은 날, 목표가 25%씩 모였을 때.
+        아침 9시에 알려 드려요 — 통장이 3일 안에 모자랄 것 같을 때, 확인할 자동 기록, 카드값 나가기 이틀 전·당일, 쓸 수 있는 돈을 80%·100% 넘은 날, 목표가 25%씩 모였을 때. 월요일에는 지난주 지출 요약도 보내요.
       </p>
       {state === "on" ? (
         <div className="flex flex-wrap gap-2">

@@ -19,7 +19,7 @@ import { consumeLimit, RATE_LIMITED_MESSAGE } from "@/lib/security/rate-limit";
 import { recurringInputSchema, type ActionResult } from "./schema";
 import { materializeRecurring, prefetchTxLookup, resolveTxInput } from "./service";
 import { SHARED_TEXT_COOKIE } from "./shared-text";
-import { getCategories, queryMemoHints, queryMerchantRules, queryMerchantSuggestions, searchTransactions, type MerchantSuggestion, type RecurringTemplate, type TxRow } from "./queries";
+import { getCategories, queryMemoHints, queryMerchantRules, queryMerchantSuggestions, searchTransactions, TRASH_DAYS, type MerchantSuggestion, type RecurringTemplate, type TxRow } from "./queries";
 
 function done() {
   revalidatePath("/", "layout");
@@ -116,6 +116,22 @@ export async function deleteTransaction(id: string): Promise<ActionResult> {
   if (!existing) return { ok: false, error: "거래를 찾을 수 없습니다." };
   // 가져오기 열쇠는 비운다 — 지운 뒤 같은 캡처를 다시 가져오면 다시 기록되게
   await prisma.transaction.update({ where: { id }, data: { deletedAt: new Date(), importHash: null } });
+  done();
+  return { ok: true };
+}
+
+/**
+ * 지운 기록 되살리기 — 삭제 직후 [되돌리기]와 휴지통(설정 > 최근 지운 기록)이 같이 쓴다.
+ * 지울 수 있던 사람(내 기록·배우자의 공유 기록)만, 휴지통 기간(TRASH_DAYS) 안에서만.
+ * 가져오기 열쇠(importHash)는 지울 때 비웠으므로 되살린 뒤 같은 캡처를 다시 가져오면 한 번 더 기록될 수 있다.
+ */
+export async function restoreTransaction(id: string): Promise<ActionResult> {
+  const ctx = await requireHousehold();
+  if (typeof id !== "string" || !id) return { ok: false, error: "기록을 찾을 수 없어요." };
+  const since = new Date(Date.now() - TRASH_DAYS * 86_400_000);
+  const tx = await prisma.transaction.findFirst({ where: { id, householdId: ctx.householdId, deletedAt: { gte: since } } });
+  if (!tx || txAccess(tx, ctx.userId, "us") !== "full") return { ok: false, error: "기록을 찾을 수 없어요. 30일이 지났거나 이미 되살렸어요." };
+  await prisma.transaction.update({ where: { id }, data: { deletedAt: null } });
   done();
   return { ok: true };
 }

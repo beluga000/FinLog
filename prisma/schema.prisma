@@ -90,6 +90,7 @@ model User {
   passwordResetExp  DateTime?
   memberships       HouseholdMember[]
   pushSubscriptions PushSubscription[]
+  txFavorites       TxFavorite[]
 }
 
 model Household {
@@ -113,6 +114,7 @@ model Household {
   auditLogs          AuditLog[]
   merchantRules      MerchantCategoryRule[]
   challenges         Challenge[]
+  txFavorites        TxFavorite[]
 }
 
 model HouseholdMember {
@@ -250,6 +252,8 @@ model Transaction {
   /// 계좌별 흐름 — 계좌 삭제 시 참조 검사, 계좌 단위 조회
   @@index([fromAccountId, date])
   @@index([toAccountId, date])
+  /// 휴지통 — 30일 지난 지운 기록 정리, 최근 지운 기록 목록
+  @@index([householdId, deletedAt])
 }
 
 model RecurringRule {
@@ -408,4 +412,20 @@ model PushSubscription {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+}
+
+/// 자주 쓰는 기록 (즐겨찾기) — 사람마다 따로. 기록 창 맨 위 버튼을 누르면 오늘 날짜로 바로 기록한다.
+/// template = { type, amount, fromAccountId, toAccountId, categoryId, merchant, memo, visibility, installmentMonths }.
+/// 쓸 때마다 계좌·카테고리를 다시 검증한다 (지운 계좌·카테고리면 기록하지 않고 알린다)
+model TxFavorite {
+  id          String    @id @default(cuid())
+  householdId String
+  userId      String
+  name        String
+  template    Json
+  createdAt   DateTime  @default(now())
+  household   Household @relation(fields: [householdId], references: [id], onDelete: Cascade)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([householdId, userId])
 }

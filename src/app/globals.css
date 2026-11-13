@@ -708,6 +708,11 @@ svg[stroke="currentColor"] {
   background: var(--brand);
 }
 
+/* 앱 잠금 (features/app-lock) — 잠긴 동안·다른 앱으로 간 동안 화면 내용을 그리지 않는다. 잠금 화면은 body 로 포털돼 따로 보인다 */
+html[data-locked] [data-slot="app-shell"] {
+  visibility: hidden;
+}
+
 /* 인쇄·PDF 저장 (리포트 "인쇄 · PDF") — 메뉴·탭·버튼을 빼고 본문만, 카드는 쪽 사이에서 잘리지 않게 */
 @media print {
   [data-slot="sidebar"],
