@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { cn } from "cn";
+import { HiddenMoney } from "@/components/common/hidden-money";
 import { Money } from "@/components/common/money";
 import { PageHeader } from "@/components/common/page-header";
 import { Card, CardContent } from "@/components/ui/card";
@@ -91,15 +92,19 @@ export default async function GoalsPage() {
               <Card size="sm" className={cn(g.status !== "ACTIVE" && "opacity-70")}>
                 <CardContent className="flex gap-2">
                   <PriorityButtons id={g.id} first={i === 0} last={i === goals.length - 1} />
-                  <Link href={`/goals/${g.id}`} className="grid min-w-0 flex-1 gap-2">
+                  {/* 카드 전체가 상세로 가는 링크(제목의 ::after 가 덮음) — 모은 돈 보기 버튼만 그 위로 올려 따로 누른다 */}
+                  <div className="relative grid min-w-0 flex-1 gap-2">
                     <div className="flex flex-wrap items-baseline justify-between gap-2">
                       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 font-semibold">
                         <span className="text-xs text-muted-foreground tabular">#{g.priority}</span>
-                        {g.name}
+                        <Link href={`/goals/${g.id}`} className="after:absolute after:inset-0 after:content-[''] hover:underline">
+                          {g.name}
+                        </Link>
                         <FastTrackBadge goal={g} />
                       </div>
-                      <div className="text-sm tabular">
-                        <Money value={g.current} compact /> <span className="text-muted-foreground">/ <Money value={g.targetAmount} compact /></span>
+                      <div className="flex items-baseline gap-1 text-sm tabular">
+                        <HiddenMoney value={g.current} label={`${g.name} 모인 돈`} compact className="relative z-10" />
+                        <span className="text-muted-foreground">/ <Money value={g.targetAmount} compact /></span>
                       </div>
                     </div>
                     <GoalProgressBar goal={g} />
@@ -115,7 +120,7 @@ export default async function GoalsPage() {
                         ) : null}
                       </span>
                     </div>
-                  </Link>
+                  </div>
                 </CardContent>
               </Card>
             </li>

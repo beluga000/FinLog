@@ -4,6 +4,7 @@ import {
   claimsByAccount,
   clampStartAmount,
   evaluateGoal,
+  expectedProgress,
   goalBlocker,
   goalCurrent,
   goalPaceKind,
@@ -288,5 +289,23 @@ describe("goalPaceKind / goalBlocker", () => {
     expect(goalPaceKind({ status: "ACHIEVED", contribution: 0, blockedBy: null, evaluation: ev({ monthly: 0, ahead: 0, onTrack: true }) }).kind).toBe(
       "achieved",
     );
+  });
+});
+
+describe("expectedProgress — 목표 막대의 '지금 있어야 할 곳' 눈금", () => {
+  const g = { start: "2026-01-01", startAmount: 0, target: 1_000, targetDate: "2027-01-01" };
+  it("시작~목표일 날짜 비율로 곧게", () => {
+    expect(expectedProgress({ ...g, today: "2026-01-01" })).toBe(0);
+    expect(expectedProgress({ ...g, today: "2027-01-01" })).toBe(1);
+    expect(expectedProgress({ ...g, today: "2026-07-02" })).toBeCloseTo(0.5, 2);
+  });
+  it("시작 금액이 있으면 거기서 출발, 범위 밖은 0~1로 자름", () => {
+    expect(expectedProgress({ ...g, startAmount: 400, today: "2026-01-01" })).toBe(0.4);
+    expect(expectedProgress({ ...g, today: "2028-01-01" })).toBe(1);
+    expect(expectedProgress({ ...g, today: "2025-01-01" })).toBe(0);
+  });
+  it("목표 금액·기간이 없으면 null", () => {
+    expect(expectedProgress({ ...g, target: 0, today: "2026-05-01" })).toBeNull();
+    expect(expectedProgress({ ...g, targetDate: "2026-01-01", today: "2026-05-01" })).toBeNull();
   });
 });

@@ -17,11 +17,20 @@ function weekday(date: DateStr) {
   return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
 }
 
-export type CalendarView = "month" | "week";
+/** heat: 격자(한 달 지출 강도) · month/week: 달력 */
+export type CalendarView = "heat" | "month" | "week";
+
+/** 격자 칸 진하기 — 이번 달 가장 많이 쓴 날 대비 비율 */
+function heatLevel(expense: bigint, max: bigint): 0 | 1 | 2 | 3 {
+  if (expense <= 0n || max <= 0n) return 0;
+  const r = Number(expense) / Number(max);
+  return r > 0.6 ? 3 : r > 0.25 ? 2 : 1;
+}
 
 /**
  * 가구 월 경계(start~end)에 맞춘 달력. 날짜를 누르면 그날 거래만 보기. 일요일·공휴일은 빨간 날짜 + 공휴일 이름.
  * 오른쪽 칸은 주별 지출 합계 — 누르면 그 주만 보기. "주"로 접으면 한 주만 보여 준다 (휴대폰에서 목록을 더 보이게).
+ * "격자"는 같은 한 달을 금액 대신 진하기로 보여 준다 — 많이 쓴 날이 한눈에 보이고, 누르면 똑같이 그날만 보기.
  */
 export function MonthCalendar({
   range,
@@ -63,6 +72,11 @@ export function MonthCalendar({
   const initialFocus = [weekOf(selected), weekOf(selectedWeek), weekOf(today)].find((i) => i >= 0) ?? 0;
   const [focus, setFocus] = useState(initialFocus);
   const shown = view === "week" ? [weeks[Math.min(focus, weeks.length - 1)]] : weeks;
+  const heat = view === "heat";
+  const maxExpense = days.reduce((m, d) => {
+    const e = d ? daily.get(d)?.expense ?? 0n : 0n;
+    return e > m ? e : m;
+  }, 0n);
   const withWeek = Boolean(onSelectWeek);
   const cols = withWeek ? "grid-cols-[repeat(7,minmax(0,1fr))_2.75rem]" : "grid-cols-7";
 
@@ -70,22 +84,43 @@ export function MonthCalendar({
     <div className="rounded-xl border p-2">
       {onViewChange ? (
         <div className="mb-1 flex items-center justify-between gap-2 px-1">
-          <div role="group" aria-label="달력 보기" className="inline-flex rounded-full border p-0.5 text-[11px]">
-            {(["month", "week"] as const).map((v) => (
-              <button
-                key={v}
-                type="button"
-                aria-pressed={view === v}
-                onClick={() => {
-                  if (v === "week") setFocus(initialFocus);
-                  onViewChange(v);
-                }}
-                className={cn("rounded-full px-2.5 py-0.5", view === v ? "bg-foreground text-background" : "text-muted-foreground")}
-              >
-                {v === "month" ? "월" : "주"}
-              </button>
-            ))}
+          <div className="flex items-center gap-1.5">
+            <div role="group" aria-label="날짜 보기" className="inline-flex rounded-full bg-muted p-0.5 text-xs">
+              {(["heat", "calendar"] as const).map((k) => {
+                const on = k === "heat" ? heat : !heat;
+                return (
+                  <button
+                    key={k}
+                    type="button"
+                    aria-pressed={on}
+                    onClick={() => onViewChange(k === "heat" ? "heat" : "month")}
+                    className={cn("rounded-full px-3 py-0.5 font-medium", on ? "bg-card text-foreground shadow-sm" : "text-muted-foreground")}
+                  >
+                    {k === "heat" ? "격자" : "달력"}
+                  </button>
+                );
+              })}
+            </div>
+            {heat ? null : (
+              <div role="group" aria-label="달력 보기" className="inline-flex rounded-full border p-0.5 text-[11px]">
+                {(["month", "week"] as const).map((v) => (
+                  <button
+                    key={v}
+                    type="button"
+                    aria-pressed={view === v}
+                    onClick={() => {
+                      if (v === "week") setFocus(initialFocus);
+                      onViewChange(v);
+                    }}
+                    className={cn("rounded-full px-2.5 py-0.5", view === v ? "bg-foreground text-background" : "text-muted-foreground")}
+                  >
+                    {v === "month" ? "월" : "주"}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
+          {heat ? <span className="text-[11px] text-muted-foreground">진할수록 많이 쓴 날</span> : null}
           {view === "week" ? (
             <div className="flex items-center gap-1 text-xs">
               <button type="button" aria-label="이전 주" disabled={focus <= 0} onClick={() => setFocus((f) => f - 1)} className="rounded p-1 hover:bg-muted disabled:opacity-30">
@@ -121,6 +156,27 @@ export function MonthCalendar({
             const isSel = selected === d;
             const holiday = holidayName(d);
             const red = holiday !== null || weekday(d) === 0;
+            if (heat) {
+              const level = heatLevel(v?.expense ?? 0n, maxExpense);
+              return (
+                <DayCell
+                  key={d}
+                  href={onSelect ? undefined : hrefFor?.(isSel ? null : d)}
+                  onClick={onSelect ? () => onSelect(isSel ? null : d) : undefined}
+                  aria-label={`${d}${holiday ? ` ${holiday}` : ""}${v?.expense ? ` 지출 ${v.expense}원` : " 지출 없음"}`}
+                  title={holiday ?? undefined}
+                  aria-current={isSel ? "date" : undefined}
+                  data-heat={d > today ? "future" : level}
+                  className={cn(
+                    "grid h-9 place-items-center rounded-md text-[11px] tabular",
+                    d === today && "ring-2 ring-foreground ring-inset",
+                    isSel && "ring-2 ring-primary ring-offset-1 ring-offset-card",
+                  )}
+                >
+                  {Number(d.slice(8))}
+                </DayCell>
+              );
+            }
             return (
               <DayCell
                 key={d}
@@ -169,7 +225,8 @@ export function MonthCalendar({
               aria-pressed={selectedWeek === w.start}
               aria-label={`${md(w.start)}~${md(w.end)} 주 지출 ${w.expense}원`}
               className={cn(
-                "flex min-h-12 flex-col items-center justify-center rounded-md bg-muted/50 text-[10px] leading-tight tabular hover:bg-muted",
+                "flex flex-col items-center justify-center rounded-md bg-muted/50 text-[10px] leading-tight tabular hover:bg-muted",
+                heat ? "h-9" : "min-h-12",
                 selectedWeek === w.start && "bg-foreground text-background hover:bg-foreground",
               )}
             >

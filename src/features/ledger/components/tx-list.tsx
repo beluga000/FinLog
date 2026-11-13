@@ -34,6 +34,36 @@ function flowText(tx: TxRow) {
   return `${tx.fromAccountName} → ${tx.toAccountName}`;
 }
 
+/** 카테고리 원 색 — 상위 카테고리 이름으로 고르는 차트 색 5가지(테마를 따라감). 같은 카테고리는 늘 같은 색 */
+const CAT_COLORS = ["var(--chart-1)", "var(--chart-2)", "var(--chart-3)", "var(--chart-4)", "var(--chart-5)"];
+function hashName(name: string) {
+  let h = 0;
+  for (const ch of name) h = (h * 31 + ch.codePointAt(0)!) >>> 0;
+  return h;
+}
+
+function CategoryDot({ tx, byId }: { tx: TxRow; byId: Map<string, CategoryRow> }) {
+  const cat = tx.categoryId ? byId.get(tx.categoryId) : undefined;
+  const root = cat?.parentId ? byId.get(cat.parentId) ?? cat : cat;
+  if (!root || (tx.type !== "EXPENSE" && tx.type !== "INCOME")) {
+    // 이체·저축·보정 등 카테고리 없는 이동은 회색 원에 유형 첫 글자
+    return (
+      <span aria-hidden className="grid size-8 shrink-0 place-items-center rounded-[10px] bg-muted text-xs font-bold text-muted-foreground">
+        {TX_TYPE_META[tx.type].label.slice(0, 1)}
+      </span>
+    );
+  }
+  return (
+    <span
+      aria-hidden
+      className="grid size-8 shrink-0 place-items-center rounded-[10px] text-xs font-bold text-white"
+      style={{ background: tx.type === "INCOME" ? "var(--good)" : CAT_COLORS[hashName(root.name) % CAT_COLORS.length] }}
+    >
+      {root.name.slice(0, 1)}
+    </span>
+  );
+}
+
 export function TxList({
   items,
   accounts,
@@ -52,6 +82,7 @@ export function TxList({
   const [editing, setEditing] = useState<TxRow | null>(null);
   const [pending, startTransition] = useTransition();
   const duplicates = useMemo(() => findSuspectedDuplicates(items), [items]);
+  const catById = useMemo(() => new Map(categories.map((c) => [c.id, c])), [categories]);
   // 묶음 안내·버튼은 목록에서 처음 나오는 기록 아래 한 번만
   const shown = new Set<string>();
 
@@ -66,7 +97,7 @@ export function TxList({
   for (const tx of items) groups.set(tx.date, [...(groups.get(tx.date) ?? []), tx]);
 
   if (!items.length) {
-    return <p className="rounded-xl border py-12 text-center text-sm text-muted-foreground">기록이 없어요. 오른쪽 아래 + 버튼으로 기록해 보세요.</p>;
+    return <p className="rounded-xl border py-12 text-center text-sm text-muted-foreground">기록이 없어요. 기록 버튼을 눌러 첫 기록을 남겨 보세요.</p>;
   }
 
   return (
@@ -94,6 +125,7 @@ export function TxList({
                         onClick={() => setEditing(tx)}
                         className="flex w-full items-center gap-3 px-3 py-2.5 text-left hover:bg-muted/50"
                       >
+                        <CategoryDot tx={tx} byId={catById} />
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-1.5 truncate text-sm font-medium">
                             {tx.categoryName ?? TX_TYPE_META[tx.type].label}

@@ -142,18 +142,43 @@ export function daysLeftInRange(today: DateStr, range: { start: DateStr; end: Da
 }
 
 /**
- * 어제 결과 = 어제 시작 시점의 하루 권장액 − 어제 쓴 변동 지출.
- * 양수면 아낀 만큼 오늘부터의 하루 몫이 늘고, 음수면 줄었다. 이번 달 첫날이거나 날짜 없는 거래가 있으면 null.
+ * 하루 결과 = 그날 시작 시점의 하루 권장액 − 그날 쓴 변동 지출.
+ * 양수면 아낀 만큼 다음 날부터의 하루 몫이 늘고, 음수면 줄었다. 이번 달 밖이거나 날짜 없는 거래가 있으면 null.
  */
+export function dayResult(input: Parameters<typeof summarizeSpendableInputs>[0], day: DateStr): bigint | null {
+  if (day < input.range.start || day >= input.range.end) return null;
+  if (input.txs.some((t) => !t.date)) return null;
+  const before = summarizeSpendableInputs({ ...input, txs: input.txs.filter((t) => t.date! < day) });
+  const through = summarizeSpendableInputs({ ...input, txs: input.txs.filter((t) => t.date! <= day) });
+  const allowance = calculateSpendable({ ...before, daysLeft: daysLeftInRange(day, input.range) }).daily;
+  return allowance - (through.variableExpense - before.variableExpense);
+}
+
+/** 어제 결과 (dayResult) — 이번 달 첫날이면 null */
 export function yesterdayResult(
   input: Parameters<typeof summarizeSpendableInputs>[0],
   today: DateStr,
 ): bigint | null {
-  const yesterday = addDays(today, -1);
-  if (yesterday < input.range.start) return null;
-  if (input.txs.some((t) => !t.date)) return null;
-  const before = summarizeSpendableInputs({ ...input, txs: input.txs.filter((t) => t.date! < yesterday) });
-  const through = summarizeSpendableInputs({ ...input, txs: input.txs.filter((t) => t.date! <= yesterday) });
-  const allowance = calculateSpendable({ ...before, daysLeft: daysLeftInRange(yesterday, input.range) }).daily;
-  return allowance - (through.variableExpense - before.variableExpense);
+  return dayResult(input, addDays(today, -1));
+}
+
+export interface WeekDay {
+  date: DateStr;
+  /** past: 지난 날(result 있음) · today · future · outside: 이번 달 밖 */
+  state: "past" | "today" | "future" | "outside";
+  /** 지난 날의 결과 (아낀 +, 더 쓴 −). 그 밖에는 null */
+  result: bigint | null;
+}
+
+/** 오늘이 든 주(일~토, 가계부 달력과 같은 순서)의 날마다 결과 — 홈 대표 카드의 7칸 */
+export function weekResults(input: Parameters<typeof summarizeSpendableInputs>[0], today: DateStr): WeekDay[] {
+  const dow = new Date(`${today}T00:00:00Z`).getUTCDay();
+  const sunday = addDays(today, -dow);
+  return Array.from({ length: 7 }, (_, i) => {
+    const date = addDays(sunday, i);
+    if (date < input.range.start || date >= input.range.end) return { date, state: "outside", result: null };
+    if (date === today) return { date, state: "today", result: null };
+    if (date > today) return { date, state: "future", result: null };
+    return { date, state: "past", result: dayResult(input, date) };
+  });
 }

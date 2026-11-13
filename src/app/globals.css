@@ -571,6 +571,39 @@ svg[stroke="currentColor"] {
   box-shadow: 0 0 0 1px rgb(255 122 61 / 0.3);
 }
 
+/* 대표 카드는 다른 카드보다 둥글게 — 홈에서 가장 먼저 눈이 가는 면 */
+[data-slot="card"][data-hero] {
+  border-radius: calc(var(--radius) * 1.6);
+}
+
+/* 가계부 격자 보기 (MonthCalendar view="heat") — 많이 쓴 날일수록 테마 강조색에 가깝게 */
+[data-heat] {
+  transition: filter 0.15s;
+}
+[data-heat]:hover {
+  filter: brightness(0.96);
+}
+[data-heat="0"] {
+  background: var(--muted);
+  color: var(--muted-foreground);
+}
+[data-heat="1"] {
+  background: color-mix(in oklab, var(--brand) 22%, var(--card));
+}
+[data-heat="2"] {
+  background: color-mix(in oklab, var(--brand) 48%, var(--card));
+}
+[data-heat="3"] {
+  background: var(--brand);
+  color: #ffffff;
+  font-weight: 700;
+}
+[data-heat="future"] {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--border);
+  color: var(--muted-foreground);
+}
+
 /* 사이드바(데스크톱)·상단 헤더: 숲 흰 바탕 · 바다 짙은 남색 · 저녁 옅은 보라 — 휴대폰에서도 헤더로 테마가 보인다 */
 [data-slot="sidebar"] {
   background: var(--background);

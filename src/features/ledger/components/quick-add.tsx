@@ -74,9 +74,11 @@ export function QuickAdd({ sharedText, ...props }: Props) {
             aria-label="거래 기록하기"
             onClick={() => setOpen(true)}
             onTouchStart={preloadTxForm}
-            className="fixed right-4 bottom-[calc(4.5rem+env(safe-area-inset-bottom))] z-40 flex size-14 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg active:scale-95 md:hidden"
+            data-slot="fab"
+            className="fixed right-4 bottom-[calc(4.75rem+env(safe-area-inset-bottom))] z-40 flex h-12 items-center gap-1.5 rounded-full bg-primary pr-5 pl-4 text-sm font-bold text-primary-foreground shadow-lg active:scale-95 md:hidden"
           >
-            <Plus className="size-6" />
+            <Plus className="size-5" />
+            <span aria-hidden>기록</span>
           </button>,
           document.body,
         )}

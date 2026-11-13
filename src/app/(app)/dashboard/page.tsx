@@ -30,7 +30,7 @@ import { getAccounts, getCategories, getScopedTransactions } from "@/features/le
 import { materializeRecurring } from "@/features/ledger/service";
 import { requireHousehold } from "@/lib/db/context";
 import { getMonthKey, getMonthRange, todayKST } from "@/lib/finance/period";
-import { yesterdayResult } from "@/lib/finance/spendable";
+import { weekResults, yesterdayResult } from "@/lib/finance/spendable";
 import type { DateStr } from "@/lib/finance/types";
 import { parseViewScope, type ViewScope } from "@/lib/finance/visibility";
 import { SCOPE_LABEL, withRo } from "@/lib/labels";
@@ -60,6 +60,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   ]);
   const spendable = computeSpendable(source);
   const yesterday = yesterdayResult(source, today);
+  const week = weekResults(source, today);
   const summaryOnlyTotal = current.summarized.reduce((s, t) => (t.type === "EXPENSE" ? s + t.amount : s), 0n);
   const scopeLabel = scope === "partner" ? ctx.partner?.name ?? "배우자" : SCOPE_LABEL[scope];
   const partnerName = ctx.partner?.name ?? "배우자";
@@ -109,7 +110,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
               }
             />
           ) : null}
-          <SpendableCard spendable={spendable} hasIncome={spendable.income > 0n} yesterday={yesterday} />
+          <SpendableCard spendable={spendable} hasIncome={spendable.income > 0n} yesterday={yesterday} week={week} />
           <ChallengeChips items={challenges} />
         </div>
         <div className="grid min-w-0 gap-4 lg:col-start-1 lg:row-start-1">

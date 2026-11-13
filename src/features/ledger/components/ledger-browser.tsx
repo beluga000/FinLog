@@ -63,10 +63,11 @@ export function LedgerBrowser({
   const [all, setAll] = useState<{ q: string; items: TxRow[]; more: boolean } | null>(null);
   const [searching, startSearch] = useTransition();
 
-  // 월/주 보기는 기기마다 기억한다 (저장 공간이 막혀 있으면 월 보기)
+  // 격자/월/주 보기는 기기마다 기억한다 (저장 공간이 막혀 있으면 월 보기)
   useEffect(() => {
     try {
-      if (window.localStorage.getItem(VIEW_KEY) === "week") setView("week");
+      const saved = window.localStorage.getItem(VIEW_KEY);
+      if (saved === "week" || saved === "heat") setView(saved);
     } catch {}
   }, []);
   const changeView = (v: CalendarView) => {

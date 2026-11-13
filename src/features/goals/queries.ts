@@ -9,6 +9,7 @@ import {
   allocateByPriority,
   claimsByAccount,
   evaluateGoal,
+  expectedProgress,
   goalBlocker,
   goalCurrent,
   goalPlanPath,
@@ -57,6 +58,8 @@ export interface GoalView {
   createdOn: DateStr;
   /** 홈에 띄울 새 진행률 단계 (25·50·75·100) — 없으면 null */
   milestone: number | null;
+  /** 계획상 지금 있어야 할 진척률 (expectedProgress) — 목표 막대의 눈금. 진행 중이 아니거나 예전 방식 목표면 null */
+  expected: number | null;
   /** 연결 계좌가 없어 순자산을 기준으로 삼았는지 */
   usesNetWorth: boolean;
   /** 배분된 월 납입액 (확정값 또는 우선순위 배분) */
@@ -200,6 +203,17 @@ export async function getGoalsOverview(ctx: Ctx, opts: { today: DateStr; monthSt
       legacy: b.g.baseSetOn === null && b.startAmount === 0 && b.baseBalance === 0,
       createdOn: todayKST(b.g.createdAt),
       milestone: b.g.status === "ACTIVE" ? newMilestone(b.target > 0 ? b.current / b.target : 0, b.g.milestoneSeen) : null,
+      // 예전 방식 목표(legacy)는 시작 시점의 모은 돈을 몰라 눈금을 그리지 않는다
+      expected:
+        b.g.status === "ACTIVE" && !(b.g.baseSetOn === null && b.startAmount === 0 && b.baseBalance === 0)
+          ? expectedProgress({
+              start: b.g.baseSetOn ? fromDbDate(b.g.baseSetOn) : todayKST(b.g.createdAt),
+              startAmount: b.startAmount,
+              target: b.target,
+              targetDate: b.targetDate,
+              today: opts.today,
+            })
+          : null,
       usesNetWorth: b.usesNetWorth,
       contribution,
       contributionSource: b.commit !== null ? "commit" : "allocated",

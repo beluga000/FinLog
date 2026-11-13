@@ -62,16 +62,33 @@ export function FastTrackBadge({ goal }: { goal: GoalView }) {
 
 export function GoalProgressBar({ goal }: { goal: GoalView }) {
   const pct = Math.min(100, Math.max(0, goal.evaluation.progress * 100));
+  // 눈금: 계획상 지금 있어야 할 곳. 이미 다 모았거나 시작점(0%)이면 그리지 않는다
+  const mark = goal.expected !== null && goal.expected > 0 && pct < 100 ? goal.expected * 100 : null;
   return (
-    <div
-      className="h-2 rounded-full bg-muted"
-      role="progressbar"
-      aria-valuenow={Math.round(pct)}
-      aria-valuemin={0}
-      aria-valuemax={100}
-      aria-label={`${goal.name} 진척률`}
-    >
-      <div className="h-2 rounded-full" style={{ width: `${pct}%`, background: "var(--brand)" }} />
+    <div className="grid gap-1">
+      <div
+        className="relative h-(--progress-h) rounded-full bg-muted"
+        role="progressbar"
+        aria-valuenow={Math.round(pct)}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-label={`${goal.name} 진척률${mark !== null ? `, 계획상 지금 ${Math.round(mark)}%` : ""}`}
+      >
+        <div className="h-full rounded-full" style={{ width: `${pct}%`, background: "var(--brand)" }} />
+        {mark !== null ? (
+          <span
+            aria-hidden
+            className="absolute -top-1 -bottom-1 w-0.5 -translate-x-1/2 rounded-full bg-foreground"
+            style={{ left: `${mark}%` }}
+          />
+        ) : null}
+      </div>
+      {mark !== null ? (
+        <div className="flex justify-between text-[11px] text-muted-foreground tabular">
+          <span>계획상 지금 {Math.round(mark)}%</span>
+          <span>지금 {Math.round(pct)}%</span>
+        </div>
+      ) : null}
     </div>
   );
 }

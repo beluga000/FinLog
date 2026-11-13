@@ -6,6 +6,7 @@ import {
   summarizeSpendableInputs,
   type SpendableRule,
   type SpendableTx,
+  weekResults,
   yesterdayResult,
 } from "../spendable";
 
@@ -199,5 +200,30 @@ describe("yesterdayResult — 어제 아낀 돈", () => {
   it("이번 달 첫날·날짜 없는 거래는 null", () => {
     expect(yesterdayResult(input([]), "2026-11-01")).toBeNull();
     expect(yesterdayResult(input([{ type: "EXPENSE", amount: 1n, recurringRuleId: null }]), "2026-11-03")).toBeNull();
+  });
+});
+
+describe("weekResults — 홈 대표 카드의 이번 주 7칸", () => {
+  const range = { start: "2026-11-01", end: "2026-12-01" };
+  const rules: SpendableRule[] = [{ id: "pay", type: "INCOME", amount: 3_100_000n, isActive: true, startDate: "2026-01-01", endDate: null }];
+  const input = (txs: SpendableTx[], r = range) => ({ rules, txs, goals: [], range: r, includeGoals: true });
+
+  it("일요일부터 7일, 지난 날은 결과·오늘·다가올 날은 결과 없음", () => {
+    const txs: SpendableTx[] = [{ type: "EXPENSE", amount: 200_000n, recurringRuleId: null, date: "2026-11-09" }];
+    const week = weekResults(input(txs), "2026-11-11"); // 수요일
+    expect(week.map((d) => d.date)).toEqual(["2026-11-08", "2026-11-09", "2026-11-10", "2026-11-11", "2026-11-12", "2026-11-13", "2026-11-14"]);
+    expect(week.map((d) => d.state)).toEqual(["past", "past", "past", "today", "future", "future", "future"]);
+    expect(week[1].result! < 0n).toBe(true); // 월요일 20만 → 더 씀
+    expect(week[0].result! > 0n).toBe(true); // 일요일 안 씀 → 아낌
+    expect(week[3].result).toBeNull();
+  });
+
+  it("이번 달 시작 전 날은 outside", () => {
+    const week = weekResults(input([]), "2026-11-03"); // 화요일, 11/1 일요일 시작
+    expect(week[0].state).toBe("past");
+    const r = { start: "2026-11-25", end: "2026-12-25" };
+    const w2 = weekResults(input([], r), "2026-11-26"); // 목요일 — 22~24일은 지난달
+    expect(w2.slice(0, 3).map((d) => d.state)).toEqual(["outside", "outside", "outside"]);
+    expect(w2[3].state).toBe("past");
   });
 });

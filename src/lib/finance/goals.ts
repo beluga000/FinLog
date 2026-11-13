@@ -293,3 +293,18 @@ export function goalBlocker(g: {
   if (g.committed) return "commit";
   return g.capacity <= 0 ? "noSaving" : "priority";
 }
+
+/**
+ * 계획상 지금 있어야 할 진척률 — 시작일(시작 금액)에서 목표일(목표 금액)까지 날짜 비율로 곧게 이은 선 위의 오늘 지점.
+ * 목표 막대의 눈금으로 쓴다. 수익률·납입 계획은 반영하지 않는 단순 기준이다.
+ * 목표 금액이 없거나 기간이 없으면 null, 결과는 0~1로 자른다.
+ */
+export function expectedProgress(g: { start: DateStr; startAmount: number; target: number; targetDate: DateStr; today: DateStr }): number | null {
+  if (g.target <= 0) return null;
+  const day = (d: DateStr) => Date.parse(`${d}T00:00:00Z`);
+  const total = day(g.targetDate) - day(g.start);
+  if (total <= 0) return null;
+  const t = Math.min(1, Math.max(0, (day(g.today) - day(g.start)) / total));
+  const amount = g.startAmount + (g.target - g.startAmount) * t;
+  return Math.min(1, Math.max(0, amount / g.target));
+}

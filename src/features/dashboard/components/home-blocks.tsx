@@ -3,10 +3,10 @@ import { cn } from "cn";
 import { HiddenMoney } from "@/components/common/hidden-money";
 import { Money } from "@/components/common/money";
 import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { FastTrackBadge, GoalEta, GoalPace, GoalProgressBar, needsAdjust } from "@/features/goals/components/goal-status";
+import { FastTrackBadge, GoalEta, GoalPace, needsAdjust } from "@/features/goals/components/goal-status";
 import type { GoalView } from "@/features/goals/queries";
 import { formatPercent } from "@/lib/finance/money";
-import type { Spendable } from "@/lib/finance/spendable";
+import type { Spendable, WeekDay } from "@/lib/finance/spendable";
 import type { DateStr } from "@/lib/finance/types";
 
 /** 주의 기준: 생활비의 80% 이상 사용 (PROD.MD §5.4) */
@@ -33,6 +33,32 @@ function Bar({ ratio, tone, label }: { ratio: number; tone: "good" | "warning" |
         style={{ width: `${pct}%`, ...(tone === "accent" ? { background: "var(--brand)" } : {}) }}
       />
     </div>
+  );
+}
+
+/** 대표 목표 진척 링 — 가운데 진척률 */
+function GoalRing({ progress, label }: { progress: number; label: string }) {
+  const pct = Math.min(100, Math.max(0, progress * 100));
+  const r = 15;
+  const c = 2 * Math.PI * r;
+  return (
+    <svg viewBox="0 0 36 36" className="size-16 shrink-0" role="img" aria-label={`${label} ${Math.round(pct)}%`}>
+      <circle cx="18" cy="18" r={r} fill="none" stroke="var(--muted)" strokeWidth="4" />
+      <circle
+        cx="18"
+        cy="18"
+        r={r}
+        fill="none"
+        stroke="var(--brand)"
+        strokeWidth="4"
+        strokeLinecap="round"
+        strokeDasharray={`${(pct / 100) * c} ${c}`}
+        transform="rotate(-90 18 18)"
+      />
+      <text x="18" y="21" textAnchor="middle" fontSize="9" fontWeight="800" fill="var(--foreground)" className="tabular">
+        {formatPercent(progress, 0)}
+      </text>
+    </svg>
   );
 }
 
@@ -67,20 +93,23 @@ export function PrimaryGoalCard({ goals }: { goals: GoalView[] }) {
         </CardAction>
       </CardHeader>
       <CardContent className="grid gap-3">
-        <div className="flex flex-wrap items-baseline gap-x-2">
-          {/* 지금 모인 돈은 가려 두고 눌러야 보인다 — 목표 금액·진척률은 그대로 */}
-          <HiddenMoney value={Number(primary.current)} label="지금 모인 돈" className="text-2xl font-bold" compact />
-          <span className="text-sm text-muted-foreground">
-            / <Money value={primary.targetAmount} compact />
-          </span>
-          <span className="ml-auto text-sm font-semibold tabular">{formatPercent(e.progress, 0)}</span>
-        </div>
-        <GoalProgressBar goal={primary} />
-        <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
-          <span className="rounded-full border px-2.5 py-0.5 text-xs font-medium">
-            <GoalPace goal={primary} />
-          </span>
-          <GoalEta goal={primary} className="text-xs" />
+        <div className="flex items-center gap-4">
+          <GoalRing progress={e.progress} label={`${primary.name} 진척률`} />
+          <div className="grid min-w-0 flex-1 gap-1">
+            <div className="flex flex-wrap items-baseline gap-x-1.5">
+              {/* 지금 모인 돈은 가려 두고 눌러야 보인다 — 목표 금액·진척률은 그대로 */}
+              <HiddenMoney value={Number(primary.current)} label="지금 모인 돈" className="text-xl font-bold" compact />
+              <span className="text-sm text-muted-foreground">
+                / <Money value={primary.targetAmount} compact />
+              </span>
+            </div>
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <span className="rounded-full border px-2.5 py-0.5 text-xs font-medium">
+                <GoalPace goal={primary} />
+              </span>
+              <GoalEta goal={primary} className="text-xs" />
+            </div>
+          </div>
         </div>
         {needsAdjust(primary) ? (
           <Link
@@ -123,10 +152,13 @@ export function SpendableCard({
   spendable: s,
   hasIncome,
   yesterday,
+  week,
 }: {
   spendable: Spendable;
   hasIncome: boolean;
   yesterday: bigint | null;
+  /** 이번 주 7칸 (weekResults) */
+  week: WeekDay[];
 }) {
   if (!hasIncome) {
     return (
@@ -153,7 +185,7 @@ export function SpendableCard({
       </CardHeader>
       <CardContent className="grid gap-3">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <Money value={s.daily} compact className="text-3xl font-black" />
+          <Money value={s.daily} compact className="text-4xl font-black tracking-tight" />
           {yesterday !== null && yesterday !== 0n ? (
             <span
               className={cn(
@@ -201,26 +233,89 @@ export function SpendableCard({
             </span>
           </div>
         </div>
-        <dl className="grid grid-cols-2 gap-x-4 gap-y-1 border-t pt-3 text-xs sm:grid-cols-5">
-          {(
-            [
-              ["수입", s.income],
-              ["고정비", s.fixed],
-              ["고정 저축", s.fixedSaving],
-              ["목표 저축", s.goalSaving],
-              ["변동 지출", s.variableExpense],
-            ] as const
-          ).map(([label, v]) => (
-            <div key={label} className="flex justify-between gap-2 sm:grid sm:gap-0.5">
-              <dt className="text-muted-foreground">{label}</dt>
-              <dd className="font-medium">
-                <Money value={v} compact />
-              </dd>
-            </div>
-          ))}
-        </dl>
+        <WeekStrip week={week} />
+        {/* 계산 근거는 접어 둔다 — 매일 보는 건 하루 몫과 이번 주 칸 */}
+        <details className="group border-t pt-3 text-xs">
+          <summary className="cursor-pointer list-none text-muted-foreground hover:text-foreground [&::-webkit-details-marker]:hidden">
+            이번 달 계산 보기 <span aria-hidden className="inline-block transition-transform group-open:rotate-180">▾</span>
+          </summary>
+          <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 sm:grid-cols-5">
+            {(
+              [
+                ["수입", s.income],
+                ["고정비", s.fixed],
+                ["고정 저축", s.fixedSaving],
+                ["목표 저축", s.goalSaving],
+                ["변동 지출", s.variableExpense],
+              ] as const
+            ).map(([label, v]) => (
+              <div key={label} className="flex justify-between gap-2 sm:grid sm:gap-0.5">
+                <dt className="text-muted-foreground">{label}</dt>
+                <dd className="font-medium">
+                  <Money value={v} compact />
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </details>
       </CardContent>
     </Card>
+  );
+}
+
+const WEEKDAY = ["일", "월", "화", "수", "목", "금", "토"];
+
+/**
+ * 이번 주 7칸 — 지난 날은 하루 몫 안에서 썼으면(아낌) 채운 칸, 넘게 썼으면 테두리 칸.
+ * 오늘은 테두리, 다가올 날·이번 달 밖은 옅게. 날마다 아낀/더 쓴 금액은 화면 읽기 프로그램에 읽어 준다.
+ */
+function WeekStrip({ week }: { week: WeekDay[] }) {
+  const past = week.filter((d) => d.state === "past" && d.result !== null);
+  if (!past.length && !week.some((d) => d.state === "today")) return null;
+  const saved = past.filter((d) => d.result! >= 0n).length;
+  return (
+    <div className="grid gap-1.5">
+      <ol className="grid grid-cols-7 gap-1 text-center text-[11px] text-muted-foreground" aria-label="이번 주">
+        {week.map((d, i) => {
+          const over = d.state === "past" && d.result !== null && d.result < 0n;
+          const ok = d.state === "past" && d.result !== null && d.result >= 0n;
+          return (
+            <li key={d.date} className="grid justify-items-center gap-1">
+              <span aria-hidden>{WEEKDAY[i]}</span>
+              <span
+                aria-hidden
+                className={cn(
+                  "grid size-6 place-items-center rounded-lg bg-muted",
+                  ok && "bg-good",
+                  over && "bg-transparent ring-[1.5px] ring-warning ring-inset",
+                  d.state === "today" && "bg-transparent ring-2 ring-foreground ring-inset",
+                  d.state === "outside" && "opacity-30",
+                )}
+              >
+                {over ? <span className="h-1 w-2.5 rounded-full bg-warning" /> : null}
+              </span>
+              <span className="sr-only">
+                {Number(d.date.slice(8))}일{" "}
+                {d.state === "today"
+                  ? "오늘"
+                  : d.state === "past" && d.result !== null
+                    ? d.result >= 0n
+                      ? `${d.result.toLocaleString("ko-KR")}원 아낌`
+                      : `${(-d.result).toLocaleString("ko-KR")}원 더 씀`
+                    : d.state === "outside"
+                      ? "지난달"
+                      : "아직"}
+              </span>
+            </li>
+          );
+        })}
+      </ol>
+      {past.length ? (
+        <p className="text-xs text-muted-foreground">
+          이번 주 {past.length}일 중 {saved}일 아꼈어요
+        </p>
+      ) : null}
+    </div>
   );
 }
 
