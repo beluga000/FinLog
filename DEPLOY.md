@@ -205,5 +205,6 @@ npx vercel deploy --prod --yes            # 환경변수는 새 배포부터 적
 | `20261112100000_cleanup_settlement_life_event_password_reset` | 쓰지 않던 `Budget`·`RiskAssessment`·`PortfolioPlan`(+`AssetGoal.planId`)·`AssetClassAssumption`·`TaxRuleSet` 삭제, `Settlement` 달마다 하나·`LifeEvent.createdAt`·인덱스, `User.passwordResetHash`·`passwordResetExp` (부부 정산·생활 변화·비밀번호 재설정 링크) | 2026-11-12 |
 | `20261112110000_goal_milestone_pushed` | `AssetGoal.milestonePushed` (아침 알림으로 보낸 목표 진행률 단계, 기존 목표는 `milestoneSeen` 으로 채움) | 2026-11-12 |
 | `20261112120000_default_palette_sunset` | `User.palette` 기본값 `sunset`(노을) + 숲(forest) 사용자를 노을로 | 2026-11-12 |
+| `20261112130000_tx_favorite_trash` | `TxFavorite` 테이블 (기록 즐겨찾기 — 한 번 눌러 기록) + `Transaction(householdId, deletedAt)` 인덱스 (최근 지운 기록·30일 지난 기록 자동 정리) | 2026-11-13 |
 
 새 마이그레이션을 운영에 적용하면 이 표에 한 줄 추가한다.
