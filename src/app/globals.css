@@ -773,3 +773,13 @@ html[data-locked] [data-slot="app-shell"] {
     box-shadow: none !important;
   }
 }
+
+/* iOS 는 글자가 16px 보다 작은 입력칸을 누르면 화면을 확대하고 되돌리지 않는다.
+   모바일 폭에서는 글자 입력칸을 최소 1rem 으로 — 레이어 밖에 둬서 text-sm 같은 유틸리티보다 우선한다 */
+@media (max-width: 47.99rem) {
+  input:not([type="checkbox"], [type="radio"], [type="range"], [type="file"], [type="color"], [type="button"], [type="submit"], [type="reset"]),
+  textarea,
+  select {
+    font-size: 1rem;
+  }
+}
